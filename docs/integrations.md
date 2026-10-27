@@ -316,7 +316,7 @@ Each action is in **Recent calls**: one that opens, comments, closes or deletes 
 
 ## Google Workspace
 
-**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail, and read your Google Calendar and change its events. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
+**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can read your Gmail, read your Google Calendar and change its events, and read and write your Google Docs. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
 
 ### Connect it
 
@@ -347,7 +347,7 @@ An agent's access has a part for each of Gmail, Google Calendar and Google Docs,
 
 ### What agents can do
 
-Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs Gmail's reading, and Google Calendar's reading and changing; the page marks the others "Not available in this version of Kivali", and agents are not given them.
+Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs Gmail's reading, Google Calendar's reading and changing, and Docs' reading and writing; the page marks the others "Not available in this version of Kivali", and agents are not given them.
 
 With **May read mail**, an agent can:
 
@@ -399,8 +399,39 @@ Google emails no one about these changes. Changing or deleting an event that inv
 
 Each Calendar call is in **Recent calls**, naming the events it read, created, changed or deleted.
 
+#### Documents
+
+With **May read documents**, an agent can:
+
+- Search your Google Docs, those shared with you included, by words in their name or text, 25 a page, each listed with its owner, whether that is your domain, whether it is shared, when it last changed and whether Kivali made it.
+- Read a document as text: its headings, paragraphs, lists and tables, in every tab.
+- List a document's comments, each with who wrote it, whether it is resolved and how many replies it has.
+
+With **May write documents**, an agent can:
+
+- Create a document, with its text, in a folder. Kivali marks each document it creates as made by Kivali, in a note on the document that only your OAuth client can read or set.
+- Add text at the end of a document.
+- Replace a piece of text everywhere it appears in a document.
+
+What an agent writes takes a little Markdown: a line starting with `#` is a heading, one starting with `-` is a list item, and `**text**` is bold.
+
+An agent changes only documents you own or that Kivali made. A document someone else owns and shared with you is refused, so an agent cannot be steered into changing what other people wrote.
+
+It reads and changes only documents in the folders its access names under **Folders it may read**, or in folders inside them, up to ten folders down; with that list empty, every document you can open. A document shared with you whose folder you cannot open is in none of them. A document an agent creates goes in the folder it names, which must be within the list, or else in the first folder of the list.
+
+#### What the agent reads in a document
+
+Anyone who can edit a document can write text in it meant to steer the agent. As with email, Kivali hands the agent a document's text, and each comment's, between two fixed lines that say it is untrusted, and tells the agent never to follow instructions it finds there. Before it, Kivali writes a line of its own: who owns the document, whether that is your domain, whether it is shared and when it last changed. A document in a shared drive has no owner of its own, so it counts as from outside your domain.
+
+Kivali builds the text from the document's structure, not from an export, so text styled not to show is left out wherever it is: text in the colour of what is behind it (the page, a highlight, a shaded paragraph or a table cell), in a transparent colour, or in a font of 3 points or less. The agent is told how many characters were left out. Links are listed after the text, host first, as for email.
+
+An answer holds at most 60,000 characters, so an agent reads a long document a page at a time: each page says which characters of the document's whole length it holds and where the next one starts. Each page is read from the document as it is at that moment.
+
+Each call is in **Recent calls**, naming the documents it read, created or changed, and how much.
+
 ### Not supported
 
 - Moving mail or documents to the trash, deleting events Kivali did not create, and sharing documents.
 - Google Sheets and Google Slides.
 - Gmail's settings, such as filters and forwarding: Kivali never asks for them.
+- A document's headers, footers and footnotes: agents read its body.

@@ -168,7 +168,8 @@ func TestToolsFollowTheSwitches(t *testing.T) {
 		all[k] = true
 	}
 	calendar := []string{"list_calendars", "list_events", "get_event", "find_free_time", "create_event", "update_event", "delete_event"}
-	if got := names(all); !slices.Equal(got, slices.Concat(gmailRead, calendar)) {
+	docs := []string{"search_documents", "get_document", "list_comments", "create_document", "append_to_document", "replace_text"}
+	if got := names(all); !slices.Equal(got, slices.Concat(gmailRead, calendar, docs)) {
 		t.Errorf("every switch: %v", got)
 	}
 	m := New().Manifest()

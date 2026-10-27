@@ -31,9 +31,15 @@ const (
 	emailContentEnd   = "End of email content."
 )
 
-// framingLetters are the two lines' letters, lower-cased: a line of an
-// email that starts with the same letters reads as one of them.
-var framingLetters = []string{lettersOf(emailContentStart), lettersOf(emailContentEnd)}
+// framingLetters are the letters of every framing line Kivali writes,
+// an email's, an event's (calendar.go) and a document's
+// (docs_text.go), lower-cased: a line of untrusted text that starts
+// with the same letters reads as one of them.
+var framingLetters = []string{
+	lettersOf(emailContentStart), lettersOf(emailContentEnd),
+	lettersOf(eventContentStart), lettersOf(eventContentEnd),
+	lettersOf(documentContentStart), lettersOf(documentContentEnd),
+}
 
 // lettersOf is s's letters, lower-cased, after Unicode compatibility
 // folding (NFKC), so a full-width letter or a ligature reads as the
@@ -49,11 +55,14 @@ func lettersOf(s string) string {
 	}, norm.NFKC.String(s))
 }
 
-// delimitEmail puts an email's own text between the two lines. A line
-// of it that starts as either one reads, whatever its spaces, case,
-// punctuation and what follows, is quoted with "> ", so an email cannot
-// end its own text and go on as Kivali.
-func delimitEmail(s string) string {
+// delimitEmail puts an email's own text between the two lines.
+func delimitEmail(s string) string { return delimit(s, emailContentStart, emailContentEnd) }
+
+// delimit puts untrusted text between the lines start and end. A line
+// of it that starts as any framing line Kivali writes reads, whatever
+// its spaces, case, punctuation and what follows, is quoted with "> ",
+// so the text cannot end its own framing and go on as Kivali.
+func delimit(s, start, end string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
 		letters := lettersOf(l)
@@ -61,7 +70,7 @@ func delimitEmail(s string) string {
 			lines[i] = "> " + l
 		}
 	}
-	return emailContentStart + "\n" + strings.Join(lines, "\n") + "\n" + emailContentEnd
+	return start + "\n" + strings.Join(lines, "\n") + "\n" + end
 }
 
 // cleanText is untrusted text as the agent is given it: valid UTF-8,
@@ -522,28 +531,44 @@ func (l *linkList) marker(u string) string {
 // number, its host and the whole URL, each cut at linkClip characters;
 // "" for none.
 func (l *linkList) listing(n int) string {
-	urls := l.urls[:min(n, len(l.urls))]
-	if len(urls) == 0 {
-		return ""
+	var nums []int
+	for i := range max(min(n, len(l.urls)), 0) {
+		nums = append(nums, i+1)
 	}
+	return l.listingOf(nums)
+}
+
+// listingOf is listing of the links numbered nums, in that order; a
+// number the list does not hold is passed over.
+func (l *linkList) listingOf(nums []int) string {
 	var b strings.Builder
-	b.WriteString("Links:")
-	for i, u := range urls {
+	for _, n := range nums {
+		if n < 1 || n > len(l.urls) {
+			continue
+		}
+		if b.Len() == 0 {
+			b.WriteString("Links:")
+		}
+		u := l.urls[n-1]
 		shown := u
 		if cut, clipped := clip(u, linkClip); clipped {
 			shown = cut + "..."
 		}
-		fmt.Fprintf(&b, "\n%d. %s %s", i+1, linkHost(u), shown)
+		fmt.Fprintf(&b, "\n%d. %s %s", n, linkHost(u), shown)
 	}
 	return b.String()
 }
 
-// moreNote says how many links went unlisted; "" for none.
-func (l *linkList) moreNote() string {
+// moreNote says how many links of an email went unlisted; "" for none.
+func (l *linkList) moreNote() string { return l.moreNoteOf("email") }
+
+// moreNoteOf is moreNote for what holds the links ("email",
+// "document").
+func (l *linkList) moreNoteOf(what string) string {
 	if len(l.more) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("The email has %d more links, each shown as [link], that Kivali does not list.", len(l.more))
+	return fmt.Sprintf("The %s has %d more links, each shown as [link], that Kivali does not list.", what, len(l.more))
 }
 
 // linkHost is a URL's host as the agent reads it: lower-cased, as ASCII

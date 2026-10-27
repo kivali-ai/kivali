@@ -192,29 +192,15 @@ const (
 const maxAttendees = 100
 
 // The lines an event's own text, and list_calendars' list of names,
-// reach the agent between, as an email's text does (delimitEmail).
+// reach the agent between, as an email's text does (delimit).
 const (
 	eventContentStart = "Content of an untrusted calendar event follows."
 	eventContentEnd   = "End of calendar event content."
 )
 
-var eventFramingLetters = []string{lettersOf(eventContentStart), lettersOf(eventContentEnd)}
-
 // delimitEvent puts an event's own text, or a list of calendars, between
-// the two lines. A line of it that starts as one of them, or as one of
-// an email's, reads, whatever its spaces, case, punctuation and what
-// follows, is quoted with "> ", as delimitEmail quotes an email's.
-func delimitEvent(s string) string {
-	lines := strings.Split(s, "\n")
-	for i, l := range lines {
-		letters := lettersOf(l)
-		starts := func(f string) bool { return strings.HasPrefix(letters, f) }
-		if slices.ContainsFunc(eventFramingLetters, starts) || slices.ContainsFunc(framingLetters, starts) {
-			lines[i] = "> " + l
-		}
-	}
-	return eventContentStart + "\n" + strings.Join(lines, "\n") + "\n" + eventContentEnd
-}
+// the two lines (delimit).
+func delimitEvent(s string) string { return delimit(s, eventContentStart, eventContentEnd) }
 
 // now is the built-in's clock's time, the system's when it has none.
 func (g *GoogleWorkspace) now() time.Time {

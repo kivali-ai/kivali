@@ -60,7 +60,7 @@ var accessFields = []accessField{
 	{key: keyDocsRead, title: "May read documents", description: "Lets the agent find and read Google Docs and their comments, within the folders below. It changes nothing."},
 	{key: keyDocsWrite, title: "May write documents", description: "Lets the agent create documents, and change documents you own or it created, telling no one."},
 	{key: keyDocsSend, title: "May comment", description: "Lets the agent comment on documents and reply to comments. Not available in this version of Kivali."},
-	{key: keyDocsFolders, title: "Folders it may read", description: "The Drive folders the agent may read documents in. Leave it empty for every document you can open.", list: true},
+	{key: keyDocsFolders, title: "Folders it may read", description: "The Drive folders the agent may read and change documents in, the folders inside them included. Leave it empty for every document you can open.", list: true},
 	{key: keySendTo, title: "May send to", description: "Who the agent may send mail and invitations to: an address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone.", list: true},
 }
 
