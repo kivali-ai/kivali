@@ -193,6 +193,7 @@ func goldenFixtures() map[string]any {
 		"skill_downgrade":      goldenSkillDowngrade(),
 		"network":              Network{Hosts: []NetworkHost{{Host: "*.pypi.org"}, {Host: "deb.debian.org", Permanent: true}}, Exempt: []NetworkExemptAgent{{Slug: "dana", Name: "Dana"}}},
 		"network_add":          NetworkAdd{Host: "api.github.com"},
+		"backup_link":          BackupLink{URL: "/api/v1/org/backup/3f9c0d2e7a1b4c5d8e6f7a8b9c0d1e2f"},
 		"agent_network":        AgentNetwork{Team: []NetworkHost{{Host: "deb.debian.org", Permanent: true}}, Own: []string{"api.github.com"}, Exempt: false},
 		"agent_network_exempt": AgentNetworkExempt{Exempt: true},
 		// Integrations: integrations_golden_test.go.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -41,6 +42,12 @@ func TestAttachmentDownloadServesTheOriginal(t *testing.T) {
 			}
 			if cd := rr.Header().Get("content-disposition"); cd != `attachment; filename="`+name+`"` {
 				t.Errorf("content-disposition = %q, want an attachment download named %s", cd, name)
+			}
+			// The length is what lets a download show its progress
+			// (Kivali Desktop fetches the file itself and draws a bar
+			// from it); a chunked answer shows only bytes so far.
+			if cl := rr.Header().Get("content-length"); cl != strconv.Itoa(len(body)) {
+				t.Errorf("content-length = %q, want %d", cl, len(body))
 			}
 		})
 	}
