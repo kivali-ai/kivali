@@ -176,9 +176,19 @@ Kivali checks every call against the agent's access before the integration sees 
 
 A change to an agent's access, given or taken away, changes its tools from its next turn. Access you take away is refused from the next call, even in the middle of a turn.
 
+### Calls that wait for you
+
+Some actions of an integration that ships with Kivali reach other people, such as sending an email, and wait for you before anything happens. The agent's call does nothing yet: the agent is told it waits for your approval, that it will hear in its chat whether it was done, and that no word within a day means it was not, and it carries on with other work.
+
+You see an **Integration action** row in **Needs you**, from the agent, titled with what it would do, such as "Send an email to alice@example.org". Expand it to read the integration and the action, whom it reaches, and every field exactly as it will go, such as the subject and the whole body, as plain text. When the agent's calls of that integration returned mail or documents from outside your domain in the day before it asked, a marked line above the fields says how many and who sent the latest, such as "Before asking, this agent read 3 messages or documents from outside your domain, the latest from alice@example.org." Text from outside can try to steer an agent, so read the fields closely then.
+
+**Approve** runs it at once, with the connection as it is then, and **Deny** keeps it from happening; either can carry a note, which the agent reads. If something changed since the agent asked, such as its access being removed or the integration's sign-in lapsing, **Approve** says why it cannot run and the row stays until you approve again or deny it. The agent hears in its chat what happened: approved, with what the integration answered, or denied, with your note.
+
+A row nobody answers within a day ends with nothing done, and so does every waiting row of an integration you disable or disconnect, or of an agent you offboard. An agent can have five rows waiting at a time; a sixth request is refused, and the agent is told to wait for your answers. Waiting rows live only while Kivali runs: a restart drops them with nothing done.
+
 ## Recent calls
 
-**Recent calls** on an integration's page starts closed; select the arrow beside its heading to open it. It lists the latest calls through it, newest first: when, which agent, the action, whether Kivali let it through and, for a call that was refused or failed, why, and how long it took. Your own Test connection, the options an access form loads and your roll backs are in it too, under your name; a roll back reads **Roll back**, with the versions it went from and to. Calls an agent made are listed whether Kivali allowed them or not.
+**Recent calls** on an integration's page starts closed; select the arrow beside its heading to open it. It lists the latest calls through it, newest first: when, which agent, the action, whether Kivali let it through and, for a call that was refused or failed, why, and how long it took. Your own Test connection, the options an access form loads and your roll backs are in it too, under your name; a roll back reads **Roll back**, with the versions it went from and to. Calls an agent made are listed whether Kivali allowed them or not. A [call that waits for you](#calls-that-wait-for-you) is listed twice: once as it starts waiting, naming what it would do, and once as it ends, approved with what the integration answered, denied with your note, or not answered within a day.
 
 ## Disable, disconnect or uninstall it
 

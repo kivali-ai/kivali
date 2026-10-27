@@ -116,6 +116,7 @@ These cannot happen without you:
 - **Agents reaching each other.** Every message from one agent to another waits in your Queue until you release it, or until auto-release lets it through. A new team starts with auto-release at 30s; set it to Off to hold everything.
 - **Uploads from a web task.** A web task that uploads files waits in **Needs you** for you to approve the files and the site.
 - **Installing an integration.** Every version of an integration waits on its install screen until you approve it, and an agent gets an integration only when you give it access.
+- **Integration actions that reach other people.** An action such as sending an email waits in **Needs you** with every field exactly as it will go, and a warning when the agent read mail or documents from outside your domain first. It happens only once you approve it; nobody answering within a day is a denial. See [Calls that wait for you](integrations.md#calls-that-wait-for-you).
 - **Decisions an agent asks you for**, which wait in **Needs you**.
 
 Within its own sandbox and the hosts you allow, an agent works without asking: it runs commands, writes files, and calls the services it can reach. Choose your network list with that in mind, and read [what the network limits do not stop](#what-this-does-not-stop).
