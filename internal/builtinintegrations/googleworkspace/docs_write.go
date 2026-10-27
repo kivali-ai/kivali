@@ -8,14 +8,17 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
 
 // Docs' writing: creating a document, adding to one and replacing text
 // in one. A write changes only a document the signed-in account owns or
-// Kivali made (writableDocument), within the folders the access
-// includes, and everything is checked before anything is changed.
+// that counts as Kivali's (writableDocument), within the folders the
+// access includes, and everything is checked before anything is
+// changed. Each write's audit is set before its request, so a write
+// Google does not answer still names what it changed.
 
 // maxWriteChars bounds the text one write adds.
 const maxWriteChars = 100000
@@ -26,7 +29,8 @@ const markdownWords = "The text takes a little Markdown: a line starting with # 
 
 // writableDocument is the Drive file of the document id, checked for a
 // write: readable (readableDocument), and owned by the signed-in
-// account or made by Kivali.
+// account or Kivali's, marked as made by Kivali and owned by no one
+// else (driveFile.writableBy).
 func (c *call) writableDocument(ctx context.Context, id string) (driveFile, error) {
 	f, err := c.readableDocument(ctx, id)
 	if err != nil {
@@ -36,7 +40,7 @@ func (c *call) writableDocument(ctx context.Context, id string) (driveFile, erro
 	if err != nil {
 		return driveFile{}, err
 	}
-	if !f.ownedBy(me.address) && !f.madeByKivali() {
+	if !f.writableBy(me.address) {
 		return driveFile{}, refuse("Document "+id+" is not the owner's and Kivali did not make it: you may change only documents the owner owns or Kivali made.",
 			"document "+id+" is neither the owner's nor made by Kivali")
 	}
@@ -53,11 +57,25 @@ func unanswered(err error) error {
 	return err
 }
 
+// sharedNote ends a write's audit for a document or folder shared with
+// others, whom the change reaches; "" for one that is not.
+func sharedNote(f driveFile) string {
+	if f.Shared {
+		return " (shared with others)"
+	}
+	return ""
+}
+
 // batchUpdate applies requests to the document id, in order, and reads
-// Google's replies into out (nil for none).
-func (c *call) batchUpdate(ctx context.Context, id string, requests []any, out any) error {
-	return c.g.post(ctx, c.token, docsAPI, "/v1/documents/"+url.PathEscape(id)+":batchUpdate",
-		map[string]any{"requests": requests}, out)
+// Google's replies into out (nil for none). revision, when it is not
+// "", is the revision the requests' indexes were read from: Google
+// applies them to that revision, moved past what others changed since.
+func (c *call) batchUpdate(ctx context.Context, id, revision string, requests []any, out any) error {
+	body := map[string]any{"requests": requests}
+	if revision != "" {
+		body["writeControl"] = map[string]any{"targetRevisionId": revision}
+	}
+	return c.g.post(ctx, c.token, docsAPI, "/v1/documents/"+url.PathEscape(id)+":batchUpdate", body, out)
 }
 
 // mdParagraph is one line of the Markdown a write takes: its text
@@ -78,9 +96,17 @@ var (
 
 // parseMarkdown reads s, a line a paragraph, in the Markdown
 // markdownWords describes. Blank lines at its end are dropped; other
-// Markdown is written as it is.
+// Markdown is written as it is. The Docs API strips the Private Use
+// Area (U+E000 to U+F8FF) from text it inserts, so it is taken out
+// first, and the indexes counted are those of the text Google keeps.
 func parseMarkdown(s string) []mdParagraph {
 	s, _ = cleanText(s)
+	s = strings.Map(func(r rune) rune {
+		if r >= 0xE000 && r <= 0xF8FF {
+			return -1
+		}
+		return r
+	}, s)
 	s = strings.TrimRight(s, " \t\n")
 	if s == "" {
 		return nil
@@ -139,9 +165,10 @@ func utf16Len(s string) int {
 // insertRequests are the Docs API requests that write paras at index
 // at, after prefix ("\n" to start a paragraph of their own after one
 // that holds text). Text inserted takes the style of the paragraph it
-// lands in, so the paragraphs written are first set to normal text, no
-// list and no text style of their own, then given their headings, list
-// items and bold.
+// lands in, so the paragraphs written are first set to normal text with
+// no paragraph style of their own (fields "*": no shading, indent or
+// spacing kept), no list and no text style of their own, then given
+// their headings, list items and bold.
 func insertRequests(at int, prefix string, paras []mdParagraph) []any {
 	texts := make([]string, len(paras))
 	for i, p := range paras {
@@ -152,7 +179,7 @@ func insertRequests(at int, prefix string, paras []mdParagraph) []any {
 	span := func(s, e int) map[string]any { return map[string]any{"startIndex": s, "endIndex": e} }
 	reqs := []any{
 		map[string]any{"insertText": map[string]any{"location": map[string]any{"index": at}, "text": full}},
-		map[string]any{"updateParagraphStyle": map[string]any{"range": span(start, end), "paragraphStyle": map[string]any{"namedStyleType": "NORMAL_TEXT"}, "fields": "namedStyleType"}},
+		map[string]any{"updateParagraphStyle": map[string]any{"range": span(start, end), "paragraphStyle": map[string]any{"namedStyleType": "NORMAL_TEXT"}, "fields": "*"}},
 		map[string]any{"deleteParagraphBullets": map[string]any{"range": span(start, end)}},
 		map[string]any{"updateTextStyle": map[string]any{"range": span(start, end), "textStyle": map[string]any{}, "fields": "*"}},
 	}
@@ -209,13 +236,18 @@ func bodyEnd(body *docsBody) (at int, empty bool) {
 }
 
 // writeText is the text argument key of a write as the agent gave it,
-// its paragraphs read: required, at most maxWriteChars characters.
+// its paragraphs read: required, at most maxWriteChars characters, and,
+// when given, holding text once its marks are taken out, so a write
+// never makes a document or adds paragraphs with nothing in them.
 func writeText(a args, key string, required bool) ([]mdParagraph, int, error) {
 	s, err := a.text(key, required, maxWriteChars)
 	if err != nil {
 		return nil, 0, err
 	}
 	paras := parseMarkdown(s)
+	if s != "" && !slices.ContainsFunc(paras, func(p mdParagraph) bool { return strings.TrimSpace(p.text) != "" }) {
+		return nil, 0, badArgument(key + " holds no text once its Markdown marks are taken out.")
+	}
 	n := 0
 	for i, p := range paras {
 		n += utf8.RuneCountInString(p.text)
@@ -247,32 +279,45 @@ func createDocument(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if folder != "" {
-		f, err := c.file(ctx, folder, "id,mimeType")
-		if err != nil {
-			return nil, err
-		}
-		if f.MimeType != folderType {
-			return nil, badArgument("folder_id is not a folder's id; search_documents lists the folder each document is in.")
-		}
-		in, err := c.inFolders(ctx, []string{folder})
-		if err != nil {
-			return nil, err
-		}
-		if !in {
-			return nil, folderNotIncluded(folder)
-		}
-	} else if len(c.access.docsFolders) > 0 {
+	named := folder != ""
+	if !named && len(c.access.docsFolders) > 0 {
 		folder = c.access.docsFolders[0]
+	}
+	// shared is the audit's note for a folder shared with others, whom
+	// a document made in it reaches.
+	shared := ""
+	if folder != "" {
+		f, err := c.file(ctx, folder, "id,mimeType,shared")
+		if err != nil {
+			return nil, err
+		}
+		if named {
+			if f.MimeType != folderType {
+				return nil, badArgument("folder_id is not a folder's id; search_documents lists the folder each document is in.")
+			}
+			in, err := c.inFolders(ctx, []string{folder})
+			if err != nil {
+				return nil, err
+			}
+			if !in {
+				return nil, folderNotIncluded(folder)
+			}
+		}
+		shared = sharedNote(f)
 	}
 
 	asked := folder
+	if folder != "" {
+		c.audit = "creating a document in folder " + folder + shared
+	} else {
+		c.audit = "creating a document"
+	}
 	id, refused, err := c.newDocument(ctx, title, folder)
 	if err != nil {
 		return nil, unanswered(err)
 	}
 	if refused != "" {
-		folder = ""
+		folder, shared = "", ""
 	}
 	where := ""
 	if folder != "" {
@@ -282,15 +327,15 @@ func createDocument(ctx context.Context, c *call) (any, error) {
 	// its text from index 1.
 	why := ""
 	if len(paras) > 0 {
-		if err := c.batchUpdate(ctx, id, insertRequests(1, "", paras), nil); err != nil {
+		if err := c.batchUpdate(ctx, id, "", insertRequests(1, "", paras), nil); err != nil {
 			why = writeWords(err)
 		}
 	}
 	answer := fmt.Sprintf("Created document %s%s with %d characters of text, marked as made by Kivali.", id, where, chars)
-	c.audit = fmt.Sprintf("created document %s%s with %d characters of text", id, where, chars)
+	c.audit = fmt.Sprintf("created document %s%s with %d characters of text%s", id, where, chars, shared)
 	if why != "" {
 		answer = fmt.Sprintf("Created document %s%s, marked as made by Kivali, but Kivali could not write its text: %s", id, where, why)
-		c.audit = fmt.Sprintf("created document %s%s; could not write its text", id, where)
+		c.audit = fmt.Sprintf("created document %s%s%s; could not write its text", id, where, shared)
 	}
 	if refused != "" {
 		answer += " Google would not put it in folder " + asked + " (" + refused + "), so Kivali made it at the top of the owner's My Drive."
@@ -364,7 +409,8 @@ func writeWords(err error) string {
 }
 
 // appendToDocument adds text at the end of a document's body (its
-// first tab's), as its own paragraphs.
+// first tab's), as its own paragraphs, against the revision it read the
+// end from.
 func appendToDocument(ctx context.Context, c *call) (any, error) {
 	id, err := c.args.id("document_id", driveIDPattern)
 	if err != nil {
@@ -374,13 +420,11 @@ func appendToDocument(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(paras) == 0 {
-		return nil, badArgument("text is required.")
-	}
-	if _, err := c.writableDocument(ctx, id); err != nil {
+	f, err := c.writableDocument(ctx, id)
+	if err != nil {
 		return nil, err
 	}
-	d, err := c.document(ctx, id, false)
+	d, err := c.documentEnd(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -389,10 +433,11 @@ func appendToDocument(ctx context.Context, c *call) (any, error) {
 	if empty {
 		prefix = ""
 	}
-	if err := c.batchUpdate(ctx, id, insertRequests(at, prefix, paras), nil); err != nil {
+	c.audit = fmt.Sprintf("adding %d characters to the end of document %s%s", chars, id, sharedNote(f))
+	if err := c.batchUpdate(ctx, id, d.RevisionID, insertRequests(at, prefix, paras), nil); err != nil {
 		return nil, unanswered(err)
 	}
-	c.audit = fmt.Sprintf("added %d characters to the end of document %s", chars, id)
+	c.audit = fmt.Sprintf("added %d characters to the end of document %s%s", chars, id, sharedNote(f))
 	return fmt.Sprintf("Added %d characters at the end of document %s.", chars, id), nil
 }
 
@@ -415,7 +460,8 @@ func replaceText(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.writableDocument(ctx, id); err != nil {
+	f, err := c.writableDocument(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	var answer struct {
@@ -429,14 +475,15 @@ func replaceText(ctx context.Context, c *call) (any, error) {
 		"containsText": map[string]any{"text": find, "matchCase": matchCase},
 		"replaceText":  with,
 	}}
-	if err := c.batchUpdate(ctx, id, []any{req}, &answer); err != nil {
+	c.audit = "replacing text in document " + id + sharedNote(f)
+	if err := c.batchUpdate(ctx, id, "", []any{req}, &answer); err != nil {
 		return nil, unanswered(err)
 	}
 	n := 0
 	if len(answer.Replies) > 0 && answer.Replies[0].ReplaceAllText != nil {
 		n = answer.Replies[0].ReplaceAllText.OccurrencesChanged
 	}
-	c.audit = fmt.Sprintf("replaced %d occurrences in document %s", n, id)
+	c.audit = fmt.Sprintf("replaced %d occurrences in document %s%s", n, id, sharedNote(f))
 	if n == 0 {
 		return "Document " + id + " holds no occurrence of the text; nothing was changed.", nil
 	}

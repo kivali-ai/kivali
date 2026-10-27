@@ -406,20 +406,20 @@ Each Calendar call is in **Recent calls**, naming the events it read, created, c
 With **May read documents**, an agent can:
 
 - Search your Google Docs, those shared with you included, by words in their name or text, 25 a page, each listed with its owner, whether that is your domain, whether it is shared, when it last changed and whether Kivali made it.
-- Read a document as text: its headings, paragraphs, lists and tables, in every tab.
+- Read a document as text: its headings, paragraphs, lists and tables, in every tab. Suggestions no one has accepted are left out.
 - List a document's comments, each with who wrote it, whether it is resolved and how many replies it has.
 
 With **May write documents**, an agent can:
 
 - Create a document, with its text, in a folder. Kivali marks each document it creates as made by Kivali, in a note on the document that only your OAuth client can read or set. Google Drive makes the document with that note, in its folder. When Drive will not add a file to the folder, Kivali makes the document at the top of your My Drive instead and tells the agent, which cannot read it there while its access names folders.
-- Add text at the end of a document.
-- Replace a piece of text everywhere it appears in a document.
+- Add text at the end of a document's first tab.
+- Replace a piece of text everywhere it appears in a document, its headers, footers and footnotes included.
 
 What an agent writes takes a little Markdown: a line starting with `#` is a heading, one starting with `-` is a list item, and `**text**` is bold.
 
-An agent changes only documents you own or that Kivali made. A document someone else owns and shared with you is refused, so an agent cannot be steered into changing what other people wrote.
+An agent changes only documents you own, and documents Kivali made that no one else owns, such as one it made in a shared drive. A document someone else owns and shared with you is refused, so an agent cannot be steered into changing what other people wrote. A change to a document shared with others is seen by everyone it is shared with, and its row in **Recent calls** says "(shared with others)", as does the row of a document made in a folder shared with others.
 
-It reads and changes only documents in the folders its access names under **Folders it may read**, or in folders inside them, up to ten folders down; with that list empty, every document you can open. A document shared with you whose folder you cannot open is in none of them. A document an agent creates goes in the folder it names, which must be within the list, or else in the first folder of the list.
+It reads and changes only documents in the folders its access names under **Folders it may read**, or in folders inside them, up to ten folders down; with that list empty, every document you can open. A document shared with you whose folder you cannot open is in none of them. A document in your trash is left out of a search and refused when an agent names it. A document an agent creates goes in the folder it names, which must be within the list, or else in the first folder of the list.
 
 #### What the agent reads in a document
 

@@ -2,6 +2,7 @@ package googleworkspace
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -34,13 +35,16 @@ type fakeDocs struct {
 
 // fakeFile is one Drive file: a folder, or a document, whose
 // documents.get answer is raw when set, else built from paras (the
-// writes' model of a body). text is what fullText finds.
+// writes' model of a body) at revision rev, which each batchUpdate
+// moves on. text is what fullText finds; huge makes documents.get
+// answer more than Kivali reads.
 type fakeFile struct {
 	file     driveFile
-	trashed  bool
 	text     string
 	raw      string
 	paras    []fakePara
+	rev      int
+	huge     bool
 	comments []map[string]any
 	// refuseChild, on a folder, is Drive's answer to making a file in
 	// it.
@@ -116,6 +120,15 @@ func (d *fakeDocs) changes() []fakeWrite {
 	return slices.Clone(d.writes)
 }
 
+// hangUp closes the request's connection with no answer, as a Google
+// that never answers leaves it.
+func hangUp(w http.ResponseWriter) {
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err == nil {
+		_ = conn.Close()
+	}
+}
+
 func fakeFail(w http.ResponseWriter, status int, message string) {
 	w.WriteHeader(status)
 	b, _ := json.Marshal(map[string]any{"error": map[string]any{"code": status, "message": message}})
@@ -140,11 +153,6 @@ func (d *fakeDocs) handler(origin string, next http.Handler) http.Handler {
 			fakeFail(w, http.StatusUnauthorized, "Request had invalid authentication credentials.")
 			return
 		}
-		if failing {
-			w.WriteHeader(fail.status)
-			_, _ = w.Write([]byte(fail.body))
-			return
-		}
 		var body map[string]any
 		if r.Method != http.MethodGet {
 			b, _ := io.ReadAll(r.Body)
@@ -155,6 +163,15 @@ func (d *fakeDocs) handler(origin string, next http.Handler) http.Handler {
 			d.mu.Lock()
 			d.writes = append(d.writes, fakeWrite{r.Method, p + "?" + r.URL.RawQuery, body})
 			d.mu.Unlock()
+		}
+		switch {
+		case failing && fail.status == 0:
+			hangUp(w)
+			return
+		case failing:
+			w.WriteHeader(fail.status)
+			_, _ = w.Write([]byte(fail.body))
+			return
 		}
 		switch {
 		case origin == "www" && p == "/drive/v3/files" && r.Method == http.MethodGet:
@@ -182,11 +199,7 @@ func (d *fakeDocs) handler(origin string, next http.Handler) http.Handler {
 			}
 			d.mu.Lock()
 			defer d.mu.Unlock()
-			if ff.raw != "" {
-				_, _ = w.Write([]byte(ff.raw))
-				return
-			}
-			writeJSON(w, ff.modelled(r.URL.Query().Get("includeTabsContent") == "true"))
+			d.document(w, r, ff)
 		default:
 			fakeFail(w, http.StatusNotFound, "no "+r.Method+" "+p+" on "+origin)
 		}
@@ -237,7 +250,7 @@ func (d *fakeDocs) list(w http.ResponseWriter, r *http.Request) {
 	var hits []driveFile
 	for _, id := range d.order {
 		ff := d.files[id]
-		if ff.file.MimeType != want || ff.trashed {
+		if ff.file.MimeType != want || ff.file.Trashed {
 			continue
 		}
 		if len(parents) > 0 && !slices.ContainsFunc(ff.file.Parents, func(p string) bool { return slices.Contains(parents, p) }) {
@@ -312,8 +325,7 @@ func (d *fakeDocs) create(w http.ResponseWriter, body map[string]any) {
 				fakeFail(w, http.StatusNotFound, "File not found: "+id+".")
 				return
 			case folder.refuseChild != nil && folder.refuseChild.status == 0:
-				conn, _, _ := w.(http.Hijacker).Hijack()
-				_ = conn.Close()
+				hangUp(w)
 				return
 			case folder.refuseChild != nil:
 				w.WriteHeader(folder.refuseChild.status)
@@ -367,7 +379,7 @@ func (ff *fakeFile) modelled(tabs bool) map[string]any {
 		content = append(content, map[string]any{"startIndex": starts[i], "endIndex": end, "paragraph": para})
 	}
 	body := map[string]any{"content": content}
-	doc := map[string]any{"documentId": ff.file.ID, "title": ff.file.Name}
+	doc := map[string]any{"documentId": ff.file.ID, "revisionId": "rev" + strconv.Itoa(ff.rev), "title": ff.file.Name}
 	if tabs {
 		doc["tabs"] = []any{map[string]any{"tabProperties": map[string]any{"tabId": "t.0", "title": "Tab 1"}, "documentTab": map[string]any{"body": body}}}
 	} else {
@@ -397,6 +409,14 @@ func (d *fakeDocs) batch(w http.ResponseWriter, id string, body map[string]any) 
 	if ff == nil || ff.raw != "" {
 		fakeFail(w, http.StatusNotFound, "Requested entity was not found.")
 		return
+	}
+	if wc, ok := body["writeControl"].(map[string]any); ok {
+		target, _ := wc["targetRevisionId"].(string)
+		n, err := strconv.Atoi(strings.TrimPrefix(target, "rev"))
+		if !strings.HasPrefix(target, "rev") || err != nil || n < 0 || n > ff.rev {
+			fakeFail(w, http.StatusBadRequest, "The revision "+target+" is not one of the document's.")
+			return
+		}
 	}
 	reqs, _ := body["requests"].([]any)
 	var replies []any
@@ -509,5 +529,102 @@ func (d *fakeDocs) batch(w http.ResponseWriter, id string, body map[string]any) 
 		}
 		replies = append(replies, reply)
 	}
+	ff.rev++
 	writeJSON(w, map[string]any{"documentId": id, "replies": replies})
+}
+
+// document is documents.get's answer for ff: raw, or the modelled
+// body, as far as the request's fields name it, as Google gives a
+// partial answer. A huge document answers more than Kivali reads.
+func (d *fakeDocs) document(w http.ResponseWriter, r *http.Request, ff *fakeFile) {
+	if ff.huge {
+		chunk := []byte(strings.Repeat("a", 1<<20))
+		_, _ = w.Write([]byte(`{"title":"`))
+		for range maxDocumentBytes>>20 + 1 {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+		_, _ = w.Write([]byte(`"}`))
+		return
+	}
+	raw := []byte(ff.raw)
+	if ff.raw == "" {
+		raw, _ = json.Marshal(ff.modelled(r.URL.Query().Get("includeTabsContent") == "true"))
+	}
+	var doc any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		fakeFail(w, http.StatusInternalServerError, "the fake's document is not JSON")
+		return
+	}
+	if fields := r.URL.Query().Get("fields"); fields != "" {
+		mask, rest, err := parseFields(fields)
+		if err != nil || rest != "" {
+			fakeFail(w, http.StatusBadRequest, "Invalid field selection "+fields)
+			return
+		}
+		doc = mask.apply(doc)
+	}
+	writeJSON(w, doc)
+}
+
+// fieldMask is a partial answer's fields, as Google reads its fields
+// parameter: each field named, with the fields of its own named, nil
+// for all of it.
+type fieldMask map[string]fieldMask
+
+var fieldName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*`)
+
+// parseFields reads a list of fields, each a name and, in brackets,
+// the list of its own, up to what is not one; rest is what follows.
+func parseFields(s string) (m fieldMask, rest string, err error) {
+	m = fieldMask{}
+	for {
+		name := fieldName.FindString(s)
+		if name == "" {
+			return nil, s, errors.New("no field name at " + s)
+		}
+		s = s[len(name):]
+		var sub fieldMask
+		if strings.HasPrefix(s, "(") {
+			if sub, s, err = parseFields(s[1:]); err != nil {
+				return nil, s, err
+			}
+			if !strings.HasPrefix(s, ")") {
+				return nil, s, errors.New("no closing bracket at " + s)
+			}
+			s = s[1:]
+		}
+		m[name] = sub
+		if !strings.HasPrefix(s, ",") {
+			return m, s, nil
+		}
+		s = s[1:]
+	}
+}
+
+// apply is v with only the fields m names: an object's keys it names,
+// each as its own fields name it, and each element of a list so.
+func (m fieldMask) apply(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for k, sub := range m {
+			if val, ok := x[k]; ok {
+				if sub == nil {
+					out[k] = val
+				} else {
+					out[k] = sub.apply(val)
+				}
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = m.apply(e)
+		}
+		return out
+	}
+	return v
 }

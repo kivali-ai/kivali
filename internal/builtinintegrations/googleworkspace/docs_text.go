@@ -23,8 +23,10 @@ func delimitDocument(s string) string { return delimit(s, documentContentStart, 
 
 // docsDocument is a document as the Docs API answers documents.get:
 // with includeTabsContent, every tab's content under Tabs; without, the
-// first tab's under Body, DocumentStyle and NamedStyles.
+// first tab's under Body, DocumentStyle and NamedStyles. RevisionID is
+// the revision the answer is of.
 type docsDocument struct {
+	RevisionID    string           `json:"revisionId"`
 	Title         string           `json:"title"`
 	Body          *docsBody        `json:"body"`
 	DocumentStyle *docsDocStyle    `json:"documentStyle"`
@@ -58,12 +60,30 @@ type docsDocStyle struct {
 }
 
 // docsNamedStyles is a tab's named styles (Normal text, Heading 1 and
-// the rest), whose text styles a run inherits what it does not set.
+// the rest), whose text styles a run inherits what it does not set,
+// and whose paragraph shading a paragraph inherits when it sets none.
 type docsNamedStyles struct {
 	Styles []struct {
 		NamedStyleType string        `json:"namedStyleType"`
 		TextStyle      docsTextStyle `json:"textStyle"`
+		ParagraphStyle struct {
+			Shading *docsShading `json:"shading"`
+		} `json:"paragraphStyle"`
 	} `json:"styles"`
+}
+
+// docsShading is a paragraph's shading.
+type docsShading struct {
+	BackgroundColor *docsColor `json:"backgroundColor"`
+}
+
+// color is the colour s gives behind a paragraph, nil when s gives
+// none of its own and the paragraph inherits it.
+func (s *docsShading) color() *docsColor {
+	if s == nil {
+		return nil
+	}
+	return s.BackgroundColor
 }
 
 // docsElement is one structural element of a body or a table cell: a
@@ -79,10 +99,8 @@ type docsElement struct {
 type docsParagraph struct {
 	Elements       []docsInline `json:"elements"`
 	ParagraphStyle struct {
-		NamedStyleType string `json:"namedStyleType"`
-		Shading        *struct {
-			BackgroundColor *docsColor `json:"backgroundColor"`
-		} `json:"shading"`
+		NamedStyleType string       `json:"namedStyleType"`
+		Shading        *docsShading `json:"shading"`
 	} `json:"paragraphStyle"`
 	Bullet *struct {
 		NestingLevel int `json:"nestingLevel"`
@@ -242,10 +260,12 @@ type documentText struct {
 type docRenderer struct {
 	links  *linkList
 	hidden int
-	// named is the tab's named styles' text styles, by type; page the
-	// colour of its page, white unless it sets one.
-	named map[string]docsTextStyle
-	page  rgb
+	// named is the tab's named styles' text styles, by type, and
+	// shading their paragraph shading; page the colour of its page,
+	// white unless it sets one.
+	named   map[string]docsTextStyle
+	shading map[string]*docsColor
+	page    rgb
 }
 
 // renderDocument is d as text. A heading starts with as many # as its
@@ -288,10 +308,11 @@ func renderDocument(d docsDocument) *documentText {
 			}
 			lines = append(lines, "Tab: "+r.links.replace(cmp.Or(oneLine(p.title, nameClip), "(no name)")))
 		}
-		r.named = map[string]docsTextStyle{}
+		r.named, r.shading = map[string]docsTextStyle{}, map[string]*docsColor{}
 		if p.styles != nil {
 			for _, s := range p.styles.Styles {
 				r.named[s.NamedStyleType] = s.TextStyle
+				r.shading[s.NamedStyleType] = s.ParagraphStyle.Shading.color()
 			}
 		}
 		r.page = white
@@ -362,29 +383,18 @@ func (r *docRenderer) content(els []docsElement, cell *docsColor) []string {
 // keep is false for a paragraph whose text is all hidden, which leaves
 // no line; an empty paragraph is an empty line.
 func (r *docRenderer) paragraph(p *docsParagraph, cell *docsColor) (line string, keep bool) {
+	t := p.ParagraphStyle.NamedStyleType
 	base := r.named["NORMAL_TEXT"]
-	if t := p.ParagraphStyle.NamedStyleType; t != "" && t != "NORMAL_TEXT" {
+	if t != "" && t != "NORMAL_TEXT" {
 		base = r.named[t].over(base)
 	}
-	var shading *docsColor
-	if p.ParagraphStyle.Shading != nil {
-		shading = p.ParagraphStyle.Shading.BackgroundColor
-	}
-	var b, group strings.Builder
-	groupURL, hid := "", false
-	// flush writes the runs since the last one with another link: their
-	// text with its URLs replaced, then the link's marker.
-	flush := func() {
-		text := r.links.replace(group.String())
-		if groupURL != "" && strings.TrimSpace(text) != "" {
-			m := r.links.marker(groupURL)
-			if kept := strings.TrimRight(text, " \t\n"); !strings.HasSuffix(kept, m) {
-				text = kept + " " + m + text[len(kept):]
-			}
-		}
-		b.WriteString(text)
-		group.Reset()
-	}
+	// A paragraph that sets no shading has its named style's, else
+	// Normal text's.
+	shading := cmp.Or(p.ParagraphStyle.Shading.color(), r.shading[t], r.shading["NORMAL_TEXT"])
+	// groups are the runs a reader sees, consecutive ones with the same
+	// link (or none) joined.
+	var groups []linkGroup
+	hid := false
 	for _, el := range p.Elements {
 		var content, link string
 		var st docsTextStyle
@@ -415,13 +425,26 @@ func (r *docRenderer) paragraph(p *docsParagraph, cell *docsColor) (line string,
 			hid = hid || strings.TrimSpace(content) != ""
 			continue
 		}
-		if link != groupURL {
-			flush()
-			groupURL = link
+		if n := len(groups); n > 0 && groups[n-1].link == link {
+			groups[n-1].text += content
+		} else {
+			groups = append(groups, linkGroup{content, link})
 		}
-		group.WriteString(content)
 	}
-	flush()
+	spaceMarkers(groups)
+	// Each group is its text with its URLs replaced, then its link's
+	// marker.
+	var b strings.Builder
+	for _, g := range groups {
+		text := r.links.replace(g.text)
+		if g.link != "" && strings.TrimSpace(text) != "" {
+			m := r.links.marker(g.link)
+			if kept := strings.TrimRight(text, " \t\n"); !strings.HasSuffix(kept, m) {
+				text = kept + " " + m + text[len(kept):]
+			}
+		}
+		b.WriteString(text)
+	}
 	text := strings.TrimRight(b.String(), " \t\n")
 	if strings.TrimSpace(text) == "" {
 		return "", !hid
@@ -433,6 +456,33 @@ func (r *docRenderer) paragraph(p *docsParagraph, cell *docsColor) (line string,
 		text = headingMarks[p.ParagraphStyle.NamedStyleType] + strings.TrimLeft(text, " \t")
 	}
 	return text, true
+}
+
+// linkGroup is runs of a paragraph that share a link, "" for none.
+type linkGroup struct{ text, link string }
+
+// spaceMarkers spaces apart the text of groups that reads as a marker's
+// start ("[link") across the whole paragraph, as linkList.replace does
+// within one group's text, so that "[" ending one group and "link"
+// starting the next do not read as a marker once the paragraph is
+// joined. Each "[" of such text gets a space after it.
+func spaceMarkers(groups []linkGroup) {
+	var joined strings.Builder
+	starts, ends := make([]int, len(groups)), make([]int, len(groups))
+	for i, g := range groups {
+		starts[i] = joined.Len()
+		joined.WriteString(g.text)
+		ends[i] = joined.Len()
+	}
+	// From the last, so the offsets of those before still hold.
+	for _, m := range slices.Backward(markerLike.FindAllStringIndex(joined.String(), -1)) {
+		i := 0
+		for ends[i] <= m[0] {
+			i++
+		}
+		at := m[0] - starts[i] + 1
+		groups[i].text = groups[i].text[:at] + " " + groups[i].text[at:]
+	}
 }
 
 // httpURL is u, cleaned, when it is an http or https URL; "" for any
@@ -480,7 +530,8 @@ func (d *documentText) page(id, provenance string, offset int) (string, int) {
 
 // markerSafe is end, moved back to the start of a marker it would cut.
 // Every "[link" in the body is a marker's start: the document's own
-// text that reads like one is spaced apart (linkList.replace).
+// text that reads like one is spaced apart (linkList.replace,
+// spaceMarkers).
 func markerSafe(body []rune, start, end int) int {
 	if end >= len(body) {
 		return len(body)

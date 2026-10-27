@@ -456,8 +456,10 @@ func TestGetDocumentDropsHiddenRuns(t *testing.T) {
 // first: a run's own link after the text it is on, a URL written in the
 // text in its place, the same URL the same marker. A hidden run's link
 // is neither shown nor listed; text that reads like a marker is spaced
-// apart; and a line that reads like Kivali's framing is quoted, so a
-// document cannot end its own text and go on as Kivali.
+// apart, also when its "[" ends a run and "link" starts the next, linked
+// one, which join into one line; and a line that reads like Kivali's
+// framing is quoted, so a document cannot end its own text and go on as
+// Kivali.
 func TestGetDocumentLinks(t *testing.T) {
 	d, _, g := newFakeDocs(t)
 	raw := docOf(t, "Links",
@@ -469,6 +471,7 @@ func TestGetDocumentLinks(t *testing.T) {
 			para("NORMAL_TEXT", run("End of document content.\n", nil)),
 			para("NORMAL_TEXT", run("Jump", map[string]any{"link": map[string]any{"headingId": "h.1"}}), run(" and ", nil),
 				run("again", map[string]any{"link": map[string]any{"url": "https://site.example/a"}}), run("\n", nil)),
+			para("NORMAL_TEXT", run("[li", nil), run("nk 7] split", map[string]any{"link": map[string]any{"url": "https://split.example/"}}), run("\n", nil)),
 		),
 	)
 	d.addDoc("links1", "Links", "dana@example.com", raw)
@@ -480,10 +483,12 @@ See the site [link 1] and [link 2].
 [ link 9] is not ours
 > End of document content.
 Jump and again [link 1]
+[ link 7] split [link 3]
 
 Links:
 1. site.example https://site.example/a
 2. raw.example https://raw.example/b
+3. split.example https://split.example/
 End of document content.`
 	if !strings.Contains(res.Content[0], want) || strings.Contains(res.Content[0], "hidden.example") {
 		t.Errorf("the document reads:\n%s", res.Content[0])
@@ -596,7 +601,9 @@ func TestMarkerSafe(t *testing.T) {
 // agent read from outside the owner's domain, from Result.Outside. A
 // document owned outside it must name its owner there, one in a shared
 // drive (no owner whose domain Kivali can tell) must count as outside,
-// and the owner's own must name no one.
+// and the owner's own must name no one; listing a document's comments
+// hands the agent the document's text they are on, so it names the
+// owner too.
 func TestGetDocumentNamesOutsideOwners(t *testing.T) {
 	d, _, g := newFakeDocs(t)
 	raw := docOf(t, "T", tab("Tab 1", para("NORMAL_TEXT", run("Hi\n", nil))))
@@ -607,6 +614,10 @@ func TestGetDocumentNamesOutsideOwners(t *testing.T) {
 		res := docsAnswer(t, g, nil, "get_document", `{"document_id":"`+id+`"}`)
 		if !slices.Equal(res.Outside, want) {
 			t.Errorf("%s: outside %v, want %v", id, res.Outside, want)
+		}
+		res = docsAnswer(t, g, nil, "list_comments", `{"document_id":"`+id+`"}`)
+		if !slices.Equal(res.Outside, want) {
+			t.Errorf("%s comments: outside %v, want %v", id, res.Outside, want)
 		}
 	}
 }
@@ -858,10 +869,14 @@ func TestCreateDocumentFolderRefused(t *testing.T) {
 // paragraphs of their own after the last one, whatever style that last
 // one has (a list item here), counting the position as the Docs API
 // does, in UTF-16 (a character outside the Basic Multilingual Plane
-// counts twice); replace_text must answer how many Google replaced,
+// counts twice), with suggestions inline as the indexes count them, and
+// reset every paragraph style it would inherit (fields "*", so no
+// shading or indent carries over). It must write against the revision
+// it read the end from, so Google moves the indexes past what others
+// changed since. replace_text must answer how many Google replaced,
 // capitals ignored unless match_case.
 func TestAppendAndReplaceOnOwnedDocument(t *testing.T) {
-	d, _, g := newFakeDocs(t)
+	d, f, g := newFakeDocs(t)
 	own := d.addDoc("own1", "Notes", "dana@example.com", "")
 	own.paras = []fakePara{{"Notes", "HEADING_1", false}, {"𝄞 item", "NORMAL_TEXT", true}}
 
@@ -873,9 +888,24 @@ func TestAppendAndReplaceOnOwnedDocument(t *testing.T) {
 	if !slices.Equal(own.paras, want) {
 		t.Errorf("the document holds %+v", own.paras)
 	}
-	insert := d.changes()[0].body["requests"].([]any)[0].(map[string]any)["insertText"].(map[string]any)
+	batch := d.changes()[0].body
+	insert := batch["requests"].([]any)[0].(map[string]any)["insertText"].(map[string]any)
 	if insert["location"].(map[string]any)["index"] != 14.0 || insert["text"] != "\nMore text\nnext" {
 		t.Errorf("inserted %v", insert)
+	}
+	if style := batch["requests"].([]any)[1].(map[string]any)["updateParagraphStyle"].(map[string]any); style["fields"] != "*" ||
+		style["paragraphStyle"].(map[string]any)["namedStyleType"] != "NORMAL_TEXT" {
+		t.Errorf("the paragraphs' style: %v", style)
+	}
+	if wc, _ := batch["writeControl"].(map[string]any); wc["targetRevisionId"] != "rev0" {
+		t.Errorf("the append wrote against %v", batch["writeControl"])
+	}
+	if q := lastQuery(t, f, "docs /v1/documents/own1"); q.Get("fields") != endFields || q.Has("suggestionsViewMode") || q.Has("includeTabsContent") {
+		t.Errorf("the append read the document with %v", q)
+	}
+	docsAnswer(t, g, nil, "append_to_document", `{"document_id":"own1","text":"again"}`)
+	if wc, _ := d.changes()[1].body["writeControl"].(map[string]any); wc["targetRevisionId"] != "rev1" {
+		t.Errorf("the second append wrote against %v", d.changes()[1].body["writeControl"])
 	}
 
 	res = docsAnswer(t, g, nil, "replace_text", `{"document_id":"own1","find":"ITEM","replace":"point"}`)
@@ -900,8 +930,9 @@ func TestAppendAndReplaceOnOwnedDocument(t *testing.T) {
 // cannot be turned against its readers. Appending to one and replacing
 // in one must be refused, saying the rule, with nothing written; a
 // document Kivali made is written though no one in the owner's domain
-// owns it (a shared drive's); and the folders hold for writes as for
-// reads.
+// owns it (a shared drive's); one Kivali made that someone else owns
+// now is theirs, refused and not called Kivali's; and the folders hold
+// for writes as for reads.
 func TestWritesRefuseDocumentsNotTheOwners(t *testing.T) {
 	d, _, g := newFakeDocs(t)
 	d.addFolder("fold1", "Projects")
@@ -909,9 +940,18 @@ func TestWritesRefuseDocumentsNotTheOwners(t *testing.T) {
 	made := d.addDoc("madeHere", "Made", "", "", "fold1")
 	made.file.AppProperties = map[string]string{kivaliMark: "dana"}
 	d.addDoc("ownElsewhere", "Mine", "dana@example.com", "", "fold2")
+	handed := d.addDoc("handedOver", "Handed", "alice@example.org", "", "fold1")
+	handed.file.AppProperties = map[string]string{kivaliMark: "dana"}
 	refusal := "Document theirs is not the owner's and Kivali did not make it: you may change only documents the owner owns or Kivali made."
 	docsRefused(t, g, nil, "append_to_document", `{"document_id":"theirs","text":"x"}`, refusal)
 	docsRefused(t, g, nil, "replace_text", `{"document_id":"theirs","find":"a","replace":"b"}`, refusal)
+	docsRefused(t, g, nil, "append_to_document", `{"document_id":"handedOver","text":"x"}`, strings.ReplaceAll(refusal, "theirs", "handedOver"))
+	if res := docsAnswer(t, g, nil, "get_document", `{"document_id":"handedOver"}`); strings.Contains(res.Content[0], "Kivali made it") {
+		t.Errorf("a document someone else owns reads as Kivali's:\n%s", res.Content[0])
+	}
+	if res := docsAnswer(t, g, nil, "get_document", `{"document_id":"madeHere"}`); !strings.Contains(res.Content[0], " Kivali made it.\n") {
+		t.Errorf("a shared drive's document Kivali made reads:\n%s", res.Content[0])
+	}
 	if got := d.changes(); len(got) != 0 {
 		t.Errorf("a refused write changed Google: %+v", got)
 	}
@@ -972,5 +1012,219 @@ func TestParseMarkdown(t *testing.T) {
 		if got[i].text != want[i].text || got[i].heading != want[i].heading || got[i].bullet != want[i].bullet || !slices.Equal(got[i].bold, want[i].bold) {
 			t.Errorf("line %d: %+v, want %+v", i, got[i], want[i])
 		}
+	}
+}
+
+// Why this test exists: the Docs API strips the Private Use Area
+// (U+E000 to U+F8FF) from the text it inserts, so text holding it must
+// be measured without it, or every index after it (bold, headings,
+// lists) would land past the text Google kept.
+func TestParseMarkdownDropsPrivateUse(t *testing.T) {
+	got := parseMarkdown("a\uE000b **c\uF8FFd** e")
+	if len(got) != 1 || got[0].text != "ab cd e" || !slices.Equal(got[0].bold, [][2]int{{3, 5}}) {
+		t.Errorf("%+v", got)
+	}
+}
+
+// Why this test exists: get_document must read a document as its
+// reader sees it with every suggestion rejected, since anyone who may
+// comment may suggest text the owner never accepted; ask Google only
+// for the fields it renders (the fake answers as far as they name, so
+// every rendering test checks the fields are enough); and say a
+// document too large for Kivali to read is so, which trying again does
+// not change.
+func TestDocumentReadsAskForWhatTheyRead(t *testing.T) {
+	d, f, g := newFakeDocs(t)
+	d.addDoc("plan1", "Plan", "dana@example.com", docOf(t, "Plan", tab("Tab 1", para("NORMAL_TEXT", run("Hi\n", nil)))))
+	docsAnswer(t, g, nil, "get_document", `{"document_id":"plan1"}`)
+	q := lastQuery(t, f, "docs /v1/documents/plan1")
+	if q.Get("suggestionsViewMode") != "PREVIEW_WITHOUT_SUGGESTIONS" || q.Get("includeTabsContent") != "true" || q.Get("fields") != readFields {
+		t.Errorf("get_document read the document with %v", q)
+	}
+	d.addDoc("big1", "Big", "dana@example.com", "").huge = true
+	res, err := callDocs(t, g, nil, "get_document", `{"document_id":"big1"}`)
+	if err != nil || res == nil || !res.IsError || res.Content[0] != "Document big1 is too large for Kivali to read." {
+		t.Errorf("a document too large: %+v, %v", res, err)
+	}
+}
+
+// Why this test exists: an agent writes only into documents the owner
+// will not lose track of, and a write Google does not answer may still
+// have changed the document. The owner's audit row must name the
+// document and what was being done, then why it failed, for a write
+// Google never answered as for one it refused, and for a create, which
+// may have made a document.
+func TestWriteAuditNamesWhatFailed(t *testing.T) {
+	d, f, g := newFakeDocs(t)
+	d.addDoc("own1", "Notes", "dana@example.com", "")
+	f.failWith("/v1/documents/own1:batchUpdate", 0, "")
+	res, err := callDocs(t, g, nil, "append_to_document", `{"document_id":"own1","text":"x"}`)
+	if err != nil || res == nil || !res.IsError ||
+		!strings.HasPrefix(res.Audit, "adding 1 characters to the end of document own1; Google did not answer (") ||
+		!strings.HasSuffix(res.Audit, "so Kivali cannot say whether the document changed: read it before trying again.") {
+		t.Errorf("an append Google did not answer: %+v, %v", res, err)
+	}
+	f.failWith("/v1/documents/own1:batchUpdate", 503, `{"error":{"code":503,"message":"The service is currently unavailable."}}`)
+	res, err = callDocs(t, g, nil, "replace_text", `{"document_id":"own1","find":"a","replace":"b"}`)
+	if err != nil || res == nil || !res.IsError || res.Audit != "replacing text in document own1; Google answered 503: The service is currently unavailable. Try again later." {
+		t.Errorf("a replace Google refused: %+v, %v", res, err)
+	}
+	f.failWith("/drive/v3/files", 0, "")
+	res, err = callDocs(t, g, nil, "create_document", `{"title":"T"}`)
+	if err != nil || res == nil || !res.IsError || !strings.HasPrefix(res.Audit, "creating a document; Google did not answer (") {
+		t.Errorf("a create Google did not answer: %+v, %v", res, err)
+	}
+}
+
+// Why this test exists: a change to a document others can open reaches
+// them, and the owner reads Recent calls to know what an agent changed.
+// A write to a shared document, and a document made in a shared folder,
+// must say so in the audit; one that is not shared must not.
+func TestWriteAuditSaysShared(t *testing.T) {
+	d, _, g := newFakeDocs(t)
+	d.addFolder("fold1", "Team")
+	d.get("fold1").file.Shared = true
+	d.addFolder("fold2", "Mine")
+	d.addDoc("shared1", "Plan", "dana@example.com", "", "fold1").file.Shared = true
+	d.addDoc("own1", "Notes", "dana@example.com", "", "fold2")
+	res := docsAnswer(t, g, nil, "append_to_document", `{"document_id":"shared1","text":"x"}`)
+	if res.Audit != "added 1 characters to the end of document shared1 (shared with others)" {
+		t.Errorf("append: %q", res.Audit)
+	}
+	res = docsAnswer(t, g, nil, "replace_text", `{"document_id":"shared1","find":"x","replace":"y"}`)
+	if res.Audit != "replaced 1 occurrences in document shared1 (shared with others)" {
+		t.Errorf("replace: %q", res.Audit)
+	}
+	res = docsAnswer(t, g, nil, "append_to_document", `{"document_id":"own1","text":"x"}`)
+	if res.Audit != "added 1 characters to the end of document own1" {
+		t.Errorf("append to one not shared: %q", res.Audit)
+	}
+	res = docsAnswer(t, g, nil, "create_document", `{"title":"T","body":"x","folder_id":"fold1"}`)
+	if res.Audit != "created document madeDoc1 in folder fold1 with 1 characters of text (shared with others)" {
+		t.Errorf("create in a shared folder: %q", res.Audit)
+	}
+	res = docsAnswer(t, g, map[string]any{"docs_folders": []string{"fold1"}}, "create_document", `{"title":"T"}`)
+	if res.Audit != "created document madeDoc2 in folder fold1 with 0 characters of text (shared with others)" {
+		t.Errorf("create in the access's shared folder: %q", res.Audit)
+	}
+	res = docsAnswer(t, g, nil, "create_document", `{"title":"T","folder_id":"fold2"}`)
+	if res.Audit != "created document madeDoc3 in folder fold2 with 0 characters of text" {
+		t.Errorf("create in a folder not shared: %q", res.Audit)
+	}
+}
+
+// Why this test exists: one search reaches at most 50 folders. When the
+// access names more than that, or the folders inside the ones it names
+// are more, the search must ask Drive for 50 of them, the named ones
+// first, and tell the agent that documents in the others may be
+// missing, rather than list a page as if it were everything.
+func TestSearchDocumentsSaysWhenFoldersAreCut(t *testing.T) {
+	note := "Your access's folders and the folders inside them are more than the 50 one search reaches: Kivali searched the first 50, so documents in the others may be missing."
+	d, f, g := newFakeDocs(t)
+	var named []string
+	for i := range 51 {
+		id := fmt.Sprintf("root%02d", i)
+		d.addFolder(id, id)
+		named = append(named, id)
+	}
+	res := docsAnswer(t, g, map[string]any{"docs_folders": named}, "search_documents", `{}`)
+	q := lastQuery(t, f, "www /drive/v3/files").Get("q")
+	if !strings.Contains(res.Content[0], note) || strings.Count(q, " in parents") != 50 || strings.Contains(q, "'root50'") {
+		t.Errorf("51 folders named: %s\nasked %s", res.Content[0], q)
+	}
+
+	d, f, g = newFakeDocs(t)
+	d.addFolder("top", "Top")
+	for i := range 60 {
+		d.addFolder(fmt.Sprintf("sub%02d", i), "Sub", "top")
+	}
+	res = docsAnswer(t, g, map[string]any{"docs_folders": []string{"top"}}, "search_documents", `{}`)
+	q = lastQuery(t, f, "www /drive/v3/files").Get("q")
+	if !strings.Contains(res.Content[0], note) || strings.Count(q, " in parents") != 50 || !strings.Contains(q, "'top' in parents") {
+		t.Errorf("60 folders inside: %s\nasked %s", res.Content[0], q)
+	}
+	res = docsAnswer(t, g, map[string]any{"docs_folders": []string{"sub00"}}, "search_documents", `{}`)
+	if strings.Contains(res.Content[0], "more than the 50") {
+		t.Errorf("one folder: %s", res.Content[0])
+	}
+}
+
+// Why this test exists: a paragraph inherits its named style's shading
+// when it sets none of its own, so text the colour of a heading style's
+// shading is hidden from a reader just as text on the paragraph's own
+// shading is, and must be left out; a paragraph that sets its own
+// shading, even to none, is read against that instead.
+func TestGetDocumentHiddenByNamedShading(t *testing.T) {
+	d, _, g := newFakeDocs(t)
+	yellow := rgbOf(1, 1, 0)
+	styles := normalStyles(nil)
+	styles["styles"] = append(styles["styles"].([]any), map[string]any{"namedStyleType": "HEADING_2", "textStyle": map[string]any{},
+		"paragraphStyle": map[string]any{"shading": map[string]any{"backgroundColor": yellow}}})
+	ownNone := para("HEADING_2", run("yellow on white\n", map[string]any{"foregroundColor": yellow}))
+	ownNone["paragraph"].(map[string]any)["paragraphStyle"].(map[string]any)["shading"] = map[string]any{"backgroundColor": transparent}
+	raw := docOf(t, "Shaded", map[string]any{"tabProperties": map[string]any{"title": "Tab 1"}, "documentTab": map[string]any{
+		"namedStyles": styles,
+		"body": map[string]any{"content": []any{
+			para("HEADING_2", run("yellow on yellow\n", map[string]any{"foregroundColor": yellow})),
+			para("HEADING_2", run("dark on yellow\n", nil)),
+			ownNone,
+		}},
+	}})
+	d.addDoc("shade1", "Shaded", "dana@example.com", raw)
+	res := docsAnswer(t, g, nil, "get_document", `{"document_id":"shade1"}`)
+	if !strings.Contains(res.Content[0], "Title: Shaded\n\n## dark on yellow\n\n## yellow on white\nEnd of document content.") ||
+		!strings.Contains(res.Content[0], "left out 16 characters") {
+		t.Errorf("the document reads:\n%s", res.Content[0])
+	}
+}
+
+// Why this test exists: an agent knows a document only from what the
+// tools tell it. append_to_document writes at the end of the first tab
+// alone, get_document does not read headers, footers and footnotes, and
+// replace_text changes text in them too, which the agent cannot see
+// first: the descriptions must say each, so the agent does not take a
+// write or a reading for more or less than it is.
+func TestDocsWordsSayWhatIsReadAndWritten(t *testing.T) {
+	for name, want := range map[string]string{
+		"append_to_document": "Add text at the end of the first tab of a document",
+		"get_document":       "Its headers, footers and footnotes are not read.",
+		"replace_text":       "also in the document's headers, footers and footnotes, which get_document does not read",
+	} {
+		if a := actionNamed(name); a == nil || !strings.Contains(a.description, want) {
+			t.Errorf("%s does not say %q", name, want)
+		}
+	}
+}
+
+// Why this test exists: text that is nothing once its Markdown marks are
+// taken out (only ** pairs, a heading mark alone, characters Google
+// strips) would make an empty document or empty paragraphs. It must be
+// refused before anything reaches Google, saying why; a create with no
+// body at all still makes an empty document.
+func TestWritesRefuseTextWithNothingToWrite(t *testing.T) {
+	d, _, g := newFakeDocs(t)
+	d.addDoc("own1", "Notes", "dana@example.com", "")
+	docsRefused(t, g, nil, "create_document", `{"title":"T","body":"****\n# ****"}`, "body holds no text once its Markdown marks are taken out.")
+	docsRefused(t, g, nil, "create_document", `{"title":"T","body":"\ue000"}`, "body holds no text once its Markdown marks are taken out.")
+	docsRefused(t, g, nil, "append_to_document", `{"document_id":"own1","text":"- ****"}`, "text holds no text once its Markdown marks are taken out.")
+	if got := d.changes(); len(got) != 0 {
+		t.Errorf("a refused write changed Google: %+v", got)
+	}
+	docsAnswer(t, g, nil, "create_document", `{"title":"T"}`)
+}
+
+// Why this test exists: a document in the trash is one the owner threw
+// away; search leaves it out, and reading or changing it by its id must
+// be refused too, before any of its content is asked for.
+func TestTrashedDocumentsAreRefused(t *testing.T) {
+	d, f, g := newFakeDocs(t)
+	d.addDoc("bin1", "Old", "dana@example.com", "").file.Trashed = true
+	refusal := "Document bin1 is in the trash; ask the owner if your work needs it."
+	docsRefused(t, g, nil, "get_document", `{"document_id":"bin1"}`, refusal)
+	docsRefused(t, g, nil, "list_comments", `{"document_id":"bin1"}`, refusal)
+	docsRefused(t, g, nil, "append_to_document", `{"document_id":"bin1","text":"x"}`, refusal)
+	docsRefused(t, g, nil, "replace_text", `{"document_id":"bin1","find":"a","replace":"b"}`, refusal)
+	if got := requestsFor(f, "docs "); len(got) != 0 || len(d.changes()) != 0 || len(requestsFor(f, "www /drive/v3/files/bin1/comments")) != 0 {
+		t.Errorf("a trashed document was read or changed: %v", got)
 	}
 }
