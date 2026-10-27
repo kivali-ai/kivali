@@ -118,23 +118,3 @@ export function apiPostForm<T>(path: string, form: FormData, opts: RequestOption
   return request<T>('POST', path, form, {}, opts);
 }
 
-/** A file the server sent back: its bytes and the name from Content-Disposition, when it gave one. */
-export interface Download {
-  blob: Blob;
-  filename: string | null;
-}
-
-function filenameOf(res: Response): string | null {
-  const m = /filename="?([^";]+)"?/.exec(res.headers.get('content-disposition') ?? '');
-  return m?.[1] ?? null;
-}
-
-async function download(method: string, path: string, opts: RequestOptions): Promise<Download> {
-  const res = await send(method, path, null, { Accept: '*/*' }, opts);
-  return { blob: await res.blob(), filename: filenameOf(res) };
-}
-
-/** GET a file rather than JSON (a project file's original). Errors are ApiErrors, as everywhere. */
-export function apiGetBlob(path: string, opts: RequestOptions = {}): Promise<Download> {
-  return download('GET', path, opts);
-}

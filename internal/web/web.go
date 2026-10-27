@@ -223,6 +223,10 @@ type Server struct {
 	streamMu sync.Mutex
 	chatHubs map[string]*chatHub
 
+	// backupLinks are the one-time download links minted for the backup
+	// (backup_link.go).
+	backupLinks backupLinks
+
 	// orgHub is the singleton broadcaster for org liveness:
 	// per-agent working state, stuck flag, and context-fill bucket,
 	// plus aggregate inbox + release counts. Subscribed via /org/stream

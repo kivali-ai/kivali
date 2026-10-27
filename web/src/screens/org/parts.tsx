@@ -65,18 +65,6 @@ export function None({ children }: { children: ReactNode }) {
   );
 }
 
-/** Hands a fetched file to the browser as a download. The anchor never enters the page's markup. */
-export function saveFile(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 export function formatBytes(n: number): string {
   if (n < 1024) return n + ' B';
   if (n < 1024 * 1024) return Math.round(n / 1024) + ' KB';

@@ -212,6 +212,18 @@ type SkillDowngrade struct {
 	NewVersion string `json:"new_version"`
 }
 
+// ---- /api/v1/org/backup ----
+
+// BackupLink is POST /api/v1/org/backup/links: a link that downloads
+// the org's backup once. The page sends the browser to URL (a path on
+// this origin); the link works for two minutes and for one download,
+// after which it answers 404. POST /api/v1/org/backup itself streams
+// the backup to a same-origin POST, which is how kivali-supervisor
+// takes one.
+type BackupLink struct {
+	URL string `json:"url"`
+}
+
 // ---- /api/v1/org/network ----
 
 // Network is GET /api/v1/org/network and the answer to every network

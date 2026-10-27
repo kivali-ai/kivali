@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/agent"
@@ -62,6 +63,8 @@ func (s *Server) wireAPIOrgRoutes(mux *http.ServeMux) {
 	s.wireAPIIntegrationRoutes(mux)
 
 	mux.HandleFunc("POST /api/v1/org/backup", s.handleBackupDownload)
+	mux.HandleFunc("POST /api/v1/org/backup/links", s.handleBackupLinkMint)
+	mux.HandleFunc("GET /api/v1/org/backup/{token}", s.handleBackupLinkDownload)
 	mux.HandleFunc("POST /api/v1/org/restore", s.handleAPIRestore)
 }
 
@@ -415,6 +418,10 @@ func (s *Server) handleAPIFileOriginal(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("content-type", cmp.Or(ct, "application/octet-stream"))
 	w.Header().Set("content-disposition", mime.FormatMediaType("attachment", map[string]string{"filename": pf.OriginalName}))
 	w.Header().Set("x-content-type-options", "nosniff")
+	if pf.Size > 0 {
+		// The length lets whatever saves the file show how far it has got.
+		w.Header().Set("content-length", strconv.FormatInt(pf.Size, 10))
+	}
 	_, _ = io.Copy(w, rc)
 }
 

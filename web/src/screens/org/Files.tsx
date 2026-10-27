@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { apiDelete, apiGetBlob, apiPost, apiPostForm } from '../../api/client';
+import { apiDelete, apiPost, apiPostForm } from '../../api/client';
 import type { FilesBulkDelete, ProjectFile, ProjectFiles } from '../../api/types.gen';
 import { Badge, Button, Checkbox, FileDrop, Icon, ListRow } from '../../ds';
 import { shortDate } from '../../lib/time';
-import { ErrorBanner, None, RowList, RowSkeletons, SectionHead, formatBytes, saveFile } from './parts';
+import { ErrorBanner, None, RowList, RowSkeletons, SectionHead, formatBytes } from './parts';
 import type { SectionProps } from './sections';
 import { useAction, useResource } from './useResource';
 
@@ -34,11 +34,8 @@ export function FilesSection({ showHead }: SectionProps) {
       apply(await apiPostForm<ProjectFiles>(PATH, form));
     });
   };
-  const download = (f: ProjectFile) =>
-    action.run(async () => {
-      const file = await apiGetBlob(f.url);
-      saveFile(file.blob, file.filename ?? f.name);
-    });
+  // The server answers the URL as an attachment, so the page stays and whatever saves downloads takes the file.
+  const download = (f: ProjectFile) => window.location.assign(f.url);
   const remove = (f: ProjectFile) =>
     action.run(async () => {
       apply(await apiDelete<ProjectFiles>(PATH + '/' + encodeURIComponent(f.sha)));
@@ -87,7 +84,7 @@ export function FilesSection({ showHead }: SectionProps) {
                 }
                 trail={
                   <>
-                    <Button variant="ghost" size="sm" icon={<Icon name="download" />} aria-label={`Download ${f.name}`} onClick={() => void download(f)} disabled={action.busy}>
+                    <Button variant="ghost" size="sm" icon={<Icon name="download" />} aria-label={`Download ${f.name}`} onClick={() => download(f)} disabled={action.busy}>
                       Download
                     </Button>
                     <Button variant="ghost" size="sm" aria-label={`Remove ${f.name}`} onClick={() => void remove(f)} disabled={action.busy}>

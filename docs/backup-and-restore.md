@@ -31,7 +31,7 @@ Each backup ends with a manifest listing every file with its size and checksum. 
 
 In Kivali, open **Org**, **Backup and restore**, and choose **Download a backup**.
 
-The file goes straight to your browser's downloads, which show its progress. A large team takes several minutes. You can close the tab or keep working while it downloads. If a download stops partway, the browser marks it failed; start another.
+The file goes straight to your downloads, which show its progress: your browser's, or in Kivali Desktop the card at the top right of the team's window, after it asks where to save ([Kivali Desktop](desktop-app.md#windows)). A large team takes several minutes. You can close the tab or keep working while it downloads. If a download stops partway, it is marked failed; start another.
 
 If Kivali cannot read a file while writing the backup, the download fails rather than leaving the file out, so a backup that finished is complete.
 

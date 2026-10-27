@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/store"
@@ -40,6 +41,10 @@ func (s *Server) handleAttachmentDownload(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("content-type", mime)
 	w.Header().Set("content-disposition", `attachment; filename="`+sanitizeDownloadName(att.Name)+`"`)
+	if att.Size > 0 {
+		// The length lets whatever saves the file show how far it has got.
+		w.Header().Set("content-length", strconv.FormatInt(att.Size, 10))
+	}
 	_, _ = io.Copy(w, rc)
 }
 

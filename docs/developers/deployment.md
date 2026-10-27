@@ -265,7 +265,10 @@ boot after the upgrade.
 There is one backup and one restore: the app's. Everything else calls
 them.
 
-**Backup** on the Org page (`/org/backup`, `POST /api/v1/org/backup`)
+**Backup** on the Org page (`/org/backup`; `POST /api/v1/org/backup`,
+or `GET /api/v1/org/backup/<token>` with a one-time link from
+`POST /api/v1/org/backup/links`, which is how the page downloads it as
+a navigation the browser or Kivali Desktop saves)
 streams a zip of the entire data tree — agents, chats, messages,
 memory, project files, attachments, archived generations, the published
 files (`public/<slug>/`), the knowledge graph with its version log, the

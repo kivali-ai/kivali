@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { createMemoryRouter } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, apiDelete, apiGet, apiGetBlob, apiPost, apiPostForm, apiPut } from '../../api/client';
+import { ApiError, apiDelete, apiGet, apiPost, apiPostForm, apiPut } from '../../api/client';
 import type { Handbook, IntegrationPage as IntegrationPageData, Me, Network, OrgSoftware, Org as OrgData, ProjectFiles, SetupFlow, Skills, Usage } from '../../api/types.gen';
 import { FrameChromeContext } from '../../app/chrome';
 import type { FrameChrome } from '../../app/chrome';
@@ -77,7 +77,6 @@ vi.mock('../../api/client', async (importOriginal) => {
     apiPut: vi.fn(),
     apiDelete: vi.fn(),
     apiPostForm: vi.fn(),
-    apiGetBlob: vi.fn(),
   };
 });
 
@@ -138,7 +137,6 @@ function wireClient() {
   vi.mocked(apiPut).mockImplementation((path, body) => answer('PUT', path, body) as never);
   vi.mocked(apiDelete).mockImplementation((path) => answer('DELETE', path, undefined) as never);
   vi.mocked(apiPostForm).mockImplementation((path, form) => answer('POST', path, form) as never);
-  vi.mocked(apiGetBlob).mockImplementation((path) => answer('GET', path, undefined).then((blob) => ({ blob: blob as Blob, filename: null })));
 }
 
 function defaults(): Record<string, Route> {
@@ -864,17 +862,17 @@ describe('Project files', () => {
     expect(screen.getByText('1 file · 84 KB')).toBeInTheDocument();
   });
 
-  it('downloads a file with a button, not a link', async () => {
-    const created = vi.fn(() => 'blob:plan');
-    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: created, revokeObjectURL: vi.fn() }));
-    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    await renderOrg('/org/files', { routes: { ['GET ' + first.url]: new Blob(['pdf']) } });
+  // The file goes straight from the server to whatever saves downloads, as a navigation to its URL, which the
+  // server answers as an attachment. Fetched into the page and handed over as a blob, Kivali Desktop could not
+  // take it: it fetches a download itself from the URL it is handed, and a blob has none.
+  it('downloads a file by sending the browser to its URL, never through the page', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { href: 'http://localhost/org/files', pathname: '/org/files', search: '', assign });
+    await renderOrg('/org/files');
     expect(screen.queryByRole('link', { name: 'plan.pdf' })).toBeNull();
     await click(screen.getByRole('button', { name: 'Download plan.pdf' }));
-    expect(called('GET', first.url)).toBe(true);
-    expect(created).toHaveBeenCalled();
-    expect(anchorClick).toHaveBeenCalledTimes(1);
-    expect((anchorClick.mock.instances[0] as unknown as HTMLAnchorElement).download).toBe('plan.pdf');
+    expect(assign).toHaveBeenCalledWith(first.url);
+    expect(called('GET', first.url)).toBe(false);
   });
 
   it('uploads and refreshes the list from the response', async () => {
@@ -2822,71 +2820,52 @@ describe('Backup and restore', () => {
     expect(document.querySelector('input[type="file"]')).toBeNull();
   });
 
-  function backupForm(): HTMLFormElement {
-    const f = document.querySelector('form[action="/api/v1/org/backup"]');
-    if (!(f instanceof HTMLFormElement)) throw new Error('no backup form');
-    return f;
+  const LINK = '/api/v1/org/backup/3f9c0d2e7a1b4c5d8e6f7a8b9c0d1e2f';
+
+  function stubNavigation(): ReturnType<typeof vi.fn> {
+    const assign = vi.fn();
+    vi.stubGlobal('location', { href: 'http://localhost/org/backup', pathname: '/org/backup', search: '', assign });
+    return assign;
   }
 
-  function backupFrame(): HTMLIFrameElement {
-    const f = document.querySelector(`iframe[name="${backupForm().target}"]`);
-    if (!(f instanceof HTMLIFrameElement)) throw new Error('no backup frame');
-    return f;
-  }
-
-  it('hands the archive to the browser’s downloads as a real form POST, never through the page', async () => {
-    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+  // The archive never passes through the page: the page mints a one-time link and sends the browser there, so the
+  // attachment is saved the way any download is, in the browser or by Kivali Desktop, which fetches the URL it is
+  // handed itself. A blob or a hidden-frame POST gave Desktop nothing to fetch.
+  it('mints a one-time link and sends the browser to it, never through the page', async () => {
+    const assign = stubNavigation();
     const created = vi.fn(() => 'blob:backup');
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: created }));
-    await renderOrg('/org/backup');
-    const form = backupForm();
-    expect(form.getAttribute('method')).toBe('post');
-    expect(form.target).not.toBe('');
-    expect(form.target).not.toBe('_blank');
-    expect(backupFrame().hidden).toBe(true);
+    await renderOrg('/org/backup', { routes: { 'POST /api/v1/org/backup/links': { url: LINK } } });
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const button = screen.getByRole('button', { name: 'Download a backup' });
     await click(button);
-    expect(submit).toHaveBeenCalledTimes(1);
-    expect(submit.mock.instances[0]).toBe(form);
+    expect(called('POST', '/api/v1/org/backup/links')).toBe(true);
+    expect(assign).toHaveBeenCalledWith(LINK);
     expect(calls.some((c) => c.url === '/api/v1/org/backup')).toBe(false);
     expect(created).not.toHaveBeenCalled();
-    expect(screen.getByRole('status')).toHaveTextContent(/browser’s downloads/);
+    expect(screen.getByRole('status')).toHaveTextContent(/shows its progress where your downloads do/);
     expect(screen.getByRole('status')).toHaveTextContent(/close this tab/);
     expect(button).toBeDisabled();
     act(() => void vi.advanceTimersByTime(BACKUP_DEBOUNCE_MS));
     expect(button).not.toBeDisabled();
   });
 
-  it('ignores the frame’s first blank load', async () => {
-    await renderOrg('/org/backup');
-    fireEvent.load(backupFrame());
-    await flush();
-    expect(screen.queryByText('The backup did not start.')).toBeNull();
-  });
-
-  it('says what happened when the server answers with a refusal instead of the archive', async () => {
-    vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
-    await renderOrg('/org/backup');
+  it('says what happened when the server refuses the link', async () => {
+    const assign = stubNavigation();
+    await renderOrg('/org/backup', { routes: { 'POST /api/v1/org/backup/links': fail(401, 'unauthenticated', 'sign in again') } });
     await click(screen.getByRole('button', { name: 'Download a backup' }));
-    const frame = backupFrame();
-    frame.contentDocument!.body.textContent = JSON.stringify({ error: 'unauthenticated', who: 'sign in again' });
-    fireEvent.load(frame);
-    await flush();
     expect(screen.getByText('unauthenticated')).toBeInTheDocument();
     expect(screen.getByText('sign in again')).toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
     expect(screen.queryByRole('status')).toBeNull();
   });
 
-  it('says the backup did not start when the frame shows a page that is not a refusal', async () => {
-    vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
-    await renderOrg('/org/backup');
+  it('says the backup did not start when the link request fails outright', async () => {
+    const assign = stubNavigation();
+    await renderOrg('/org/backup', { routes: { 'POST /api/v1/org/backup/links': new Error('network') } });
     await click(screen.getByRole('button', { name: 'Download a backup' }));
-    const frame = backupFrame();
-    frame.contentDocument!.body.textContent = 'This site can’t be reached';
-    fireEvent.load(frame);
-    await flush();
     expect(screen.getByText('The backup did not start.')).toBeInTheDocument();
+    expect(assign).not.toHaveBeenCalled();
   });
 });
 
