@@ -262,9 +262,10 @@ func (c *call) readableDocument(ctx context.Context, id string) (driveFile, erro
 // names, or is inside one, at most maxFolderDepth folders up. A
 // document's start is its parents; a folder's, the folder itself. A
 // folder the sign-in cannot open ends that way up. Every start is
-// within when the access names no folder.
+// within when the access's list is left empty (nil); none is when it is
+// empty and not nil, a stored list that did not read.
 func (c *call) inFolders(ctx context.Context, start []string) (bool, error) {
-	if len(c.access.docsFolders) == 0 {
+	if c.access.docsFolders == nil {
 		return true, nil
 	}
 	seen := map[string]bool{}
@@ -521,6 +522,11 @@ func searchDocuments(ctx context.Context, c *call) (any, error) {
 			return nil, folderNotIncluded(folder)
 		}
 		roots = []string{folder}
+	}
+	if roots != nil && len(roots) == 0 {
+		// A stored folder list that did not read includes no document.
+		c.audit = "searched documents, listing 0"
+		return "No documents match. This is the last page.", nil
 	}
 	var within []string
 	cut := false
