@@ -1229,8 +1229,9 @@ func spanWords(s timeSpan, loc *time.Location) string {
 
 // freeBusyCalendars is the calendars find_free_time reads: those
 // calendar_ids names, each one the access includes (include), else the
-// access's own list, else the primary calendar; at most
-// maxFreeCalendars, and note says when the access's list held more.
+// access's own list, else the primary calendar when the access includes
+// it; at most maxFreeCalendars, and note says when the access's list
+// held more.
 func (cc *calCall) freeBusyCalendars(ctx context.Context) (ids []string, note string, err error) {
 	named, given, err := textListArg(cc.args, "calendar_ids", maxFreeCalendars, 300)
 	if err != nil {
@@ -1268,6 +1269,9 @@ func (cc *calCall) freeBusyCalendars(ctx context.Context) (ids []string, note st
 	}
 	p, err := cc.primary(ctx)
 	if err != nil {
+		return nil, "", err
+	}
+	if err := cc.include(ctx, p.ID); err != nil {
 		return nil, "", err
 	}
 	return []string{p.ID}, "", nil
