@@ -70,7 +70,7 @@ Your agents' access stays as it is. Access that no longer fits the earlier versi
 
 ### Share an integration
 
-An integration from a bundle can be downloaded again as one, to install it on another team. On the Integrations page, **Download** beside an integration's row saves the version in use as a `.zip`, named after the integration and the version. On the integration's page, **Download bundle** at the top saves the same, and under **Versions** every version has its own **Download**, so an earlier version can be passed on too. The zip holds the files the version was installed from, nothing of your connection or your agents' access, and uploads on another team as any bundle does. An integration that ships with Kivali has no bundle to download.
+An integration from a bundle can be downloaded again as one, to install it on another team. On the integration's page, **Download bundle** at the top saves the version in use as a `.zip`, named after the integration and the version, and under **Versions** every version has its own **Download**, so an earlier version can be passed on too. The zip holds the files the version was installed from, nothing of your connection or your agents' access, and uploads on another team as any bundle does. An integration that ships with Kivali has no bundle to download.
 
 ## Connect it
 

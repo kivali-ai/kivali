@@ -2570,9 +2570,9 @@ give. `Calls` records every call, with each Setup call's flow and
 
 ### Sharing a version
 
-The web app offers Download beside every integration from a bundle on
-the list (its version in use), Download bundle in the page's header
-and Download beside each row of the page's Versions block. Each fetches
+The web app offers Download bundle in a bundle integration's page
+header (its version in use) and Download beside each row of the page's
+Versions block; the list offers none. Each fetches
 `GET .../versions/{version}/bundle` (`apiGetBlob`) and hands the zip to
 the browser under the name the server gave it, `<name>-<version>.zip`.
 A built-in's rows offer none: its versions have no bundle, and the
