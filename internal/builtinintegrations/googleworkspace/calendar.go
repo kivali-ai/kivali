@@ -261,7 +261,7 @@ func (g *GoogleWorkspace) calendarRequest(ctx context.Context, token, method, pa
 	case err != nil:
 		return transportError(ctx, err, token)
 	case len(b) > maxAnswerBytes:
-		return &apiError{Message: "its answer is larger than Kivali reads"}
+		return &apiError{Message: "Google's answer was larger than Kivali reads", Unreadable: true}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		e := readError(b, resp.StatusCode)
@@ -272,7 +272,7 @@ func (g *GoogleWorkspace) calendarRequest(ctx context.Context, token, method, pa
 		return nil
 	}
 	if err := json.Unmarshal(b, out); err != nil {
-		return &apiError{Message: "its answer is not JSON Kivali reads"}
+		return &apiError{Message: "Google's answer was not one Kivali reads", Unreadable: true}
 	}
 	return nil
 }
