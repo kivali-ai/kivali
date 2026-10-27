@@ -151,6 +151,26 @@ func TestCalendarAccessIsHeld(t *testing.T) {
 	}
 }
 
+// Why this test exists: a stored calendar list that does not read as a
+// list (hand-edited, or written by an older build) reads as an empty
+// list that is not nil, which includes no calendar. Every action must
+// refuse then, the primary calendar too: find_free_time with no
+// calendar_ids took the primary calendar without asking whether the
+// access includes it, which a list left empty does and this one does
+// not.
+func TestCalendarMalformedListIncludesNothing(t *testing.T) {
+	f, g := newFakeCalendar(t)
+	broken := func() map[string]any { return map[string]any{"calendar_read": true, "calendars": "team"} }
+	refusal := "Your access does not include the calendar dana@example.com; list_calendars lists those it does, and the owner can add others if your work needs them."
+	calRefused(t, g, broken(), "find_free_time", `{"time_min":"2026-10-27T09:00:00Z","time_max":"2026-10-27T17:00:00Z"}`, refusal)
+	calRefused(t, g, broken(), "list_events", `{}`, refusal)
+	for _, r := range f.requests() {
+		if r.path != "/calendar/v3/users/me/calendarList" {
+			t.Errorf("a calendar the access does not include was read: %s", r)
+		}
+	}
+}
+
 // Why this test exists: an access that names no calendars allows every
 // calendar of the owner's list, not every calendar on Google. A
 // colleague's calendar, named by its address, is often readable at
