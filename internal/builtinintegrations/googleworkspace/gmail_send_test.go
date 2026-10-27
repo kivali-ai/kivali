@@ -230,6 +230,20 @@ func TestSendEmailSendTo(t *testing.T) {
 	}
 }
 
+// Why this test exists: a stored send_to that does not read as a list
+// (hand-edited, or written by an older build) reads as an empty list
+// that is not nil, which must let a send reach no one: checking the
+// list's length alone would read it as left empty, anyone.
+func TestSendToThatDidNotReadReachesNoOne(t *testing.T) {
+	f, w, g := newFakeGmail(t)
+	broken := sender(map[string]any{"send_to": "bob@example.com"})
+	writeRefused(t, g, broken, "send_email", `{"to":["bob@example.com"],"subject":"Hi","body":"x"}`,
+		"The owner has not allowed you to send to bob@example.com through Google Workspace; ask the owner if your work needs it.")
+	if got := requestsFor(f, "gmail POST"); len(got) != 0 || len(w.sentMessages()) != 0 {
+		t.Errorf("Gmail was sent %v", got)
+	}
+}
+
 // draftAlternative is a draft written in Gmail: a text part and a
 // formatted part, the latter with a link and text styled out of sight,
 // to a named recipient and copying another.
