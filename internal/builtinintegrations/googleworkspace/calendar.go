@@ -551,7 +551,7 @@ func (cc *calCall) event(ctx context.Context, cal, id string) (calEvent, error) 
 		Attendees []json.RawMessage `json:"attendees"`
 	}
 	if json.Unmarshal(raw, &e) != nil || json.Unmarshal(raw, &people) != nil {
-		return calEvent{}, &apiError{Message: "its answer is not JSON Kivali reads"}
+		return calEvent{}, &apiError{Message: "Google's answer was not one Kivali reads", Unreadable: true}
 	}
 	e.rawAttendees = people.Attendees
 	return e, nil
