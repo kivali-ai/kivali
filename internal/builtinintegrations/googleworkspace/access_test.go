@@ -2,6 +2,7 @@ package googleworkspace
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -62,6 +63,23 @@ func TestReadAccess(t *testing.T) {
 	}
 	if !includes(a.gmailLabels, "INBOX") || includes(a.gmailLabels, "SENT") || !includes(a.docsFolders, "anything") {
 		t.Error("includes does not follow the lists")
+	}
+}
+
+// Why this test exists: this version has no approval of sends, so the
+// access form must not tell the owner that a send waits for their
+// approval: an owner who read so would turn a send switch on expecting
+// a step that does not exist.
+func TestFormPromisesNoApproval(t *testing.T) {
+	for _, f := range accessFields {
+		if s := strings.ToLower(f.title + " " + f.description); strings.Contains(s, "approv") {
+			t.Errorf("%s: %q, %q", f.key, f.title, f.description)
+		}
+	}
+	for key, title := range map[string]string{keyGmailSend: "May send mail", keyCalendarSend: "May invite and respond", keyDocsSend: "May comment"} {
+		if i := slices.IndexFunc(accessFields, func(f accessField) bool { return f.key == key }); i < 0 || accessFields[i].title != title {
+			t.Errorf("%s is not titled %q", key, title)
+		}
 	}
 }
 

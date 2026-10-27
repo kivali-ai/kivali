@@ -9,22 +9,50 @@ import (
 	"time"
 )
 
-// invitesNotAvailable is the answer to a create_event or update_event
-// call that isSend finds is a send.
-const invitesNotAvailable = "Inviting people to an event, or changing who it invites, waits for the owner's approval, which this version of Kivali does not have, so Kivali did not run this call. Leave out attendees, or give the event's own list unchanged, to create or change the rest of the event."
+// sendNotAvailable is the answer to a create_event, update_event or
+// delete_event call that isSend finds is a send.
+const sendNotAvailable = "This call is a send, which is not available in this version of Kivali, so Kivali did not run it. A send invites people or changes who an event invites, or changes or deletes an event that has attendees other than the owner or that someone else organized: such a change reaches those people even when Google emails no one. You may create an event that invites no one, and change or delete one the owner organized that has no other attendees, leaving out attendees or giving the event's own list unchanged."
 
-// isSend reports whether a create_event or update_event call is a send:
-// its attendees, ignoring case, order and repeats, are a list other
-// than current, the addresses the event invites now (none for
-// create_event). A call that gives no attendees, or null, changes no
-// one's invitation. Every address must be one: a list that is not is
-// refused.
-func isSend(a args, current []string) (bool, error) {
-	list, given, err := attendeesArg(a)
-	if err != nil || !given {
-		return false, err
+// isSend reports whether a create_event, update_event or delete_event
+// call (action) is a send: one that reaches a person other than the
+// owner. cur is the event an update_event or delete_event call names,
+// nil for create_event, and o who the owner is. A call is a send when
+// cur reaches others (reachesOthers), or when the call's attendees,
+// ignoring case, order and repeats, are a list other than cur's (none
+// for create_event; delete_event takes none). A call that gives no
+// attendees, or null, changes no one's invitation. Every address must
+// be one: a list that is not is refused.
+func isSend(action string, a args, cur *calEvent, o calOwner) (bool, error) {
+	var list []string
+	given := false
+	if action != actionDeleteEvent {
+		var err error
+		if list, given, err = attendeesArg(a); err != nil {
+			return false, err
+		}
 	}
-	return !slices.Equal(list, addressSet(current)), nil
+	var now []string
+	if cur != nil {
+		if reachesOthers(*cur, o) {
+			return true, nil
+		}
+		now = invited(*cur)
+	}
+	return given && !slices.Equal(list, addressSet(now)), nil
+}
+
+// reachesOthers reports whether a change to e reaches someone other
+// than the owner: e has an attendee that is not the owner (calOwner.self,
+// or the calendar this copy is on), a room included; Google lists only
+// some of its attendees; or the owner did not organize it.
+func reachesOthers(e calEvent, o calOwner) bool {
+	ownOrganizer := e.Organizer.Self || o.self(calAddress(e.Organizer.Email))
+	if e.AttendeesOmitted || !ownOrganizer {
+		return true
+	}
+	return slices.ContainsFunc(e.Attendees, func(a calAttendee) bool {
+		return !a.Self && !o.self(calAddress(a.Email))
+	})
 }
 
 // attendeesArg is the attendees argument as addressSet makes it, and
@@ -64,9 +92,9 @@ func invited(e calEvent) []string {
 }
 
 // ownedCalendar is the calendar the argument calendar_id names, as
-// calendarArg reads it, when the owner owns it: its role in the
-// account's list is owner. Any other is refused before an event is
-// read or changed.
+// calendarArg reads it, when it is one of the owner's own
+// (ownCalendar). Any other is refused before an event is read or
+// changed.
 func (cc *calCall) ownedCalendar(ctx context.Context, required bool) (string, error) {
 	cal, err := cc.calendarArg(ctx, "calendar_id", required)
 	if err != nil {
@@ -76,9 +104,9 @@ func (cc *calCall) ownedCalendar(ctx context.Context, required bool) (string, er
 	if err != nil {
 		return "", err
 	}
-	if !ok || e.AccessRole != "owner" {
-		return "", refuse("Calendar "+cal+" is not one the owner owns, and you may change events only on calendars the owner owns; list_calendars gives each calendar's role.",
-			"calendar "+cal+" is not one the owner owns")
+	if !ok || !ownCalendar(e) {
+		return "", refuse("Calendar "+cal+" is not one of the owner's own calendars, and you may change events only on "+ownWords+"; list_calendars gives each calendar's role.",
+			"calendar "+cal+" is not one of the owner's own")
 	}
 	return cal, nil
 }
@@ -235,16 +263,17 @@ const (
 // writeQuery is every write's query: Google emails no one about it.
 const writeQuery = "?sendUpdates=none"
 
-// createEvent creates an event on a calendar the owner owns, marked as
-// Kivali's (kivaliMarker) with the agent's slug, telling no one. A
-// call that invites people is a send, which this version does not run.
+// createEvent creates an event on one of the owner's own calendars,
+// marked as Kivali's (kivaliMarker) with the agent's slug, telling no
+// one. A call that invites people is a send, which this version does
+// not run.
 func createEvent(ctx context.Context, c *call) (any, error) {
-	send, err := isSend(c.args, nil)
+	send, err := isSend(actionCreateEvent, c.args, nil, calOwner{})
 	if err != nil {
 		return nil, err
 	}
 	if send {
-		return nil, failure(invitesNotAvailable)
+		return nil, failure(sendNotAvailable)
 	}
 	if c.agent == "" {
 		return nil, errors.New("the call names no agent to mark the event with")
@@ -294,10 +323,11 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 	return "Created event " + made.ID + " on calendar " + cal + ", " + when + ". Google emailed no one about it, and Kivali marked it as created by Kivali.", nil
 }
 
-// updateEvent changes the fields the call gives of an event on a
-// calendar the owner owns, telling no one. A call whose attendees are
-// other than the event's is a send, which this version does not run;
-// one that gives the event's own list leaves it as it is.
+// updateEvent changes the fields the call gives of an event on one of
+// the owner's own calendars, telling no one. A call on an event that
+// reaches others, or whose attendees are other than the event's, is a
+// send, which this version does not run; one that gives the event's own
+// list leaves it as it is.
 func updateEvent(ctx context.Context, c *call) (any, error) {
 	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, true)
@@ -312,12 +342,16 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	send, err := isSend(c.args, invited(cur))
+	o, err := cc.owner(ctx)
+	if err != nil {
+		return nil, err
+	}
+	send, err := isSend(actionUpdateEvent, c.args, &cur, o)
 	if err != nil {
 		return nil, err
 	}
 	if send {
-		return nil, failure(invitesNotAvailable)
+		return nil, failure(sendNotAvailable)
 	}
 	body := map[string]any{}
 	var changed []string
@@ -364,9 +398,10 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 	return "Changed event " + id + " on calendar " + cal + ": " + what + ". It is " + when + ". Google emailed no one about it.", nil
 }
 
-// deleteEvent deletes an event Kivali created (kivaliMarker set, by any
-// agent) from a calendar the owner owns, telling no one; any other
-// event is refused before anything is changed.
+// deleteEvent deletes an event Kivali created on this account
+// (kivaliMarker set) from one of the owner's own calendars, telling no
+// one; any other event is refused before anything is changed. One that
+// reaches others is a send, which this version does not run.
 func deleteEvent(ctx context.Context, c *call) (any, error) {
 	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, true)
@@ -384,6 +419,17 @@ func deleteEvent(ctx context.Context, c *call) (any, error) {
 	if !e.byKivali() {
 		return nil, refuse("You may delete only events Kivali created, and Kivali did not create event "+id+".",
 			"event "+id+" was not created by Kivali")
+	}
+	o, err := cc.owner(ctx)
+	if err != nil {
+		return nil, err
+	}
+	send, err := isSend(actionDeleteEvent, c.args, &e, o)
+	if err != nil {
+		return nil, err
+	}
+	if send {
+		return nil, failure(sendNotAvailable)
 	}
 	if err := c.g.calendarRequest(ctx, c.token, http.MethodDelete, eventPath(cal, id)+writeQuery, nil, nil); err != nil {
 		return nil, err

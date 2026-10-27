@@ -33,7 +33,9 @@ type fakeCalendar struct {
 	// calendars is the account's list; events each calendar's, as
 	// Calendar answers them; busy each calendar's busy times as
 	// freeBusy answers them, and busyErrors the reason it gives in
-	// place of them. Set before the first call.
+	// place of them. A calendar with events or busy times that the list
+	// does not name is one Google serves all the same, as a colleague's
+	// calendar the account does not list. Set before the first call.
 	calendars  []calendarEntry
 	events     map[string][]map[string]any
 	busy       map[string][]map[string]string
@@ -49,8 +51,8 @@ type fakeCalRequest struct {
 func (r fakeCalRequest) String() string { return r.method + " " + r.path + "?" + r.query }
 
 // fakeCalendars is the account's calendar list: the primary, which the
-// owner owns; a group calendar the owner owns; a colleague's the owner
-// may change events on; and a holiday calendar the owner may read,
+// owner owns; a calendar made in Google Calendar the owner owns; a
+// colleague's the owner may change events on; and a holiday calendar the owner may read,
 // whose id holds a "#".
 var fakeCalendars = []calendarEntry{
 	{ID: "team@group.calendar.google.com", Summary: "Team", AccessRole: "owner", TimeZone: "Europe/London"},
@@ -160,7 +162,7 @@ func (f *fakeCalendar) serveCalendar(w http.ResponseWriter, r *http.Request) {
 		f.freeBusy(w, body)
 	case len(parts) >= 3 && parts[0] == "calendars" && parts[2] == "events":
 		cal := parts[1]
-		if !slices.ContainsFunc(f.calendars, func(c calendarEntry) bool { return c.ID == cal }) {
+		if !f.served(cal) {
 			calNotFound(w)
 			return
 		}
@@ -177,6 +179,12 @@ func (f *fakeCalendar) serveCalendar(w http.ResponseWriter, r *http.Request) {
 	default:
 		calNotFound(w)
 	}
+}
+
+// served reports whether Google answers for the calendar cal: one of
+// the list, or one given events or busy times.
+func (f *fakeCalendar) served(cal string) bool {
+	return slices.ContainsFunc(f.calendars, func(c calendarEntry) bool { return c.ID == cal }) || f.events[cal] != nil || f.busy[cal] != nil
 }
 
 // startOf is when an event starts or ends (key "start" or "end"), a
@@ -309,7 +317,7 @@ func (f *fakeCalendar) freeBusy(w http.ResponseWriter, body []byte) {
 	cals := map[string]any{}
 	for _, it := range q.Items {
 		reason := f.busyErrors[it.ID]
-		if reason == "" && !slices.ContainsFunc(f.calendars, func(c calendarEntry) bool { return c.ID == it.ID }) {
+		if reason == "" && !f.served(it.ID) {
 			reason = "notFound"
 		}
 		if reason != "" {
