@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -17,65 +19,160 @@ import (
 const fieldClientJSON = "client_json"
 
 // clientJSONWords say what the field takes.
-const clientJSONWords = "The client's JSON file from Google's Auth Platform, pasted whole. Kivali reads the client id and secret from it."
+const clientJSONWords = "The file you downloaded for the client, pasted whole. Kivali reads the client id and secret from it."
 
-// setupNotes is the guide the page shows above the setup, Markdown:
-// Google's console, step by step, with a link to each page. Core puts
-// the redirect address of the page's own address for {{redirect_url}},
-// the one a Web application client registers; a Desktop app client
-// registers none, since Google takes a desktop client's sign-in at any
-// loopback port.
-const setupNotes = `Google Workspace signs in with an OAuth client of your own, made once on Google's Auth Platform in a Google Cloud project of yours. Sign in to Google Cloud console with the Google account agents will work in.
+// setupNotes is what the page shows above Connect, Markdown: what the
+// setup is for and what it asks of the owner, in two sentences. The
+// steps themselves are the flow's, one page of Google Cloud console at
+// a time.
+const setupNotes = `Google signs agents in through an app you make in Google Cloud console, so the sign-in is yours alone. Connect walks you through making it, one page at a time: about five minutes, once. Then you sign in to Google, and agents can start.`
 
-1. [Create a project](https://console.cloud.google.com/projectcreate), or pick one you have.
-2. [Turn on the APIs](https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,docs.googleapis.com,drive.googleapis.com) agents use in the project: Gmail, Google Calendar, Google Docs and Google Drive.
-3. Open [Google Auth Platform](https://console.cloud.google.com/auth/overview) and choose **Get started**. Name the app, such as Kivali, and give your email address where it asks. For the audience, choose **External** for a Gmail account, or **Internal** for a Google Workspace account, which keeps the app to your organization.
-4. An External app starts in Testing, where Google ends every sign-in after seven days. Under [Audience](https://console.cloud.google.com/auth/audience), choose **Publish app**. Google does not review an app only you use, so the first time you sign in it says "Google hasn't verified this app": choose **Advanced**, then go on to the app. An Internal app has nothing to publish.
-5. Under [Clients](https://console.cloud.google.com/auth/clients/create), create a client of one of these types:
-   - **Desktop app**, for a team on this computer that you open at 127.0.0.1. There is nothing to register: Google takes its sign-in at any port.
-   - **Web application**, for a team you open at another address, such as a server's or the team's address for other devices. Under **Authorized redirect URIs**, add the redirect address below. This page shows the address it is open at, so open it at the address you will sign in from.
+// The pages of Google Cloud console the steps open, each on the one
+// host setup declares.
+const (
+	consoleBase = "https://console.cloud.google.com"
+	// pageAPIs turns on the four APIs agents use, in a project chosen
+	// or created there.
+	pageAPIs = consoleBase + "/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,docs.googleapis.com,drive.googleapis.com"
+	// pageScreen is Google Auth Platform's overview, where the sign-in
+	// screen is set up.
+	pageScreen = consoleBase + "/auth/overview"
+	// pageAudience is where an External app is published.
+	pageAudience = consoleBase + "/auth/audience"
+	// pageClient creates the OAuth client.
+	pageClient = consoleBase + "/auth/clients/create"
+)
 
-` + "```Redirect address\n{{redirect_url}}\n```" + `
+// The words of each step, one thing to do on the page it opens. Core
+// cuts a step's words at 200 characters, and each is shorter.
+const (
+	wordsAPIs     = "Sign in with the Google account agents will work in. Pick a project, or create one, then turn on the four APIs the page lists: Gmail, Google Calendar, Google Docs and Google Drive."
+	wordsScreen   = "Choose Get started. Name the app Kivali, give your email address, and for the audience choose External for a personal Gmail account or Internal for a work account."
+	wordsPublish  = "If you chose External, choose Publish app, so Google keeps you signed in; Internal needs nothing here. When Google later says it has not verified the app, choose Advanced and go on."
+	wordsDesktop  = "Create a client: choose Desktop app as the type, name it Kivali, and choose Create."
+	wordsWeb      = "Create a client: choose Web application as the type, name it Kivali, add the address below under Authorized redirect URIs, and choose Create."
+	wordsWebMany  = "Create a client: choose Web application as the type, name it Kivali, add each address below under Authorized redirect URIs, and choose Create."
+	wordsDownload = "Google shows the client it made. Choose Download JSON, open the file, and paste everything in it here."
+)
 
-6. Download the client's JSON where Google shows the client's secret, and paste the whole file below. Kivali keeps the client id and secret, then you sign in to Google with the client.`
+// formWords say what the Form asks for: the client's JSON.
+const formWords = wordsDownload
 
-// formWords say what the Form asks for.
-const formWords = "Paste the JSON of the client you made on Google's Auth Platform, as the steps above say. Kivali keeps its client id and secret, then you sign in to Google with the client."
+// Where the flow is, carried in each step's State: under "at", the
+// page the owner is on, then the Form; under "web", "1" when the team
+// is opened off loopback, so the client must be a Web application's.
+const (
+	keyAt      = "at"
+	keyNeedWeb = "web"
+	atAPIs     = "apis"
+	atScreen   = "screen"
+	atPublish  = "publish"
+	atClient   = "client"
+	atForm     = "form"
+)
 
-// Setup is Google Workspace's setup flow. Installing (FlowSetup) is one
-// Form for the client's JSON, asked again with words saying what is
-// wrong until it reads as an OAuth client's; then Done, keeping the
-// client id and secret, and core's browser sign-in with that client
-// takes over (setup.then). Nothing is made on Google, and nothing is
-// kept before the JSON reads. State holds a short marker of the step
-// alone; the pasted JSON is setup-only, in the Answer's Form, and is
+// Setup is Google Workspace's setup flow. Installing (FlowSetup) walks
+// the owner through Google Cloud console one page at a time, each a
+// Form with no fields that opens the page and says what to do there:
+// a project with the four APIs on, the sign-in screen, publishing the
+// app, and the client, whose type Kivali picks from where the team is
+// opened (Answer.Addresses): a Desktop app for a team opened at
+// loopback alone, which Google signs in at any loopback port, else a
+// Web application with every address to register. Then one Form for
+// the client's JSON, asked again with words saying what is wrong until
+// it reads as an OAuth client's of a type that works where the team is
+// opened; then Done, keeping the client id and secret, and core's
+// browser sign-in with that client takes over (setup.then). Nothing is
+// made on Google, and nothing is kept before the JSON reads. State
+// holds a short marker of the step alone, and whether a Web client is
+// needed; the pasted JSON is setup-only, in the Answer's Form, and is
 // never carried.
 func (g *GoogleWorkspace) Setup(_ context.Context, _ builtinintegrations.Connection, flow string, last builtinintegrations.Answer, _ builtinintegrations.Progress) (builtinintegrations.Step, error) {
 	if flow != builtinintegrations.FlowSetup {
 		return builtinintegrations.Step{}, errors.New("Google Workspace has no flow named " + flow)
 	}
-	switch last.State["at"] {
+	switch last.State[keyAt] {
 	case "":
-		return clientForm(formWords), nil
-	case "form":
+		return byHand(wordsAPIs, pageAPIs, atAPIs, nil), nil
+	case atAPIs:
+		return byHand(wordsScreen, pageScreen, atScreen, nil), nil
+	case atScreen:
+		return byHand(wordsPublish, pageAudience, atPublish, nil), nil
+	case atPublish:
+		return clientStep(last.Addresses), nil
+	case atClient:
+		return clientForm(formWords, last.State[keyNeedWeb]), nil
+	case atForm:
 		c, problem := readClientJSON(last.Form[fieldClientJSON])
+		if problem == "" && last.State[keyNeedWeb] == "1" && !c.Web {
+			problem = clientJSONNeedsWeb
+		}
 		if problem != "" {
-			return clientForm(problem), nil
+			return clientForm(problem, last.State[keyNeedWeb]), nil
 		}
 		return builtinintegrations.Step{
 			Done: true,
 			Keep: map[string]string{integration.FieldClientID: c.ClientID, integration.FieldClientSecret: c.ClientSecret},
 		}, nil
 	}
-	return builtinintegrations.Step{}, fmt.Errorf("the setup is at %q, which Google Workspace does not know", last.State["at"])
+	return builtinintegrations.Step{}, fmt.Errorf("the setup is at %q, which Google Workspace does not know", last.State[keyAt])
 }
 
-// clientForm is the Form for the client's JSON, with words.
-func clientForm(words string) builtinintegrations.Step {
+// byHand is a step the owner takes on page by hand: words, the page,
+// what to copy there, and Continue alone.
+func byHand(words, page, at string, copy []string) builtinintegrations.Step {
 	return builtinintegrations.Step{
-		Form:  &builtinintegrations.Form{Words: words, Fields: []string{fieldClientJSON}},
-		State: map[string]string{"at": "form"},
+		Form:  &builtinintegrations.Form{Words: words, URL: page, Copy: copy},
+		State: map[string]string{keyAt: at},
 	}
+}
+
+// clientStep is the step that creates the client, of the type that
+// works where the team is opened: a Desktop app when every address the
+// team signs in at is loopback (or none is known), else a Web
+// application with every address to register, loopback ones included,
+// since Google takes a Web client's sign-in only at an address it was
+// given. The step carries whether a Web client is needed, so the JSON
+// of a Desktop app is refused where it would fail at sign-in.
+func clientStep(addresses []string) builtinintegrations.Step {
+	if loopbackOnly(addresses) {
+		return byHand(wordsDesktop, pageClient, atClient, nil)
+	}
+	words := wordsWeb
+	if len(addresses) > 1 {
+		words = wordsWebMany
+	}
+	st := byHand(words, pageClient, atClient, slices.Clone(addresses))
+	st.State[keyNeedWeb] = "1"
+	return st
+}
+
+// loopbackOnly reports whether every address is at a loopback host,
+// or there are none.
+func loopbackOnly(addresses []string) bool {
+	for _, a := range addresses {
+		u, err := url.Parse(a)
+		if err != nil {
+			return false
+		}
+		if h := u.Hostname(); h != "127.0.0.1" && h != "localhost" && h != "::1" {
+			return false
+		}
+	}
+	return true
+}
+
+// clientForm is the Form for the client's JSON, with words, carrying
+// whether a Web client is needed (needWeb, "1" or "").
+func clientForm(words, needWeb string) builtinintegrations.Step {
+	st := builtinintegrations.Step{
+		Form:  &builtinintegrations.Form{Words: words, Fields: []string{fieldClientJSON}},
+		State: map[string]string{keyAt: atForm},
+	}
+	if needWeb != "" {
+		st.State[keyNeedWeb] = needWeb
+	}
+	return st
 }
 
 // clientFile is the JSON Google gives to download for an OAuth client:
@@ -87,10 +184,13 @@ type clientFile struct {
 	Web       *clientSection `json:"web"`
 }
 
-// clientSection is a client file's client, as far as Kivali reads it.
+// clientSection is a client file's client, as far as Kivali reads it:
+// its id and secret, and whether it is a Web application's (web), as
+// against a Desktop app's (installed).
 type clientSection struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
+	Web          bool   `json:"-"`
 }
 
 // Bounds on what the client JSON may hold: the whole paste, and its id
@@ -113,11 +213,12 @@ const (
 	clientJSONNoClient       = "That JSON holds no OAuth client. Create a client of type Desktop app or Web application on Google's Auth Platform, and paste its JSON."
 	clientJSONNoID           = "That client JSON has no client id ending in .apps.googleusercontent.com. Paste the whole file you downloaded for the client."
 	clientJSONNoSecret       = "That client JSON has no client secret. Download the JSON where Google's Auth Platform shows the client's secret, and paste it whole."
+	clientJSONNeedsWeb       = "That is a Desktop app client, which Google signs in only at 127.0.0.1, and this team is opened elsewhere. Create a Web application client with the addresses added, and paste its JSON."
 )
 
 // readClientJSON reads a pasted client JSON: the installed or web
 // client in it (installed first, when a file had both), whose id and
-// secret it must hold. problem is "" when it reads, else the words that
+// secret it must hold, and which it was. problem is "" when it reads, else the words that
 // ask for it again.
 func readClientJSON(pasted string) (c clientSection, problem string) {
 	s := strings.TrimSpace(pasted)
@@ -131,9 +232,9 @@ func readClientJSON(pasted string) (c clientSection, problem string) {
 	if err := json.Unmarshal([]byte(s), &f); err != nil {
 		return c, clientJSONNotJSON
 	}
-	sec := f.Installed
+	sec, web := f.Installed, false
 	if sec == nil {
-		sec = f.Web
+		sec, web = f.Web, f.Web != nil
 	}
 	switch {
 	case sec == nil && f.Type == "service_account":
@@ -141,7 +242,7 @@ func readClientJSON(pasted string) (c clientSection, problem string) {
 	case sec == nil:
 		return c, clientJSONNoClient
 	}
-	c = clientSection{ClientID: strings.TrimSpace(sec.ClientID), ClientSecret: strings.TrimSpace(sec.ClientSecret)}
+	c = clientSection{ClientID: strings.TrimSpace(sec.ClientID), ClientSecret: strings.TrimSpace(sec.ClientSecret), Web: web}
 	switch {
 	case !clientValue(c.ClientID) || !strings.HasSuffix(c.ClientID, clientIDSuffix) || len(c.ClientID) == len(clientIDSuffix):
 		return clientSection{}, clientJSONNoID

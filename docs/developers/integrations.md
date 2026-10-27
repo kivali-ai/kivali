@@ -1019,8 +1019,8 @@ Each Step is held to the declarations before anything of it is kept:
 for a `setup` connection, `kivali.connection.setup`; for the standard
 flows, the connection form's fields, the manifest's sign-in hosts
 (`SignInHosts`) and the form's keys. A step that is none or several of
-Form, Go, Wait and Done, a Form asking for an undeclared field, a Go or
-a Wait naming a page that is not `https://` (plain `http://` only on
+Form, Go, Wait and Done, a Form asking for an undeclared field, a Form,
+a Go or a Wait naming a page that is not `https://` (plain `http://` only on
 loopback, for a service run in-process in tests), that carries user
 info, or that is not on a declared host, and a Keep holding an
 undeclared key fail the flow in words that say what it tried ("Echo's
@@ -1033,16 +1033,22 @@ https: it is the page the manifest's own device endpoint answered with
 (`verification_uri`), which a vendor may put on a host none of its
 endpoints is on (Google's is `www.google.com`).
 
-- **Form.** The page draws the step's fields under the integration's
-  name ("GitHub asks for"), a secret one as a password field, a
-  setup-only one said to be never kept. `POST .../setup/answer` hands
-  what the owner entered, trimmed, to the next call as `Answer.Form`
-  (the page sends every field the step asks for, one left blank as
-  empty; a standard flow's blank secret keeps the value stored, as the
-  page's form does); a key the step does not ask for is a 400, and an answer while the
-  flow is not on a Form a 409. A setup-only value lives in the flow's
-  memory alone (the driver may carry it in `State`) and is never
-  written.
+- **Form.** The page draws the step's words, then its page on the
+  service (`Form.URL`, on a declared host, as a link that opens in a
+  new tab so the page stays with the flow) and what to copy there
+  (`Form.Copy`, each with a Copy button), then its fields under the
+  integration's name ("GitHub asks for"), a secret one as a password
+  field, a setup-only one said to be never kept, and Continue. A Form
+  with no fields is a step the owner takes on the service by hand
+  (making a project, registering an address): Continue alone goes on.
+  `POST .../setup/answer` hands what the owner entered, trimmed, to
+  the next call as `Answer.Form` (the page sends every field the step
+  asks for, one left blank as empty, and nothing for a Form with none;
+  a standard flow's blank secret keeps the value stored, as the page's
+  form does); a key the step does not ask for is a 400, and an answer
+  while the flow is not on a Form a 409. A setup-only value lives in
+  the flow's memory alone (the driver may carry it in `State`) and is
+  never written.
 - **Go.** The page sends the browser to `GET /connect/start?flow=<id>`
   (`step.start_url`), which sets the flow's cookie for this leg and
   sends the browser on to the step's address: a 303 for a link, or for
@@ -1140,12 +1146,13 @@ OAuth state and verifier, the code and the tokens) are replaced by
 `[secret]`, whole, in the flow's error words, progress words and
 steps, in the audit and in what core logs of the flow. Then the error
 words, the progress words and a step's words are cut to 200 runes. A
-Wait's code (`Wait.Code`) is cut to 64 runes and not scrubbed: the
-driver chose to show it, for the owner to enter on the service's page.
-A step that names an address longer than 4096
-characters, keeps and carries in its `State` more than 64 KiB
-together, or posts more than 64 KiB fails the flow in words that say
-so: a bundle's step is someone else's code, and its server may write
+Wait's code (`Wait.Code`) is cut to 64 runes, and each of a Form's
+values to copy (`Form.Copy`) to 1024, and neither is scrubbed: the
+driver chose to show them, for the owner to enter on the service's
+page. A step that names an address longer than 4096 characters, gives
+more than 10 values to copy, keeps and carries in its `State` more
+than 64 KiB together, or posts more than 64 KiB fails the flow in
+words that say so: a bundle's step is someone else's code, and its server may write
 lines of up to 16 MiB.
 
 The owner's audit gains one row per flow event under the owner's name
@@ -1277,7 +1284,8 @@ and a proxy credential per connection stay built-in only.
   `flow` is `setup` or a Fix's name; `answer` is the
   [Answer](#the-interface), every object present (`{}` when empty) and
   `return` the query with each key's values as a list. The result is
-  `{"step": {...}}` with exactly one of `"form": {"words", "fields"}`,
+  `{"step": {...}}` with exactly one of `"form": {"words", "fields", "url", "copy"}`
+  (`fields` may be empty; `url` and `copy`, a list of strings, are optional),
   `"go": {"words", "url", "post", "no_return", "stateless"}` (`post` an
   object of strings or lists of strings), `"wait": {"words", "url", "code"}`
   or `"done": true`, and optionally `"keep"` and `"state"`, objects of
@@ -4116,7 +4124,8 @@ so each service's actions change apart:
   `user_config`; `kivali.hosts`: `gmail.googleapis.com`,
   `www.googleapis.com`, `docs.googleapis.com`, `oauth2.googleapis.com`
   and `accounts.google.com`; `kivali.verify: profile`, which is not a
-  tool; and `kivali.setup_notes`, the console guide (below). Its
+  tool; and `kivali.setup_notes`, two sentences on what the setup is for
+  and how long it takes, which the page draws above Connect (below). Its
   `tools` are every action of the three services, each with `access`
   set to its bucket's switch, so the page lists it under that switch's
   title. It passes `integration.ValidateBuiltin`.
@@ -4132,31 +4141,31 @@ so each service's actions change apart:
 
 #### Setup
 
-`Setup` with `FlowSetup` is one **Form**, `client_json`, then **Done**:
+`Setup` with `FlowSetup` walks the owner through Google Cloud console
+one page at a time, then takes the client's JSON:
 
-1. The Form's words say to paste the JSON of the client made on
-   Google's Auth Platform, as the steps above say. A step's words are
-   plain text, cut at 200 characters ([Scrubbing and the
-   audit](#scrubbing-and-the-audit)), so the guide with its links is
-   `kivali.setup_notes`, which the page draws above the setup while
-   Google Workspace is installed, and under Setup notes once it is
-   connected. The guide links each page of Google Cloud console:
-   creating a project (`/projectcreate`), turning on the Gmail,
-   Calendar, Docs and Drive APIs (`/flows/enableapi?apiid=...`), Google
-   Auth Platform's **Get started** (`/auth/overview`; External for a
-   Gmail account, Internal for a Workspace one), publishing an External
-   app (`/auth/audience`; Testing ends every sign-in after seven days,
-   and an unverified app shows "Google hasn't verified this app" once,
-   with Advanced to go on), and creating a client (`/auth/clients/create`):
-   **Desktop app** for a team opened at `127.0.0.1`, which registers
-   nothing since Google takes a desktop client's sign-in at any
-   loopback port, or **Web application** for a team opened at another
-   address, which registers the redirect address under Authorized
-   redirect URIs. That address is the notes' `{{redirect_url}}`, in a
-   top-level code block headed "Redirect address", which core fills
-   with the address the page is open at (`Server.setupNotes`), the one
-   the sign-in after setup sends Google as its `redirect_uri`.
-2. The answer is read (`readClientJSON`): trimmed, at most 64 KiB, a
+1. Four **Form** steps with no fields ([Steps](#steps)), each with its
+   page of the console as `Form.URL` and one thing to do there in its
+   words, under 200 characters, in the console's own terms: a project
+   with the four APIs on (`/flows/enableapi?apiid=...`, which picks or
+   creates the project), the sign-in screen (`/auth/overview`: Get
+   started, External for a personal Gmail account, Internal for a work
+   account), publishing an External app (`/auth/audience`: Testing
+   ends every sign-in after seven days, and an unverified app shows
+   "Google hasn't verified this app" once, with Advanced to go on),
+   and the client (`/auth/clients/create`). The client step's type is
+   picked from `Answer.Addresses` (`clientStep`, `loopbackOnly`):
+   every address at `127.0.0.1`, `localhost` or `::1`, or none known,
+   says **Desktop app**, which registers nothing since Google takes a
+   desktop client's sign-in at any loopback port; any other address
+   says **Web application** and gives every address, loopback ones
+   included, as `Form.Copy` to add under Authorized redirect URIs,
+   since Google signs a Web client in only at an address it was given,
+   and carries `web: 1` in `State`. Each step's `State` marks where
+   the flow is (`at`), nothing more.
+2. One **Form** for `client_json`, whose words say to download the
+   client's JSON and paste it whole.
+3. The answer is read (`readClientJSON`): trimmed, at most 64 KiB, a
    JSON object whose `installed` (a Desktop app's) or `web` (a Web
    application's) holds `client_id`, ending
    `.apps.googleusercontent.com`, and `client_secret`, each without a
@@ -4165,13 +4174,15 @@ so each service's actions change apart:
    each under 200 characters and quoting nothing of the paste: an
    empty answer; one that is not JSON or is too long; a service
    account's key (`type: service_account`); JSON with neither client;
-   no client id Google issues; no client secret. Nothing is kept until
-   it reads.
-3. **Done**, keeping `client_id` and `client_secret`. Core's browser
+   no client id Google issues; no client secret; and a Desktop app's
+   where `State` says a Web client is needed (`clientJSONNeedsWeb`),
+   since the sign-in after it would fail with Google's
+   `redirect_uri_mismatch`. Nothing is kept until it reads.
+4. **Done**, keeping `client_id` and `client_secret`. Core's browser
    sign-in takes over with them ([Signing in](#signing-in)).
 
-`State` holds the marker `form` alone; the pasted JSON is setup-only
-and never carried. Any other flow fails: Google Workspace's rows name
+`State` holds the markers `at` and `web` alone; the pasted JSON is
+setup-only and never carried. Any other flow fails: Google Workspace's rows name
 no Fix of its own.
 
 #### Access

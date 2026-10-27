@@ -152,7 +152,7 @@ func actionNamed(name string) *action {
 const ownerDecides = " The owner decides what you may read, change and send in Gmail, Google Calendar and Google Docs, and which labels, calendars and folders you may use."
 
 // setupSummary is what setup does, in words for the owner.
-const setupSummary = "Keeps the client id and secret of the OAuth client you make on Google's Auth Platform, from the client's JSON you paste, then signs you in to Google with that client. Kivali makes nothing on Google itself."
+const setupSummary = "Walks you through making an app of your own in Google Cloud console, keeps the id and secret of its client from the file you paste, then signs you in to Google with it. Kivali makes nothing on Google itself."
 
 // Manifest is Google Workspace's manifest. Its tools are every action
 // an agent may be given, each under the switch that gives it; profile
@@ -171,7 +171,7 @@ func (g *GoogleWorkspace) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "1.0.0",
 		DisplayName:     displayName,
-		Description:     "Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform. Agents can read your Gmail, write drafts in it, label its mail and send mail you approve, read your Google Calendar, change its events, and invite people and answer invitations once you approve, and read and write your Google Docs and comment on those Kivali made once you approve.",
+		Description:     "Lets agents work in your Gmail, Google Calendar and Google Docs: read your mail, write drafts and label messages; read your calendars and keep your events; read and write your documents. Anything that reaches another person, such as an email, an invitation or a comment, waits for your approval, and you choose what each agent may read, change and send.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,

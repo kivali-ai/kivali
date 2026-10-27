@@ -62,7 +62,7 @@ func TestManifest(t *testing.T) {
 	if want := []string{"gmail.googleapis.com", "www.googleapis.com", "docs.googleapis.com", "oauth2.googleapis.com", "accounts.google.com"}; !slices.Equal(m.Kivali.Hosts, want) {
 		t.Errorf("hosts = %v", m.Kivali.Hosts)
 	}
-	if m.Kivali.Verify != "profile" || len(m.Kivali.Packages) != 0 || !strings.Contains(m.Kivali.SetupNotes, "{{redirect_url}}") {
+	if m.Kivali.Verify != "profile" || len(m.Kivali.Packages) != 0 || m.Kivali.SetupNotes != setupNotes || strings.Contains(setupNotes, "{{") {
 		t.Errorf("kivali = %+v", m.Kivali)
 	}
 
