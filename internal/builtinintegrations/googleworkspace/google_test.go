@@ -120,10 +120,11 @@ func TestManifest(t *testing.T) {
 			t.Errorf("%s: tools %v, want %v", k, buckets[k], names)
 		}
 	}
-	// A call that invites people is a send: the owner's words for the
-	// two actions that may make one say it waits for approval.
+	// A call that invites people is a send, which this version does not
+	// run: the owner's words for the two actions that may make one say
+	// so.
 	for _, tl := range m.Tools {
-		if (tl.Name == "create_event" || tl.Name == "update_event") && !strings.Contains(tl.Description, "waits for your approval instead") {
+		if (tl.Name == "create_event" || tl.Name == "update_event") && !strings.Contains(tl.Description, "not available in this version of Kivali") {
 			t.Errorf("%s: %q", tl.Name, tl.Description)
 		}
 	}
@@ -159,14 +160,15 @@ func TestToolsFollowTheSwitches(t *testing.T) {
 		t.Errorf("gmail_read: %v", got)
 	}
 	// A switch stored as anything but true is off.
-	if got := names(map[string]any{"gmail_read": "true", "calendar_read": true}); len(got) != 0 {
+	if got := names(map[string]any{"gmail_read": "true", "calendar_read": "true"}); len(got) != 0 {
 		t.Errorf("gmail_read as text: %v", got)
 	}
 	all := map[string]any{}
 	for _, k := range switchKeys {
 		all[k] = true
 	}
-	if got := names(all); !slices.Equal(got, gmailRead) {
+	calendar := []string{"list_calendars", "list_events", "get_event", "find_free_time", "create_event", "update_event", "delete_event"}
+	if got := names(all); !slices.Equal(got, slices.Concat(gmailRead, calendar)) {
 		t.Errorf("every switch: %v", got)
 	}
 	m := New().Manifest()
@@ -205,7 +207,7 @@ func TestCallRefuses(t *testing.T) {
 	delete(noToken.Fields, CredentialKey)
 	refused("list_labels", reads, noToken, notSignedIn)
 
-	res, err := g.Call(context.Background(), reads, testConn(), "list_events", nil)
+	res, err := g.Call(context.Background(), agent(map[string]any{"calendar_send": true}), testConn(), "respond_to_invitation", nil)
 	if err != nil || res == nil || !res.IsError || len(res.Content) != 1 || res.Content[0] != "This action is not available in this version of Kivali." {
 		t.Errorf("an action this version does not run: %+v, %v", res, err)
 	}

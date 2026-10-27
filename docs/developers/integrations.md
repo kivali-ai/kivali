@@ -3928,6 +3928,7 @@ apart:
 | `gmail_read.go` | Gmail's reading: search, a message, a thread, how a message is rendered |
 | `gmail_text.go` | the text an email becomes: the framing, the provenance line, HTML to text, the links |
 | `gmail_attach.go` | saving an attachment into the agent's files |
+| `calendar_write.go` | Calendar's changes: creating, changing and deleting events, and `isSend` |
 
 - **The manifest**: `kivali.connection.method: setup`, handing over
   to a browser sign-in (`setup.then: browser`) at Google's endpoints
@@ -4057,13 +4058,13 @@ bucket's switch:
 | `gmail_write` | `create_draft`, `delete_draft`, `modify_labels` |
 | `gmail_send` | `send_email`, `send_draft` |
 | `calendar_read` | `list_calendars`, `list_events`, `get_event`, `find_free_time` |
-| `calendar_write` | `create_event`, `update_event` (a call that sets or changes who is invited waits for approval instead, under `calendar_send`), `delete_event` |
+| `calendar_write` | `create_event`, `update_event` (a call that sets or changes who is invited is a send, which this version does not run), `delete_event` |
 | `calendar_send` | `respond_to_invitation` |
 | `docs_read` | `search_documents`, `get_document`, `list_comments` |
 | `docs_write` | `create_document`, `append_to_document`, `replace_text` |
 | `docs_send` | `add_comment`, `reply_to_comment` |
 
-This version runs the `gmail_read` actions; the rest have no `run`.
+This version runs the `gmail_read`, `calendar_read` and `calendar_write` actions; the rest have no `run`.
 `Tools` gives an agent each action whose switch its access has on and
 that this version runs, with its description and the sentence saying
 the owner decides. `Call` refuses, in order, an action that is not one
@@ -4298,6 +4299,122 @@ it read none, never the header's own words. A search names the senders of every
 message it lists, since a snippet is the message's text. Core keeps
 them in the audit row's `outside` ([The audit](#the-audit)), which the
 approval of a send will read; nothing else is stored.
+
+#### Calendar
+
+`calendar.go` holds Calendar's actions and its reading,
+`calendar_write.go` its changes. Every request goes to
+`www.googleapis.com/calendar/v3`; a read is a GET (`get`), and
+freeBusy and the writes go through `calendarRequest`, which sends a
+JSON body with any method and reads the answer as `get` does (the same
+client, bounds, errors and scrubbing).
+
+- **Which calendar.** `calendar_id` is an id as `list_calendars` gives
+  it, or an option as the access stores one (`optionID`): letters,
+  digits and `. _ % + # @ -`, sent path-escaped. Left out, or
+  `primary`, it is the primary calendar, whose id is read from
+  `users/me/calendarList` first. A calendar outside the access's
+  `calendars` is refused, "Your access does not include the calendar
+  <id>; list_calendars lists those it does, and the owner can add
+  others if your work needs them.", audited as `the access does not
+  include the calendar <id>`; one named by id is refused before
+  anything reaches Google. The account's list is read at most once a
+  call, 250 a page by `pageToken`, ten pages at most.
+- **Times.** A window (`time_min`, `time_max`) is RFC 3339 with its
+  offset, `time_max` after `time_min`. The built-in's `Clock`
+  (`internal/clock`, the system's when nil) gives `list_events` its
+  default start, now.
+- `list_calendars` answers the calendars the access includes, each as
+  its option, then `role <accessRole>`, `primary`, and its time zone.
+  Audit: "listed N calendars".
+- `list_events(calendar_id?, time_min?, time_max?, query?, page_token?)`
+  is `GET calendars/{id}/events` with `singleEvents=true`,
+  `orderBy=startTime`, `maxResults=25`, `timeMin`, `timeMax`, `q` and
+  `pageToken`; the window defaults to now and a week on and is at most
+  60 days. Each row is Kivali's line (the event's id, when, status,
+  provenance, attendee count, "Kivali created it") and the title,
+  framed, cut at 300 characters, with its links; an event with no title
+  says so, unframed. The page stays within `answerClip` as a search's
+  does, naming the events it has no room for. Audit: "listed N events
+  on calendar <id>: <ids>".
+- `get_event(calendar_id, event_id)` is `GET
+  calendars/{id}/events/{id}` (404 or 410: "Calendar <id> has no event
+  <id>; ..."), rendered as a heading (id, calendar, when, status, the
+  repeating event it is an occurrence of, "Kivali created it"), the
+  provenance line, then framed: title, place, the organizer's name,
+  the attendees (at most 100, each address, name, answer, optional,
+  organizer, room), the video call's host (`hangoutLink`, else the
+  first `video` entry point; the host alone, as `linkHost` writes it),
+  the repeat rules (at most 10), the description and its links; after
+  the framing, the hidden-text, cut and unlisted-links notes. A
+  description holding `<` before a letter, `!` or `/` is HTML, as
+  Google Calendar shows it, and goes through `htmlToText`; any other is
+  plain text (`plainText`). The answer fits in `answerClip` as
+  `get_message`'s does. Audit: "read event <id> on calendar <id>".
+- **Framing and provenance.** An event's own text is between "Content
+  of an untrusted calendar event follows." and "End of calendar event
+  content." (`delimitEvent`), a line reading as either, or as an
+  email's framing line, quoted with "> "; the read actions'
+  descriptions say the text is untrusted, as Gmail's do. The provenance
+  line is "Organizer: <address>, from your domain" or "from outside
+  your domain", then "Created by <address>, ..." when the creator is
+  another. An address is the owner's when `account.owns` takes it,
+  against the signed-in address (the primary calendar's id; Gmail's
+  profile when the list has no primary), or when it is a calendar
+  whose `accessRole` is owner, which organizes the events made on it.
+- **Outside.** A list row whose title is shown, and `get_event` when
+  the event has a title, place or description, add to
+  `Result.Outside` its organizer, its creator and its attendees that
+  are not the owner's, rooms (`resource`) left out.
+- `find_free_time(calendar_ids?, time_min, time_max)` is `POST
+  /calendar/v3/freeBusy` over at most 7 days, for `calendar_ids` (each
+  checked as `calendar_id` is, at most 20), else the access's
+  `calendars` (the first 20, saying so), else the primary calendar.
+  Each calendar's busy times are clipped to the window and listed in
+  `time_min`'s offset; one Google gives `errors` for, or none, is named
+  with its reason and left out of the free times, which say so. The
+  free times are the stretches of the window no busy time of any
+  calendar covers (`freeGaps`). Audit: "read free and busy times of
+  calendars <ids> from <time_min> to <time_max>".
+
+**Changes.** `create_event`, `update_event` and `delete_event` work
+only on a calendar whose `accessRole` in the account's list is
+`owner` (`ownedCalendar`); any other is refused, "Calendar <id> is not
+one the owner owns, and you may change events only on calendars the
+owner owns; ...", audited as `calendar <id> is not one the owner
+owns`, before an event is read. Every write sends `sendUpdates=none`,
+so Google emails no one.
+
+- `create_event` is `POST calendars/{id}/events` with `summary`,
+  `start`, `end`, `description`, `location` and
+  `extendedProperties.private.kivali` set to the agent's slug
+  (`Caller.Agent`): the mark `delete_event` looks for, private to the
+  calendar's copy of the event. Audit: "created event <id> on calendar
+  <id>, <when>".
+- `update_event` reads the event, then `PATCH
+  calendars/{id}/events/{id}` with only the fields given (an empty
+  `description` or `location` clears it). Audit: "changed event <id>
+  on calendar <id>: <fields>".
+- `delete_event` reads the event and refuses one without the mark,
+  "You may delete only events Kivali created, and Kivali did not
+  create event <id>.", audited as `event <id> was not created by
+  Kivali`; else `DELETE calendars/{id}/events/{id}`. Audit: "deleted
+  event <id> on calendar <id>, which <slug> created".
+- **Start and end** (`eventTimes`): RFC 3339, or dates for an all-day event,
+  whose end the agent gives as its last day and Google takes as the
+  day after; `all_day` must agree with them. `update_event` takes the
+  event's own start or end for one not given; changing an event to
+  all-day or back needs both, and the patch sets the other kind's
+  fields to null. `time_zone` is checked for an IANA name's form only.
+- **Sends** (`isSend`): a call is a send when its `attendees`, as a
+  set of lower-cased addresses, differ from the event's (none for
+  `create_event`); no `attendees`, or null, is no change. A send answers
+  the error result "Inviting people to an event, or changing who it
+  invites, waits for the owner's approval, which this version of Kivali
+  does not have, so Kivali did not run this call. ..." with nothing
+  sent to Google. An `update_event` that gives the event's own list
+  leaves `attendees` out of the patch. `respond_to_invitation`, under
+  `calendar_send`, has a schema and no `run`.
 
 #### Test connection and options
 
