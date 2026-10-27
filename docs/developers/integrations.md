@@ -735,7 +735,7 @@ runs, or empty. Kivali's own rows come first, in this order:
 |---|---|---|---|
 | `version` | Approved version | always, once installed: "Version 1.2.0 is in use." (a built-in's "ships with Kivali") | |
 | `connection` | Connection | the connection has every secret its record names | `setup` |
-| `sign_in` | Sign-in | for a connection made by signing in, or by a setup that hands over to a sign-in: `NeedsSignIn` is false. Not met: never signed in, the service refused a renewal (its words), or the token is not in the Secret | `sign_in` |
+| `sign_in` | Sign-in | for a connection made by signing in, or by a setup that hands over to a sign-in: `NeedsSignIn` is false. Not met: never signed in, the service refused a renewal (its words, then a `SignInAdviser` built-in's: [The interface](#the-interface)), or the token is not in the Secret | `sign_in` |
 | `connection_test` | Connection test | the manifest names `kivali.verify`, it has run, and the last result passed (its words, or the integration's words of the failure) | |
 | `running` | Running | a bundle, enabled: its shim is connected | |
 
@@ -1771,7 +1771,8 @@ you carries it as an `integration_requirement` row, id
 `integration_requirement:<integration>/sign_in`, title "<Integration>:
 Sign-in", at `error_at`, the vendor's refusal in the body ("The service
 no longer accepts the sign-in: <refusal>. Agents cannot use
-<Integration> until you sign in again."). The row leaves once the
+<Integration> until you sign in again.", then the likely cause in a
+`SignInAdviser` built-in's words). The row leaves once the
 owner signs in again (a new sign-in clears `error`), disables the
 integration, disconnects it or uninstalls it.
 
@@ -2401,6 +2402,7 @@ type Requirement struct{ ID, Title, Words string; Met bool; Fix string }
 type Uninstaller interface{ Uninstall(ctx context.Context, conn Connection) error }
 type SignInReplacer interface{ RevokeSignIn(ctx context.Context, old SignIn) error }
 type SignIn struct{ ClientID, ClientSecret, AccessToken, RefreshToken string }
+type SignInAdviser interface{ SignInAdvice(refusal string) string }
 ```
 
 - `Manifest` is the manifest, held to `integration.ValidateBuiltin`
@@ -2508,6 +2510,16 @@ type SignIn struct{ ClientID, ClientSecret, AccessToken, RefreshToken string }
   core's own revocation with the superseded version's endpoint where
   there is one. It is the vendor-specific path for a vendor whose
   revocation is not the standard one, a built-in's hook only.
+- A `SignInAdviser` is a built-in connected by signing in, or by a
+  setup that hands over to a sign-in, that knows its service's likely
+  cause of a refused renewal. While the service no longer accepts the
+  sign-in, the `sign_in` row's words ([Requirements](#requirements)),
+  and the Needs you row they make, follow core's with
+  `SignInAdvice(refusal)`'s, `refusal` being the words core keeps
+  (`sign_in.error`, "the vendor refused the sign-in (invalid_grant):
+  ..."); an empty answer adds nothing. It is called each time the rows
+  are built, with no connection and no deadline, so it is cheap and
+  reaches no service. A built-in's hook only.
 
 Core runs `Setup` through the setup runner ([Setup flows](#setup-flows)):
 `POST .../setup` of a `setup` connection whose built-in implements
@@ -2565,8 +2577,9 @@ take a step outside the declarations
 (`FailUninstall`), and hand over to a sign-in (`HandOver`).
 `ScriptSetup` and `ScriptRequirements` replace echo's own answers for
 the tests of the runner's mechanics and of rows no integration should
-give. `Calls` records every call, with each Setup call's flow and
-`Answer`.
+give. `Advise` is what its `SignInAdvice` answers a refused sign-in
+with, in any shape. `Calls` records every call, with each Setup call's
+flow and `Answer`.
 
 ### Sharing a version
 

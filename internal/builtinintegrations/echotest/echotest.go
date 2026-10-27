@@ -8,7 +8,8 @@
 // echo, which answers with its arguments, the caller's agent and access
 // as JSON text (upper case when the access is loud), and whoami, which
 // answers with the greeting and the token's first three characters, so
-// a test sees the secret reach the Go function.
+// a test sees the secret reach the Go function. It is a SignInAdviser,
+// whose words for a refused sign-in are Advise's.
 //
 // With SetupFlow set its connection is a setup one instead (method
 // setup, setup.go), and it implements every optional hook of the setup
@@ -61,6 +62,10 @@ type Echo struct {
 	// client id and secret at its end, with HandOver, for the sign-in
 	// that takes it on.
 	ClientID, ClientSecret string
+	// Advise, when set, is what SignInAdvice answers a refused
+	// sign-in with, for tests of core adding a built-in's words to its
+	// Sign-in requirement; nil adds nothing.
+	Advise func(refusal string) string
 
 	// Watch, when set, is sent every call of Setup as it is recorded,
 	// for a test that waits on a call its flow's state does not show (a
@@ -198,6 +203,16 @@ func (e *Echo) Verify(_ context.Context, conn builtinintegrations.Connection) (s
 	}
 	return whoami(conn), nil
 }
+
+// SignInAdvice is Advise's words for refusal, or nothing without it.
+func (e *Echo) SignInAdvice(refusal string) string {
+	if e.Advise == nil {
+		return ""
+	}
+	return e.Advise(refusal)
+}
+
+var _ builtinintegrations.SignInAdviser = (*Echo)(nil)
 
 // Choices lists Colors for colors.
 func (e *Echo) Choices(_ context.Context, conn builtinintegrations.Connection, name string) ([]string, error) {

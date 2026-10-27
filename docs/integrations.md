@@ -142,7 +142,7 @@ Kivali offers a sign-in in the browser only where it can finish: at the team's a
 
 When the integration signs in only in the browser, the page says it cannot sign in from there and gives the team's address: open the team in your browser (**Open in browser** in Kivali Desktop) and sign in from its page.
 
-Kivali keeps the sign-in fresh: the integration never sees the client secret or what Kivali renews the sign-in with, only a token that works at the moment of each call, which Kivali renews shortly before it expires. When the service no longer accepts the sign-in (you revoked the app, or changed its secret), its **Sign-in** requirement is not met, with the service's reason, and **Needs you** on Home lists it until you sign in again with its **Fix**, which does not ask for the client id and secret again.
+Kivali keeps the sign-in fresh: the integration never sees the client secret or what Kivali renews the sign-in with, only a token that works at the moment of each call, which Kivali renews shortly before it expires. When the service no longer accepts the sign-in (you revoked the app, or changed its secret), its **Sign-in** requirement is not met, with the service's reason and, for an integration that ships with Kivali and knows one, the likely cause, and **Needs you** on Home lists it until you sign in again with its **Fix**, which does not ask for the client id and secret again.
 
 While a connection needs you to sign in, an agent's call through it is refused with words that say the connection needs you to sign in again and to ask you; nothing reaches the service.
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -116,6 +117,62 @@ func TestSignInConnectionOnThePage(t *testing.T) {
 	token := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/hubspot"))
 	if token.Connection.SignIn != nil || len(token.Scopes) != 0 || token.ConnectionMethod != "token" || token.SetupNotesMD != "" {
 		t.Errorf("a token connection's page = %+v", token)
+	}
+}
+
+// Why this test exists: a service whose sign-ins lapse for a cause of
+// its own (Google ends an app's sign-ins after seven days while the app
+// is in Testing) leaves the owner a refusal whose words do not say how
+// to stop it happening again. A built-in that is a SignInAdviser must
+// see its words follow core's in the Sign-in requirement and the Needs
+// you row it raises, given the refusal as core keeps it; one that has
+// none to add must leave core's words as they are.
+func TestSignInRequirementCarriesTheBuiltinsAdvice(t *testing.T) {
+	srv, vendor, _ := signInServer(t)
+	echo := echotest.New()
+	c := signInConnection(vendor)
+	echo.SignIn = &c
+	// Home builds each integration's rows on a goroutine of its own.
+	var mu sync.Mutex
+	var given []string
+	lastGiven := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(given) == 0 {
+			return ""
+		}
+		return given[len(given)-1]
+	}
+	echo.Advise = func(refusal string) string {
+		mu.Lock()
+		given = append(given, refusal)
+		mu.Unlock()
+		if strings.Contains(refusal, "invalid_grant") {
+			return "Publish the app, then sign in again"
+		}
+		return ""
+	}
+	srv.BuiltinIntegrations = builtinintegrations.Registry{echo}
+	withIntegrationRegistry(srv, nil)
+	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), signInAt); err != nil {
+		t.Fatal(err)
+	}
+	signedIn(t, srv, echotest.Name, vendor.Issue())
+	core := "The service no longer accepts the sign-in: the vendor refused the sign-in (invalid_grant). Agents cannot use Echo until you sign in again."
+
+	srv.markSignInFailed(echotest.Name, "c1", "the vendor refused the sign-in (invalid_grant)")
+	row, ok := requirementNeeds(t, srv)["integration_requirement:echo/sign_in"]
+	if want := core + " Publish the app, then sign in again."; !ok || row.BodyMD != want {
+		t.Errorf("row = %+v, want words %q", row, want)
+	}
+	if got := lastGiven(); got != "the vendor refused the sign-in (invalid_grant)" {
+		t.Errorf("the built-in was given %q", got)
+	}
+
+	srv.markSignInFailed(echotest.Name, "c1", "the vendor refused the sign-in (access_denied)")
+	row, ok = requirementNeeds(t, srv)["integration_requirement:echo/sign_in"]
+	if want := "The service no longer accepts the sign-in: the vendor refused the sign-in (access_denied). Agents cannot use Echo until you sign in again."; !ok || row.BodyMD != want {
+		t.Errorf("with no advice, row = %+v, want words %q", row, want)
 	}
 }
 

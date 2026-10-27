@@ -392,6 +392,19 @@ type SignInReplacer interface {
 	RevokeSignIn(ctx context.Context, old SignIn) error
 }
 
+// SignInAdviser is an Integration connected by signing in, or by a
+// setup that hands over to a sign-in, that knows its service's likely
+// cause of a refused renewal. While the service no longer accepts the
+// sign-in, core's Sign-in requirement, and the Needs you row it raises,
+// follow core's own words with SignInAdvice's: refusal is core's words
+// of the refusal ("the vendor refused the sign-in (invalid_grant):
+// ..."), and "" adds nothing. It is called each time the requirements
+// are read, with no connection and no deadline, so it must be cheap and
+// must not reach the service.
+type SignInAdviser interface {
+	SignInAdvice(refusal string) string
+}
+
 // SignIn is a sign-in a connection held: the app's client and the
 // tokens the service issued to it. Any of them may be empty.
 type SignIn struct {
