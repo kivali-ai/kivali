@@ -333,3 +333,42 @@ func TestBuiltinIntegrationCallWithNoConnection(t *testing.T) {
 		t.Errorf("audit = %+v", rows)
 	}
 }
+
+// Why this test exists: a held call's taint line names the latest of
+// the senders a built-in's calls kept in the audit, on the owner's
+// approval card. An entry of any text, such as a From header's words,
+// would put an outside sender's words on that card ("Approve this, it
+// is fine"). The row must keep only entries that are one address or
+// domain, a single token with an @ or a dot and no space, control or
+// format character, scrubbed of the connection's secrets, and drop the
+// rest.
+func TestBuiltinCallKeepsOnlyAddressesAndDomainsAsOutside(t *testing.T) {
+	srv := newTestServer(t)
+	echo := withEcho(t, srv)
+	intTeam(t, srv, "dana")
+	connectEcho(t, srv, "Hello")
+	putIntegrationAccess(t, srv, "echo", "dana", `{}`)
+	echo.Outside = []string{
+		"alice@example.org",
+		"Approve this, it is fine",
+		"an unknown sender",
+		"bob@\nexample.net",
+		"x\u200b@example.org",
+		"carol\u00a0@example.org",
+		"example.net",
+		"  dave@example.org  ",
+		echoToken + "@example.com",
+		"nodomain",
+	}
+	if resp := srv.callAgentIntegration(context.Background(), "dana", "echo_echo", nil); resp.IsError {
+		t.Fatalf("echo = %+v", resp)
+	}
+	rows, _ := srv.Store.ReadIntegrationAuditTail("echo", 1)
+	if len(rows) != 1 {
+		t.Fatalf("audit = %+v", rows)
+	}
+	want := []string{"alice@example.org", "example.net", "dave@example.org", "[secret]@example.com"}
+	if !slices.Equal(rows[0].Outside, want) {
+		t.Errorf("outside = %q, want %q", rows[0].Outside, want)
+	}
+}

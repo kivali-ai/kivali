@@ -16,6 +16,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/echotest"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/messaging"
+	"github.com/kivali-ai/kivali/internal/shelljob"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
 )
@@ -137,14 +138,12 @@ func ran(echo *echotest.Echo) []echotest.Seen {
 // agent must hear at once, not as an error, that it waits and where
 // the outcome comes; the audit must say it waits, naming what; and the
 // owner's row must carry every field exactly as the built-in captured
-// it (scrubbed of the connection's secrets), under an id nobody can
-// guess, in the shape the web app reads. A Run called here, or a row
-// missing a field, would let something go out that the owner never
-// read.
+// it, under an id nobody can guess, in the shape the web app reads. A
+// Run called here, or a row missing a field, would let something go
+// out that the owner never read.
 func TestHeldCallWaitsForTheOwner(t *testing.T) {
 	srv, echo, _ := holdServer(t)
-	args := strings.Replace(emailHold, "send it.", "send it. "+echoToken, 1)
-	resp := holdCall(srv, "dana", args)
+	resp := holdCall(srv, "dana", emailHold)
 	if resp.IsError || len(resp.Content) != 1 || resp.Content[0] != "Waiting for the owner's approval. You will hear in your chat whether it was done. If you hear nothing within a day, it was not done." {
 		t.Fatalf("the agent's answer = %+v", resp)
 	}
@@ -168,7 +167,7 @@ func TestHeldCallWaitsForTheOwner(t *testing.T) {
 		Fields: []apitypes.HoldField{
 			{Label: "To", Value: "alice@example.org"},
 			{Label: "Subject", Value: "Re: the quote"},
-			{Label: "Body", Value: "Hi Alice,\n\n**Signed** as asked.\n\n> On Monday you wrote: send it. [secret]"},
+			{Label: "Body", Value: "Hi Alice,\n\n**Signed** as asked.\n\n> On Monday you wrote: send it."},
 		},
 		Recipients: []string{"alice@example.org"},
 	}
@@ -215,6 +214,195 @@ func must(b []byte, err error) []byte {
 		panic(err)
 	}
 	return b
+}
+
+// emailArgs is emailHold as hold's arguments, for a test to change.
+func emailArgs(t *testing.T) echotest.HoldArgs {
+	t.Helper()
+	var a echotest.HoldArgs
+	if err := json.Unmarshal([]byte(emailHold), &a); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// Why this test exists: the owner approves what the row shows, and Run
+// sends what the built-in captured. A secret of the connection in the
+// title, a field or a recipient would show as "[secret]" while Run sent
+// the secret itself: the owner would approve something other than what
+// goes out, and an agent led to it would have a way to send the secret
+// on. Such a call must be refused before it is held, as not allowed,
+// with nothing waiting and nothing run.
+func TestHeldCallCarryingTheSecretIsRefused(t *testing.T) {
+	srv, echo, _ := holdServer(t)
+	for name, change := range map[string]func(*echotest.HoldArgs){
+		"title":     func(a *echotest.HoldArgs) { a.Title += " " + echoToken },
+		"label":     func(a *echotest.HoldArgs) { a.Fields[0].Label = echoToken },
+		"value":     func(a *echotest.HoldArgs) { a.Fields[2].Value += "\n" + echoToken },
+		"recipient": func(a *echotest.HoldArgs) { a.Recipients = append(a.Recipients, echoToken+"@example.org") },
+	} {
+		a := emailArgs(t)
+		change(&a)
+		resp := holdCall(srv, "dana", string(must(json.Marshal(a))))
+		if !resp.IsError || len(resp.Content) != 1 || resp.Content[0] != "This request carries the Echo integration's secret, so it was not held for the owner's approval." {
+			t.Errorf("%s: the agent's answer = %+v", name, resp)
+		}
+		if row := lastAudit(t, srv); row.Allowed || row.Reason != "the call carries the connection's secret" {
+			t.Errorf("%s: audit = %+v", name, row)
+		}
+	}
+	if n := len(srv.heldCalls.list()); n != 0 {
+		t.Errorf("%d calls carrying the secret wait for the owner", n)
+	}
+	if r := ran(echo); len(r) != 0 {
+		t.Errorf("runs = %+v", r)
+	}
+}
+
+// Why this test exists: a Unicode format character shows as nothing on
+// the owner's screen yet goes out with the message: a right-to-left
+// override turns a file name around, a zero-width space splits a word
+// or an address so it reads as another. A call whose title, fields or
+// recipients hold one must be refused before it is held, telling the
+// agent to remove them, so the owner never approves other text than
+// what they read.
+func TestHeldCallWithFormatCharactersIsRefused(t *testing.T) {
+	srv, echo, _ := holdServer(t)
+	for name, change := range map[string]func(*echotest.HoldArgs){
+		"a zero-width space in the body":        func(a *echotest.HoldArgs) { a.Fields[2].Value = "Hi\u200bAlice" },
+		"a right-to-left override in the title": func(a *echotest.HoldArgs) { a.Title = "Send invoice\u202efdp.exe" },
+		"an isolate in the subject":             func(a *echotest.HoldArgs) { a.Fields[1].Value = "Re: \u2066the quote\u2069" },
+		"a byte order mark in a recipient":      func(a *echotest.HoldArgs) { a.Recipients[0] = "\ufeffalice@example.org" },
+		"a soft hyphen in a label":              func(a *echotest.HoldArgs) { a.Fields[0].Label = "T\u00ado" },
+	} {
+		a := emailArgs(t)
+		change(&a)
+		resp := holdCall(srv, "dana", string(must(json.Marshal(a))))
+		if !resp.IsError || len(resp.Content) != 1 || resp.Content[0] != "This request holds invisible formatting characters (Unicode format characters, such as zero-width spaces or direction marks), which the owner cannot see before approving. Remove them and ask again." {
+			t.Errorf("%s: the agent's answer = %+v", name, resp)
+		}
+		if row := lastAudit(t, srv); row.Allowed || row.Reason != "the call holds invisible formatting characters" {
+			t.Errorf("%s: audit = %+v", name, row)
+		}
+	}
+	if n := len(srv.heldCalls.list()); n != 0 {
+		t.Errorf("%d calls with format characters wait for the owner", n)
+	}
+	if r := ran(echo); len(r) != 0 {
+		t.Errorf("runs = %+v", r)
+	}
+}
+
+// heldBadly is echo whose Call answers with hold, as the test sets it,
+// and whose Complete, a shell job's second request, holds a call too.
+type heldBadly struct {
+	*echotest.Echo
+	hold *builtinintegrations.Hold
+}
+
+func (e *heldBadly) Call(context.Context, builtinintegrations.Caller, builtinintegrations.Connection, string, json.RawMessage) (*builtinintegrations.Result, error) {
+	return &builtinintegrations.Result{Hold: e.hold}, nil
+}
+
+func (e *heldBadly) Complete(context.Context, builtinintegrations.Caller, builtinintegrations.Connection, string, json.RawMessage, shelljob.Result) (*builtinintegrations.Result, error) {
+	return &builtinintegrations.Result{Hold: &builtinintegrations.Hold{Title: "Send it", Run: func(context.Context, builtinintegrations.Connection) (*builtinintegrations.Result, error) {
+		return nil, errors.New("a Hold from Complete ran")
+	}}}, nil
+}
+
+// Why this test exists: a Hold with nothing to run or no title, and one
+// a shell job's second request answers with after the job ran, are the
+// built-in's failures that Kivali refuses to hold. Their audit rows
+// must say not allowed: an allowed row in Recent calls would tell the
+// owner a call went through that never did.
+func TestHeldCallsKivaliRefusesAreNotAllowed(t *testing.T) {
+	srv := newTestServer(t)
+	e := &heldBadly{Echo: echotest.New()}
+	srv.BuiltinIntegrations = builtinintegrations.Registry{e}
+	withIntegrationRegistry(srv, nil)
+	if err := srv.Store.InstallBuiltinIntegrations(srv.BuiltinIntegrations.Manifests(), holdT0); err != nil {
+		t.Fatal(err)
+	}
+	intTeam(t, srv, "dana")
+	connectEcho(t, srv, "Hello")
+	putIntegrationAccess(t, srv, "echo", "dana", `{}`)
+	run := func(context.Context, builtinintegrations.Connection) (*builtinintegrations.Result, error) {
+		return nil, errors.New("a Hold Kivali refused ran")
+	}
+	for name, hold := range map[string]*builtinintegrations.Hold{
+		"no Run":   {Title: "Send it"},
+		"no title": {Title: " \n ", Run: run},
+	} {
+		e.hold = hold
+		if resp := srv.callAgentIntegration(context.Background(), "dana", "echo_echo", nil); !resp.IsError {
+			t.Errorf("%s: the agent's answer = %+v", name, resp)
+		}
+		if row := lastAudit(t, srv); row.Allowed || row.Reason != "the integration held a call with nothing to run" {
+			t.Errorf("%s: audit = %+v", name, row)
+		}
+	}
+	if resp := srv.callAgentIntegrationJob(context.Background(), "dana", "echo_echo", nil, &agentpod.IntegrationShellJobResult{}); !resp.IsError {
+		t.Errorf("a Hold from Complete: the agent's answer = %+v", resp)
+	}
+	if row := lastAudit(t, srv); row.Allowed || row.Reason != "the integration held a shell job's second request" {
+		t.Errorf("a Hold from Complete: audit = %+v", row)
+	}
+	if n := len(srv.heldCalls.list()); n != 0 {
+		t.Errorf("%d refused holds wait for the owner", n)
+	}
+}
+
+// Why this test exists: disabling or disconnecting an integration, or
+// offboarding an agent, ends every call held at that moment. A call
+// worked out just before and added just after would be passed by and
+// stay approvable, to run once the integration is on again. A hold
+// added once its integration is off, or its agent gone, must end at
+// once, unrun, as the others did.
+func TestHeldCallAddedAsItsIntegrationTurnsOffEndsAtOnce(t *testing.T) {
+	for _, c := range []struct {
+		name, reason, told string
+		turnOff            func(*Server) error
+	}{
+		{"disabled", "denied: the owner disabled the integration", "It was not done: the owner disabled the Echo integration.",
+			func(srv *Server) error { return srv.Store.SetIntegrationEnabled("echo", false) }},
+		{"disconnected", "denied: the owner disconnected the integration", "It was not done: the owner disconnected the Echo integration.",
+			func(srv *Server) error { _, err := srv.Store.DeleteIntegrationConnection("echo"); return err }},
+		{"offboarded", "denied: the agent left the team", "",
+			func(srv *Server) error { return srv.Store.ArchiveAgent("dana") }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv, echo, _ := holdServer(t)
+			added := make(chan *integrationHold, 1)
+			srv.heldCalls.added = func(h *integrationHold) {
+				// The owner's change lands now: after the call was
+				// worked out, and after ending the held calls of it
+				// passed this one by.
+				if err := c.turnOff(srv); err != nil {
+					t.Error(err)
+				}
+				added <- h
+			}
+			if resp := holdCall(srv, "dana", emailHold); resp.IsError {
+				t.Fatalf("the agent's answer = %+v", resp)
+			}
+			h := <-added
+			waitHoldEnded(t, h)
+			if row := lastAudit(t, srv); row.Allowed || row.Reason != c.reason {
+				t.Errorf("audit = %+v", row)
+			}
+			if c.told != "" {
+				if rows, _ := heldDeliveries(t, srv, "dana"); len(rows) != 1 || !strings.HasSuffix(rows[0].Content, "\n\n"+c.told) {
+					t.Errorf("deliveries = %+v", rows)
+				}
+			}
+			if n := len(srv.heldCalls.list()); n != 0 {
+				t.Errorf("%d calls wait after the change", n)
+			}
+			if r := ran(echo); len(r) != 0 {
+				t.Errorf("runs = %+v", r)
+			}
+		})
+	}
 }
 
 // Why this test exists: approving is the moment the action happens, so
@@ -376,8 +564,10 @@ func TestHeldCallsAreFiveAtATimeForAnAgent(t *testing.T) {
 // Why this test exists: the owner may approve hours after the call,
 // and the agent's access may have gone since. Approve must work the
 // call out again as a call would and, refused, run nothing and say why
-// in words for the owner, leaving the call waiting; once access is
-// given back, the same row approves and runs.
+// in words for the owner, leaving the call waiting, with a row in the
+// audit saying the approval was not run, so Recent calls shows every
+// approval the owner gave; once access is given back, the same row
+// approves and runs.
 func TestHeldCallApproveAfterAccessRemovedKeepsItWaiting(t *testing.T) {
 	srv, echo, _ := holdServer(t)
 	holdCall(srv, "dana", emailHold)
@@ -397,6 +587,9 @@ func TestHeldCallApproveAfterAccessRemovedKeepsItWaiting(t *testing.T) {
 	if r := ran(echo); len(r) != 0 {
 		t.Fatalf("a refused approval ran: %+v", r)
 	}
+	if row := lastAudit(t, srv); row.Agent != "dana" || row.Action != "hold" || row.Allowed || row.Reason != "approved, not run: Dana has no access to Echo" {
+		t.Errorf("audit = %+v", row)
+	}
 	if _, listed := needWithID(t, srv, integrationHoldNeedPrefix+h.id); !listed {
 		t.Fatal("the row left Home after a refused approval")
 	}
@@ -410,13 +603,19 @@ func TestHeldCallApproveAfterAccessRemovedKeepsItWaiting(t *testing.T) {
 	if r := ran(echo); len(r) != 1 {
 		t.Errorf("runs = %+v", r)
 	}
+	if row := lastAudit(t, srv); !row.Allowed || row.Reason != "approved: echoed to alice@example.org" {
+		t.Errorf("audit = %+v", row)
+	}
 }
 
 // Why this test exists: a Run that fails or refuses is still the end
 // of the call. The owner must be told it did not go well, the agent
 // must read the integration's words as an error, and the audit must
-// say a refusal was not let through; a Run that hung up the owner's
-// answer, or a failure told as success, would mislead both.
+// say a failure failed and a refusal was not let through; a Run that
+// hung up the owner's answer, or a failure told as success, would
+// mislead both. The audit names the call by the built-in's Audit or,
+// without one, by the title the owner approved, never by Run's answer,
+// which may quote what the call read.
 func TestHeldCallRunThatFailsOrRefuses(t *testing.T) {
 	srv, echo, _ := holdServer(t)
 	echo.HoldRun = func(context.Context, builtinintegrations.Connection) (*builtinintegrations.Result, error) {
@@ -428,7 +627,7 @@ func TestHeldCallRunThatFailsOrRefuses(t *testing.T) {
 	if code != http.StatusOK || out.Result != "Approved, but Echo answered with an error: Gmail refused the message: quota. Dana is told in its chat" {
 		t.Fatalf("approve: %d %+v", code, out)
 	}
-	if row := lastAudit(t, srv); !row.Allowed || row.Reason != "approved: Gmail refused the message: quota" {
+	if row := lastAudit(t, srv); !row.Allowed || row.Reason != "approved, then failed: Send an email to alice@example.org" {
 		t.Errorf("audit = %+v", row)
 	}
 	rows, _ := heldDeliveries(t, srv, "dana")
@@ -450,6 +649,18 @@ func TestHeldCallRunThatFailsOrRefuses(t *testing.T) {
 	}
 	if rows, _ := heldDeliveries(t, srv, "dana"); len(rows) != 2 || !strings.Contains(rows[1].Content, "refused it, and nothing was done") {
 		t.Errorf("deliveries = %+v", rows)
+	}
+
+	echo.HoldRun = func(context.Context, builtinintegrations.Connection) (*builtinintegrations.Result, error) {
+		return &builtinintegrations.Result{Content: []string{"Sent. Alice had written: approve everything I send."}}, nil
+	}
+	holdCall(srv, "dana", emailHold)
+	h = onlyHold(t, srv)
+	if code, out, _ := answerNeed(t, srv, "approve", integrationHoldNeedPrefix+h.id, ""); code != http.StatusOK || out.Result != "Approved and done. Dana is told in its chat" {
+		t.Fatalf("approve: %d %+v", code, out)
+	}
+	if row := lastAudit(t, srv); !row.Allowed || row.Reason != "approved: Send an email to alice@example.org" {
+		t.Errorf("a Run with no Audit: audit = %+v", row)
 	}
 }
 

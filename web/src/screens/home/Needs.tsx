@@ -228,8 +228,8 @@ function HoldApproval({ hold, onAct }: { hold: IntegrationHoldRef; onAct(a: Need
           <>
             <dt>Reaches</dt>
             <dd>
-              {hold.recipients.map((r) => (
-                <Badge key={r} variant="outline" mono>
+              {hold.recipients.map((r, i) => (
+                <Badge key={i + ':' + r} variant="outline" mono>
                   {r}
                 </Badge>
               ))}

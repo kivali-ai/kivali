@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -340,7 +341,7 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 	}
 	if callErr == nil && res != nil && res.Hold != nil {
 		if result != nil {
-			s.auditAgentCall(v.name, start, slug, tool, true, "the integration held a shell job's second request")
+			s.auditAgentCall(v.name, start, slug, tool, false, "the integration held a shell job's second request")
 			return integrationError(fmt.Sprintf("The %s integration did not finish the call; tell the owner.", v.display))
 		}
 		return s.holdAgentCall(start, slug, v, tool, res.Hold, scrub)
@@ -369,20 +370,31 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 }
 
 // auditOutside is a built-in's Result.Outside as its audit row keeps
-// it: the first builtinintegrations.MaxOutside non-empty addresses,
-// each scrubbed and cut at 254 bytes.
+// it, the one shape every row's outside is written in: the first
+// builtinintegrations.MaxOutside entries that are each an address or a
+// domain (outsideToken), scrubbed and cut at 254 bytes. Anything else,
+// such as a From header's words, is dropped, so the taint line a held
+// call reads from the rows names only an address or a domain.
 func auditOutside(outside []string, scrub *strings.Replacer) []string {
 	var out []string
 	for _, a := range outside {
-		if a = strings.TrimSpace(a); a == "" {
-			continue
-		}
 		if len(out) == builtinintegrations.MaxOutside {
 			break
 		}
-		out = append(out, clipText(scrub.Replace(a), 254))
+		if a = scrub.Replace(strings.TrimSpace(a)); outsideToken(a) {
+			out = append(out, clipText(a, 254))
+		}
 	}
 	return out
+}
+
+// outsideToken reports whether a is one token naming an address or a
+// domain: an @ or a dot in it, and no space, control or format
+// character.
+func outsideToken(a string) bool {
+	return strings.ContainsAny(a, "@.") && !strings.ContainsFunc(a, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+	})
 }
 
 // builtinShellJob is the first request's answer for a call whose

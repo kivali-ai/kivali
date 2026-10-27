@@ -254,7 +254,7 @@ type IntegrationAuditRow struct {
 	DurationMS int64  `json:"duration_ms"`
 	// Outside names, for a built-in's call, who outside the owner's
 	// domain wrote content it returned to the agent: a message's
-	// sender, a document's owner, by address
+	// sender, a document's owner, each by address or domain
 	// (builtinintegrations.Result.Outside).
 	Outside []string `json:"outside,omitempty"`
 }

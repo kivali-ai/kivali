@@ -2317,12 +2317,16 @@ two rows: one when core hands the job out, with the built-in's
 the second request ends it, with how it ended; a second request that
 never comes leaves the first row alone. A held call appends two rows
 too: one as it is held (`waiting for the owner's approval: <title>`)
-and one as it ends ([Held calls](#held-calls)). A built-in's call that
-returned content written outside the owner's domain names who wrote
-it, by address, in the row's `outside` (from `Result.Outside`, the
-first 50, each scrubbed and cut at 254 bytes; left out when there are
-none): a message's sender, a document's owner. A held call's taint
-line is worked out from it ([Held calls](#held-calls)). The owner's own calls
+and one as it ends, and one more for each approval Kivali could not
+run ([Held calls](#held-calls)). A built-in's call that returned
+content written outside the owner's domain names who wrote it in the
+row's `outside` (from `Result.Outside`; left out when there are none):
+a message's sender, a document's owner. The row keeps the first 50
+entries that are each one address or domain, a single token holding
+an `@` or a `.`, with no space, control or format character, each
+scrubbed and cut at 254 bytes, and drops any other entry, such as a
+From header's words. A held call's taint line is worked out from it
+([Held calls](#held-calls)). The owner's own calls
 are rows for `ceo`, and so is a roll back, with the action `rollback`
 and the versions as its reason ([Rolling back](#rolling-back)), which
 the page shows as "Roll back" and "From version 1.1.0 to version
@@ -2848,18 +2852,37 @@ can, does nothing outward, and answers with `Result.Hold` and no
   did nothing; any other error, or a `Result` with `IsError`, is a
   failure.
 
+The owner reads the title, the fields and the recipients as `Run`
+sends them, never altered, so core refuses, before it is held and
+audited as not allowed, a hold whose words carry a secret of the
+connection (the scrubber would change them: `the call carries the
+connection's secret`; the agent reads "This request carries the
+<integration> integration's secret, so it was not held for the
+owner's approval.") or a Unicode format character, category Cf, such
+as U+200B to U+200F, U+202A to U+202E, U+2060 to U+2064, U+2066 to
+U+2069 or U+FEFF, which shows as nothing (`the call holds invisible
+formatting characters`; the agent is told to remove them). It cuts
+the title and each label to one line of 300 bytes and each recipient
+to one of 320, and shows each value whole.
+
 Core holds the call in memory under 128 random bits in hex, the row's
-id, scrubs the title, the fields and the recipients of the
-connection's secrets, and answers the agent at once, with `is_error`
-false: "Waiting for the owner's approval. You will hear in your chat
-whether it was done. If you hear nothing within a day, it was not
-done." The agent's turn carries on. At most five of one agent's calls
-wait at once; a sixth is refused before it is held ("The owner has
-five of your requests waiting for approval. Wait for their answers in
-your chat before asking for another."), as is a hold with more than 64
-fields or 256 KB, too much for the owner to read. A `Hold` from
-`Complete`, or one with no `Run` or no title, is the integration's
-failure.
+id, and answers the agent at once, with `is_error` false: "Waiting
+for the owner's approval. You will hear in your chat whether it was
+done. If you hear nothing within a day, it was not done." The agent's
+turn carries on. At most five of one agent's calls wait at once; a
+sixth is refused before it is held ("The owner has five of your
+requests waiting for approval. Wait for their answers in your chat
+before asking for another."), as is a hold with more than 64 fields
+or 256 KB, too much for the owner to read. A `Hold` from `Complete`,
+or one with no `Run` or no title, is the integration's failure,
+audited as not allowed.
+
+Disabling, disconnecting or uninstalling the integration, or
+offboarding the agent, ends every call held then (below). A call
+worked out before such a change and added after it would be passed
+by, so once it is added core looks again: an agent no longer on the
+team, or an integration uninstalled, disabled or with no connection,
+ends the call at once, unrun, as that change does.
 
 Home lists it as an `integration_hold` need, id
 `integration_hold:<id>`, from the agent, at the time it was held, with
@@ -2874,8 +2897,9 @@ so it is answered once; an answer to a call no longer waiting is a 409
 
 | How it ends | What core does | Audit row | The agent's message |
 | --- | --- | --- | --- |
-| Approved | Works the call out again as a call is: the agent still on the team, `agentIntegrationFor`, the agent's listed actions still including the action, the connection; then `Run` | allowed, `approved: ` and `Run`'s `Audit`, or failing that its answer | `Approved: <title>`: "The owner approved it, and Kivali ran it. The <integration> integration answered:" and the answer, fenced |
-| Approved, refused there | Nothing: the owner reads why ("Dana has no access to Echo, so it was not done. It is still waiting: approve it again once that changes, or deny it", a 409), and the call keeps waiting | none | none |
+| Approved | Works the call out again as a call is: the agent still on the team, `agentIntegrationFor`, the agent's listed actions still including the action, the connection; then `Run` | allowed, `approved: ` and `Run`'s `Audit`, or failing that the title, never `Run`'s answer | `Approved: <title>`: "The owner approved it, and Kivali ran it. The <integration> integration answered:" and the answer, fenced |
+| Approved, `Run` fails | Ends it | allowed, `approved, then failed: ` and `Run`'s `Audit` or the title | "... but the <integration> integration answered with an error:" and the answer, fenced |
+| Approved, refused there | Nothing: the owner reads why ("Dana has no access to Echo, so it was not done. It is still waiting: approve it again once that changes, or deny it", a 409), and the call keeps waiting | not allowed, `approved, not run: <why>` ("Dana has no access to Echo") | none |
 | Approved, `Run` refuses | Ends it | not allowed, `approved, then refused: <reason>` | "... refused it, and nothing was done:" and the refusal's text |
 | Denied | Ends it; `Run` never runs | not allowed, `denied: <note>` | `Denied: <title>`: "The owner denied it, so it was not done." and the note |
 | A day with no answer, on core's clock | Ends it | not allowed, `nobody answered within a day` | `Not answered: <title>`: "Nobody answered within a day, so it was not done." |
@@ -2885,7 +2909,8 @@ so it is answered once; an answer to a call no longer waiting is a 409
 An owner's note goes after the outcome as "The owner's note: ...".
 Removing an agent's access does not end its calls; approving one then
 is refused as above. A row's `outside`, for an approved `Run` that
-names senders outside the owner's domain, is kept as for any call.
+names senders outside the owner's domain, is kept as for any call
+(`auditOutside`, the one shape every row's `outside` is written in).
 
 The message is a `held_call` message (`store.MsgHeldCall`) from `ceo`
 to the agent, written to `messages/` and delivered at once, as the
@@ -2902,8 +2927,10 @@ before with `outside` set, counts their entries and names the newest
 row's last: "Before asking, this agent read 3 messages or documents
 from outside your domain, the latest from alice@example.org." With
 one, "... read 1 message or document from outside your domain, from
-alice@example.org."; with none, the line is empty. Nothing else is
-stored for it.
+alice@example.org."; with none, the line is empty. Every entry it
+counts or names is an address or a domain, the only entries a row's
+`outside` keeps ([The audit](#the-audit)), so no outside sender's
+words reach the card. Nothing else is stored for it.
 
 Held calls live in core's memory alone. A restart of Kivali drops every
 one, unrun, with no row and no message: the agent was told that no
@@ -4884,9 +4911,10 @@ saved that are not the owner's (Provenance, above), each once in the
 order read: the From address Kivali read, or "an unknown sender" when
 it read none, never the header's own words. A search names the senders of every
 message it lists, since a snippet is the message's text. Core keeps
-them in the audit row's `outside` ([The audit](#the-audit)), which a
-held call's taint line reads ([Held calls](#held-calls)); nothing else
-is stored.
+the addresses among them in the audit row's `outside` ([The
+audit](#the-audit)), which a held call's taint line reads ([Held
+calls](#held-calls)), and drops the From header's words and "an
+unknown sender"; nothing else is stored.
 
 Docs' reads name the owner of each document read or listed, or whose
 comments are listed, that is not the owner's domain, "a shared drive"
