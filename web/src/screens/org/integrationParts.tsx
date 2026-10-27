@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ApiError } from '../../api/client';
+import { ApiError, apiGetBlob } from '../../api/client';
 import type {
   AccessField,
   AccessForm,
@@ -15,6 +15,7 @@ import { Badge, Button, CodeBlock, Dialog, DialogClose, Icon, Prose, Text } from
 import type { BadgeTone } from '../../ds';
 import { markdownBlocks } from '../../lib/markdown';
 import { shortDate } from '../../lib/time';
+import { saveFile } from './parts';
 
 /** The API's list of integrations; each one's own paths hang off it. */
 export const INTEGRATIONS_API = '/api/v1/org/integrations';
@@ -31,6 +32,17 @@ export function integrationPath(name: string): string {
 /** The router path of a version's install screen. */
 export function versionPath(name: string, version: string): string {
   return integrationPath(name) + '/versions/' + encodeURIComponent(version);
+}
+
+/** The API path of a version's bundle, a zip of the files it was installed from. A built-in's version has none. */
+export function bundleApi(name: string, version: string): string {
+  return integrationApi(name) + '/versions/' + encodeURIComponent(version) + '/bundle';
+}
+
+/** Fetches a version's bundle and hands it to the browser as a download, named as the server names it. */
+export async function downloadBundle(name: string, version: string): Promise<void> {
+  const file = await apiGetBlob(bundleApi(name, version));
+  saveFile(file.blob, file.filename ?? name + '-' + version + '.zip');
 }
 
 /** The API path that rolls back to a version: a superseded one becomes the one in use again. */

@@ -630,6 +630,13 @@ type IntegrationVersion struct {
 	Findings []string `json:"findings"`
 }
 
+// GET /api/v1/org/integrations/{name}/versions/{version}/bundle is the
+// version's bundle as a zip, built from the files it was installed
+// from, to download and install on another team: application/zip,
+// Content-Disposition attachment, named <name>-<version>.zip. 404 for
+// a version not stored; 409 for a built-in integration, whose
+// versions have no bundle.
+
 // IntegrationUploadRefused is the 400 body of POST
 // /api/v1/org/integrations when the bundle does not pass the check:
 // every finding, in words.

@@ -888,6 +888,14 @@ be the only path, and it is closed.
 
 The plugins (updater, autostart, dialog, opener, notification) are
 used from Rust only; none of their JavaScript permissions is granted.
+The opener is built without its click script
+(`open_js_links_on_click(false)` in `lib.rs`): that script goes into
+every webview, catches each click on a link with `target="_blank"` (and
+every ctrl- or shift-click on a link), prevents the navigation and asks
+the plugin over IPC to open the page, which a team's web view cannot
+do. Such a click stays a navigation, and the team window's hooks send
+it to the system browser ("Team navigation" above); the bundled pages
+have no such links and open release notes through `open_external`.
 The bundled pages run under a CSP that allows only their own scripts,
 styles and fonts (`style-src 'self'`, no inline styles: sizes that
 depend on a value are set through CSSOM), `data:` images, and IPC.

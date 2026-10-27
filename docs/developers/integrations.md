@@ -522,6 +522,13 @@ written with the files; a version stored before digests were kept gets
 it from its files the first time core asks for it
 (`store.IntegrationBundleDigest`). A version with no bundle has none.
 
+The uploaded zip itself is not kept. A version's download (`GET
+.../versions/{version}/bundle`, [Installing a
+version](#installing-a-version)) is built from `bundle/` by
+`integration.WriteZip`: every regular file, in path order, with its
+mode, `manifest.json` at the root, so `ReadBundle` reads it back to
+the same files and the same digest.
+
 A version is stored whole or not at all: it is unpacked into a staging
 directory beside the others and renamed into place. A version's states
 and the moves between them:
@@ -2561,6 +2568,16 @@ the tests of the runner's mechanics and of rows no integration should
 give. `Calls` records every call, with each Setup call's flow and
 `Answer`.
 
+### Sharing a version
+
+The web app offers Download bundle in a bundle integration's page
+header (its version in use) and Download beside each row of the page's
+Versions block; the list offers none. Each fetches
+`GET .../versions/{version}/bundle` (`apiGetBlob`) and hands the zip to
+the browser under the name the server gave it, `<name>-<version>.zip`.
+A built-in's rows offer none: its versions have no bundle, and the
+route answers 409 for one.
+
 ### Registration at boot
 
 `store.InstallBuiltinIntegrations(manifests, now)` runs at every boot,
@@ -2724,8 +2741,9 @@ so the agent, the scrubber and the audit see what they see for a pod.
 
 ### What the owner sees
 
-The list and the page show a "Built in" badge. A built-in of Go code
-is installed, connected or disabled: never pending, and with no
+The list puts built-ins under their own heading, "Built in", apart
+from the integrations from a bundle; the page shows a "Built in"
+badge. A built-in of Go code is installed, connected or disabled: never pending, and with no
 `running` requirement, since it runs while its code is in the binary.
 Test connection, for a built-in that has one, works once it is
 connected. The version is the built-in's manifest's, published by
@@ -4118,6 +4136,7 @@ the owner's.
 | `DELETE .../{name}/connection` | Disconnect ([Disconnect and Uninstall](#disconnect-and-uninstall)): `IntegrationPage`, installed again; 409 for an integration with no connection ("<integration> is not connected, so there is nothing to disconnect"), for a built-in this binary does not carry, and for a setup bundle enabled whose server is not running ("<integration> is not running, so it cannot undo its installation on the service; ..."); 502 when the built-in's own `Uninstall` or a setup bundle's `kivali/uninstall` failed ("<integration> could not undo its installation: ...; nothing was changed"); 500 when a Secret could not be deleted. |
 | `DELETE .../{name}` | Uninstall ([Disconnect and Uninstall](#disconnect-and-uninstall)): 204; 409 for a built-in this binary carries ("<integration> ships with Kivali, so it cannot be uninstalled; disconnect it instead") and for a setup bundle enabled whose server is not running ("<integration> is not running, so it cannot undo its installation on the service; ..."); 502 when the built-in's own `Uninstall` or a setup bundle's `kivali/uninstall` failed ("<integration> could not undo its installation: ...; nothing was changed"); 500 when a Secret could not be deleted. |
 | `GET .../versions/{version}` | `IntegrationVersion`, with `changes` from the version in use, and `builtin` for a built-in integration's version. |
+| `GET .../versions/{version}/bundle` | the version's bundle as a zip (`application/zip`, `Content-Disposition: attachment; filename="<name>-<version>.zip"`), built from its stored files; 404 for a version not stored; 409 for a built-in integration ("<integration> ships with Kivali, so it has no bundle to download"). |
 | `POST .../versions/{version}/approve`, `.../reject` | `IntegrationVersion`; 409 when not pending, or for a built-in integration. |
 | `POST .../versions/{version}/rollback` | `IntegrationVersion`; 409 when not superseded, or for a built-in integration; 404 for a version not stored. |
 | `PUT .../connection` | `ConnectionWrite` in, `IntegrationPage` out: the connection written, or made when there is none; a sensitive field left out keeps its value; 409 while no version is approved. |
