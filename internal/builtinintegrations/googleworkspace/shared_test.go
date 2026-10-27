@@ -222,6 +222,32 @@ func TestCalendarShareReadsEveryPage(t *testing.T) {
 	}
 }
 
+// Why this test exists: Kivali reads at most sharePages pages of a
+// calendar's access control list. A calendar with more rules than that
+// has people Kivali never sees, who would still see the change. The
+// card must say so (more than Kivali lists), and while May send to
+// names anyone the write must be refused, since those people cannot be
+// held to it; a reader that quietly stopped would show a calendar as
+// shared with fewer people than it is.
+func TestCalendarShareBeyondThePagesRead(t *testing.T) {
+	f, g := newFakeCalendar(t)
+	var rules []map[string]any
+	for i := range 250 * sharePages {
+		rules = append(rules, aclEntry("freeBusyReader", "user", fmt.Sprintf("p%d@example.org", i)))
+	}
+	f.shareCalendar("dana@example.com", append(rules, aclEntry("reader", "user", "carol@example.net"))...)
+	const args = `{"title":"Focus","start":"2026-10-27","end":"2026-10-27"}`
+	h := calHold(t, g, calSends(nil), "create_event", args)
+	if got := valueOf(h, calendarShareLabel); got != unlistedSharer {
+		t.Errorf("who can see %q", got)
+	}
+	if reads := aclReads(f); len(reads) != sharePages {
+		t.Errorf("%d acl reads, want %d", len(reads), sharePages)
+	}
+	calRefused(t, g, calSends(map[string]any{"send_to": []string{"alice@example.org"}}), "create_event", args,
+		"Calendar dana@example.com is shared with "+unlistedSharer+", whom Kivali cannot check against the addresses the owner allows you to send to, and they would see this change; ask the owner if your work needs it.")
+}
+
 // docsSender is the access of an agent that may read, write and
 // comment on documents, and m besides.
 func docsSender(m map[string]any) map[string]any {
@@ -240,6 +266,53 @@ func sharedDocFixture(d *fakeDocs, perms ...map[string]any) *fakeFile {
 	doc.paras = []fakePara{{text: "Old plan"}}
 	doc.perms = append(doc.ownerPermissions(), perms...)
 	return doc
+}
+
+// Why this test exists: a Drive file's permissions come 100 a page, and
+// a document shared with more people than one page holds shows its
+// later people the change as much as its first. Every page must be read
+// (pageToken) before a write is taken as one no one else sees; a reader
+// that stopped at the first page would write at once to a document
+// whose only sharer is on the second.
+func TestFileShareReadsEveryPage(t *testing.T) {
+	d, f, g := newFakeDocs(t)
+	var perms []map[string]any
+	for range 100 {
+		gone := permission("user", "gone@example.com", false)
+		gone["deleted"] = true
+		perms = append(perms, gone)
+	}
+	sharedDocFixture(d, append(perms, permission("user", "alice@example.org", false))...)
+	h := holdOf(t, g, agent(docsSender(nil)), "append_to_document", `{"document_id":"shared1","text":"More"}`)
+	if !slices.Equal(h.Recipients, []string{"alice@example.org"}) {
+		t.Errorf("recipients %v", h.Recipients)
+	}
+	if q := lastQuery(t, f, "www /drive/v3/files/shared1/permissions"); q.Get("pageToken") != "100" || q.Get("pageSize") != "100" {
+		t.Errorf("the last permissions read was asked for with %v", q)
+	}
+}
+
+// Why this test exists: Kivali reads at most sharePages pages of a
+// file's permissions. A document with more has people Kivali never
+// sees, who would still see the change. The card must say so (more than
+// Kivali lists), and while May send to names anyone the write must be
+// refused, since those people cannot be held to it.
+func TestFileShareBeyondThePagesRead(t *testing.T) {
+	d, _, g := newFakeDocs(t)
+	var perms []map[string]any
+	for range 100 * sharePages {
+		gone := permission("user", "gone@example.com", false)
+		gone["deleted"] = true
+		perms = append(perms, gone)
+	}
+	sharedDocFixture(d, append(perms, permission("user", "alice@example.org", false))...)
+	const args = `{"document_id":"shared1","text":"More"}`
+	h := holdOf(t, g, agent(docsSender(nil)), "append_to_document", args)
+	if got := valueOf(h, fileShareLabel); got != unlistedSharer {
+		t.Errorf("who can see %q", got)
+	}
+	docsRefused(t, g, docsSender(map[string]any{"send_to": []string{"alice@example.org"}}), "append_to_document", args,
+		"Document shared1 is shared with "+unlistedSharer+", whom Kivali cannot check against the addresses the owner allows you to send to, and they would see this change; ask the owner if your work needs it.")
 }
 
 // Why this test exists: Kivali tells a write from a send by the
