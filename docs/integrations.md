@@ -341,7 +341,7 @@ An agent's access has a part for each of Gmail, Google Calendar and Google Docs,
 
 - **Read** (**May read mail**, **May read calendars**, **May read documents**): the agent sees what is in your account. It changes nothing.
 - **Write** (**May draft and label**, **May change events**, **May write documents**): the agent changes something in your account that no other person is told about, such as a draft it writes or a label on a message.
-- **Send** (**May send mail**, **May invite and respond**, **May comment**): anything that makes Google deliver something to another person. Every send waits for your approval, and no switch turns that off: the switch decides only whether the agent may ask.
+- **Send** (**May send mail**, **May invite and respond**, **May comment**): anything that makes Google deliver something to another person. The actions these switches give are not available in this version of Kivali.
 - **Labels it may read**, **Calendars it may use** and **Folders it may read**: what the agent may use in each. **Load options** lists them from your account: Gmail's own labels (Inbox, Starred, Important, Sent, Drafts, Spam and Trash) and yours, your calendars, and the Drive folders you can open. Each is shown by its name with Google's id for it in parentheses, and the agent is held to the id. Leave a list empty for everything, except that an empty label list leaves out Spam and Trash: name them to let the agent read them.
 - **May send to**: the addresses the agent may send mail and invitations to, such as `dana@example.com`, or `*@example.com` for everyone at a domain. Leave it empty for anyone.
 
