@@ -56,6 +56,8 @@ type fakeGoogle struct {
 type fakeError struct {
 	status int
 	body   string
+	// location, when set, is sent as the Location header.
+	location string
 }
 
 // newFakeGoogle starts the fake, and g reaching it.
@@ -79,7 +81,14 @@ func (f *fakeGoogle) requests() []string {
 func (f *fakeGoogle) failWith(path string, status int, body string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.fail[path] = fakeError{status, body}
+	f.fail[path] = fakeError{status: status, body: body}
+}
+
+// redirectTo answers the path with a 302 to location.
+func (f *fakeGoogle) redirectTo(path, location string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail[path] = fakeError{status: http.StatusFound, location: location}
 }
 
 // fakeLabels is the account's labels as Gmail lists them: its own,
@@ -109,13 +118,22 @@ func (f *fakeGoogle) handler(origin string) http.Handler {
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer "+testToken {
+			// Google's words do not echo the credential, but a
+			// service in front of it might: the header is quoted so a
+			// test can see that nothing passed on carries it.
 			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":{"code":401,"message":"Request had invalid authentication credentials.","status":"UNAUTHENTICATED"}}`))
+			b, _ := json.Marshal(map[string]any{"error": map[string]any{"code": 401, "status": "UNAUTHENTICATED",
+				"message": "Request had invalid authentication credentials. Got " + r.Header.Get("Authorization")}})
+			_, _ = w.Write(b)
 			return
 		}
 		if failing {
+			if fail.location != "" {
+				w.Header().Set("Location", fail.location)
+			}
 			w.WriteHeader(fail.status)
-			_, _ = w.Write([]byte(fail.body))
+			// {{auth}} in a body is the request's Authorization header.
+			_, _ = w.Write([]byte(strings.ReplaceAll(fail.body, "{{auth}}", r.Header.Get("Authorization"))))
 			return
 		}
 		answer := func(v string) { _, _ = w.Write([]byte(v)) }

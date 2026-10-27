@@ -168,11 +168,30 @@ func TestSignInRequirementCarriesTheBuiltinsAdvice(t *testing.T) {
 	if got := lastGiven(); got != "the vendor refused the sign-in (invalid_grant)" {
 		t.Errorf("the built-in was given %q", got)
 	}
+	// The integration's page shows the same requirement; the advice
+	// must reach its words, not only the Needs you row's.
+	page := orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/"+echotest.Name))
+	var pageWords string
+	for _, r := range page.Requirements {
+		if r.ID == "sign_in" {
+			pageWords = r.Words
+		}
+	}
+	if want := core + " Publish the app, then sign in again."; pageWords != want {
+		t.Errorf("page sign_in words = %q, want %q", pageWords, want)
+	}
 
 	srv.markSignInFailed(echotest.Name, "c1", "the vendor refused the sign-in (access_denied)")
 	row, ok = requirementNeeds(t, srv)["integration_requirement:echo/sign_in"]
-	if want := "The service no longer accepts the sign-in: the vendor refused the sign-in (access_denied). Agents cannot use Echo until you sign in again."; !ok || row.BodyMD != want {
+	want := "The service no longer accepts the sign-in: the vendor refused the sign-in (access_denied). Agents cannot use Echo until you sign in again."
+	if !ok || row.BodyMD != want {
 		t.Errorf("with no advice, row = %+v, want words %q", row, want)
+	}
+	page = orgOK[apitypes.IntegrationPage](t, orgGet(t, srv, intBase+"/"+echotest.Name))
+	for _, r := range page.Requirements {
+		if r.ID == "sign_in" && r.Words != want {
+			t.Errorf("with no advice, page sign_in words = %q, want %q", r.Words, want)
+		}
 	}
 }
 

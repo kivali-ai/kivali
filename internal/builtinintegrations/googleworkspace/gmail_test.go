@@ -52,7 +52,8 @@ func TestListLabels(t *testing.T) {
 
 // Why this test exists: Google's failures reach the agent as an error
 // it reads, never as the integration failing, and never with the
-// owner's token in them: a token Google refuses sends the agent to the
+// owner's token in them (the fake quotes the Authorization header in its
+// 401, so the scrubbed marker must stand where the token was): a token Google refuses sends the agent to the
 // owner, as does a permission the owner left unticked when signing in.
 func TestListLabelsFailures(t *testing.T) {
 	f, g := newFakeGoogle(t)
@@ -61,7 +62,7 @@ func TestListLabelsFailures(t *testing.T) {
 	stale.Fields[CredentialKey] = "ya29.stale"
 	res, err := g.Call(context.Background(), reads, stale, "list_labels", nil)
 	if err != nil || res == nil || !res.IsError || !strings.Contains(res.Content[0], "HTTP 401") || !strings.HasSuffix(res.Content[0], "Ask the owner.") ||
-		strings.Contains(res.Content[0], "ya29") {
+		!strings.Contains(res.Content[0], "Bearer [credential]") || strings.Contains(res.Content[0], "ya29") {
 		t.Errorf("a token Google refuses: %+v, %v", res, err)
 	}
 

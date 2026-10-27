@@ -118,9 +118,15 @@ type apiError struct {
 	RateLimited bool
 	// Timeout is Google not answering in time, for Status 0.
 	Timeout bool
+	// Unreadable is an answer Google gave that Kivali does not read
+	// (too large, or not JSON), for Status 0: Message says which, whole.
+	Unreadable bool
 }
 
 func (e *apiError) Error() string {
+	if e.Unreadable {
+		return e.Message
+	}
 	if e.Status == 0 {
 		return "Google did not answer: " + e.Message
 	}
@@ -164,7 +170,7 @@ func (g *GoogleWorkspace) get(ctx context.Context, token string, a api, path str
 	case err != nil:
 		return transportError(ctx, err, token)
 	case len(b) > maxAnswerBytes:
-		return &apiError{Message: "its answer is larger than Kivali reads"}
+		return &apiError{Message: "Google's answer was larger than Kivali reads", Unreadable: true}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		e := readError(b, resp.StatusCode)
@@ -172,7 +178,7 @@ func (g *GoogleWorkspace) get(ctx context.Context, token string, a api, path str
 		return e
 	}
 	if err := json.Unmarshal(b, out); err != nil {
-		return &apiError{Message: "its answer is not JSON Kivali reads"}
+		return &apiError{Message: "Google's answer was not one Kivali reads", Unreadable: true}
 	}
 	return nil
 }
@@ -258,6 +264,8 @@ func agentWords(e *apiError) string {
 	switch {
 	case e.Timeout:
 		return "Google did not answer in time; try again later."
+	case e.Unreadable:
+		return e.Message + "."
 	case e.Status == 0:
 		return "Google did not answer: " + sentence(e.Message) + ". Try again later."
 	case e.RateLimited:
@@ -270,6 +278,8 @@ func agentWords(e *apiError) string {
 		return "Google refused this (HTTP 403): the owner's sign-in does not allow it. Ask the owner."
 	case e.Status == http.StatusForbidden:
 		return fmt.Sprintf("Google refused this (HTTP 403): %s. Ask the owner.", sentence(e.Message))
+	case e.Status >= 500:
+		return fmt.Sprintf("Google answered %d: %s. Try again later.", e.Status, sentence(e.Message))
 	}
 	return fmt.Sprintf("Google answered %d: %s", e.Status, e.Message)
 }
@@ -280,6 +290,8 @@ func ownerWords(e *apiError) string {
 	switch {
 	case e.Timeout:
 		return "Google did not answer in time; try again later."
+	case e.Unreadable:
+		return e.Message + "."
 	case e.Status == 0:
 		return "Google did not answer: " + e.Message
 	case e.RateLimited:
@@ -290,6 +302,8 @@ func ownerWords(e *apiError) string {
 		return fmt.Sprintf("Google refused this (HTTP 403): %s. Turn the API on in the app's Google Cloud project, as the setup notes say, and try again.", sentence(e.Message))
 	case e.scopeMissing():
 		return fmt.Sprintf("Google refused this (HTTP 403): %s. The sign-in lacks a permission Kivali asks for: sign out, sign in again and allow everything Google lists.", sentence(e.Message))
+	case e.Status >= 500:
+		return fmt.Sprintf("Google answered %d: %s. Try again later.", e.Status, sentence(e.Message))
 	}
 	return fmt.Sprintf("Google answered %d: %s", e.Status, e.Message)
 }
