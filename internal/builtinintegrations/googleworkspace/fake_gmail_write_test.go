@@ -2,6 +2,7 @@ package googleworkspace
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -17,18 +18,27 @@ import (
 
 // fakeGmailWrites is the fake's Gmail changes, in front of its reads:
 // drafts (users/me/drafts), labels on messages (messages/{id}/modify),
-// and the reads only a change makes (a message in format minimal, a
-// thread in format metadata). Every other request goes on to the
-// fake's own handler. Its requests are in fakeGoogle.requests, a
-// change's as "gmail <method> <path>?<query>".
+// messages sent (messages/send), and the reads only a change makes (a
+// message in format minimal, a thread in format metadata). Every other
+// request goes on to the fake's own handler. Its requests are in
+// fakeGoogle.requests, a change's as "gmail <method> <path>?<query>".
 type fakeGmailWrites struct {
 	f *fakeGoogle
 
 	mu     sync.Mutex
 	drafts []fakeDraft
 	made   int
+	// sent is each message messages.send was given, in order.
+	sent []fakeSent
 	// bodies is each change's request body, by "<method> <path>".
 	bodies map[string]string
+}
+
+// fakeSent is one message sent: its id, the thread it was asked to
+// join, and its bytes as Gmail was given them.
+type fakeSent struct {
+	id, askedThread string
+	raw             []byte
 }
 
 // fakeDraft is one draft: its ids, the thread id it was asked to join,
@@ -56,6 +66,26 @@ func (w *fakeGmailWrites) addDraft(id, raw string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.drafts = append(w.drafts, fakeDraft{id: id, messageID: "m" + strings.ReplaceAll(id, "-", ""), threadID: "t" + strings.ReplaceAll(id, "-", ""), raw: []byte(raw)})
+}
+
+// changeDraft gives draft id a new message, raw, as a change to it in
+// Gmail does: the draft keeps its id and its message's id is new.
+func (w *fakeGmailWrites) changeDraft(id, raw string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for i := range w.drafts {
+		if w.drafts[i].id == id {
+			w.drafts[i].messageID += "x"
+			w.drafts[i].raw = []byte(raw)
+		}
+	}
+}
+
+// sentMessages is every message messages.send was given.
+func (w *fakeGmailWrites) sentMessages() []fakeSent {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.sent)
 }
 
 // draft is the draft id, and whether the account has it.
@@ -122,8 +152,17 @@ func (w *fakeGmailWrites) handler(reads http.Handler) http.Handler {
 				notFound()
 				return
 			}
-			if q.Get("format") != "metadata" {
-				http.Error(rw, `{"error":{"code":400,"message":"the fake answers a draft in format metadata"}}`, http.StatusBadRequest)
+			switch q.Get("format") {
+			case "metadata":
+			case "raw":
+				writeJSON(rw, map[string]any{"id": d.id, "message": map[string]any{"id": d.messageID, "threadId": d.threadID, "labelIds": []string{"DRAFT"},
+					"raw": base64.URLEncoding.EncodeToString(d.raw)}})
+				return
+			case "minimal":
+				writeJSON(rw, map[string]any{"id": d.id, "message": map[string]any{"id": d.messageID, "threadId": d.threadID, "labelIds": []string{"DRAFT"}}})
+				return
+			default:
+				http.Error(rw, `{"error":{"code":400,"message":"the fake answers a draft in format metadata, raw or minimal"}}`, http.StatusBadRequest)
 				return
 			}
 			msg, err := mail.ReadMessage(bytes.NewReader(d.raw))
@@ -150,6 +189,8 @@ func (w *fakeGmailWrites) handler(reads http.Handler) http.Handler {
 				return
 			}
 			rw.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && path == "/gmail/v1/users/me/messages/send":
+			w.send(rw, body)
 		case r.Method == http.MethodPost && strings.HasPrefix(path, "/gmail/v1/users/me/messages/") && strings.HasSuffix(path, "/modify"):
 			w.modify(rw, strings.TrimSuffix(strings.TrimPrefix(path, "/gmail/v1/users/me/messages/"), "/modify"), body)
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/gmail/v1/users/me/messages/"):
@@ -227,6 +268,35 @@ func (w *fakeGmailWrites) createDraft(rw http.ResponseWriter, body []byte) {
 	w.drafts = append(w.drafts, d)
 	w.mu.Unlock()
 	writeJSON(rw, map[string]any{"id": d.id, "message": map[string]any{"id": d.messageID, "threadId": d.threadID, "labelIds": []string{"DRAFT"}}})
+}
+
+// send is messages.send: the message's raw must decode and read as a
+// message, as Gmail checks it; it joins the thread asked for, or one of
+// its own.
+func (w *fakeGmailWrites) send(rw http.ResponseWriter, body []byte) {
+	var in struct {
+		Raw      string `json:"raw"`
+		ThreadID string `json:"threadId"`
+	}
+	if err := json.Unmarshal(body, &in); err != nil {
+		http.Error(rw, `{"error":{"code":400,"message":"Invalid JSON payload"}}`, http.StatusBadRequest)
+		return
+	}
+	raw, err := base64.URLEncoding.DecodeString(in.Raw)
+	if err != nil {
+		http.Error(rw, `{"error":{"code":400,"message":"Invalid value for ByteString"}}`, http.StatusBadRequest)
+		return
+	}
+	if _, err := mail.ReadMessage(bytes.NewReader(raw)); err != nil {
+		http.Error(rw, `{"error":{"code":400,"message":"Invalid raw message"}}`, http.StatusBadRequest)
+		return
+	}
+	w.mu.Lock()
+	s := fakeSent{id: fmt.Sprintf("sm%d", len(w.sent)+1), askedThread: in.ThreadID, raw: raw}
+	w.sent = append(w.sent, s)
+	w.mu.Unlock()
+	thread := cmp.Or(in.ThreadID, "st"+strings.TrimPrefix(s.id, "sm"))
+	writeJSON(rw, map[string]any{"id": s.id, "threadId": thread, "labelIds": []string{"SENT"}})
 }
 
 // fakeSystemLabels are Gmail's own labels a message may be given that

@@ -101,6 +101,10 @@ type composition struct {
 	threadID   string
 	inReplyTo  string
 	references []string
+	// repliedFrom, repliedDate and repliedSubject are the From, Date
+	// and Subject headers of the message a reply answers, as its sender
+	// wrote them, for a send's card (repliedWords).
+	repliedFrom, repliedDate, repliedSubject string
 }
 
 // readComposition reads the email the call's arguments write. Every
@@ -234,10 +238,11 @@ func headerAddresses(hs []gmailHeader, name string) ([]*mail.Address, error) {
 }
 
 // replyQuery asks for the headers a reply is made from: who sent the
-// message and to whom, its subject, and the ids it threads under.
+// message and to whom, its subject, the ids it threads under, and when
+// it was sent, which a send's card names.
 var replyQuery = url.Values{
 	"format":          {"metadata"},
-	"metadataHeaders": {"From", "Reply-To", "To", "Cc", "Subject", "Message-ID", "References", "In-Reply-To"},
+	"metadataHeaders": {"From", "Reply-To", "To", "Cc", "Subject", "Date", "Message-ID", "References", "In-Reply-To"},
 }.Encode()
 
 // replyTo makes m a reply: to the message reply, or, for thread alone,
@@ -272,6 +277,7 @@ func (c *call) replyTo(ctx context.Context, m *composition, reply, thread string
 	}
 	hs := r.Payload.Headers
 	m.reply, m.threadID = r.ID, r.ThreadID
+	m.repliedFrom, m.repliedDate, m.repliedSubject = header(hs, "From"), header(hs, "Date"), header(hs, "Subject")
 	if id := msgIDPattern.FindString(header(hs, "Message-ID")); id != "" {
 		refs := msgIDPattern.FindAllString(header(hs, "References"), -1)
 		if len(refs) == 0 {

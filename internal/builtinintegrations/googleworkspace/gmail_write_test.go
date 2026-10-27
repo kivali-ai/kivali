@@ -502,46 +502,6 @@ func TestCreateDraftReplyByIDRefusesDraftSpamTrash(t *testing.T) {
 		"Message m6d is a draft; reply to a sent or received message.")
 }
 
-// Why this test exists: sending waits for the owner's approval, which
-// this version does not have, so send_email and send_draft are declared
-// with the arguments they take and never given to an agent: a call with
-// the send switch on answers that the action is not available, one
-// without it is refused, and nothing reaches Google either way. The
-// write switch gives the write actions and no send.
-func TestGmailSendNotAvailable(t *testing.T) {
-	f, _, g := newFakeGmail(t)
-	sends := agent(map[string]any{"gmail_send": true})
-	for _, name := range []string{"send_email", "send_draft"} {
-		writeFailed(t, g, sends, name, `{"to":["bob@example.com"],"subject":"Hi","body":"x","draft_id":"r-1"}`, notAvailable)
-		writeRefused(t, g, writer(map[string]any{}), name, `{}`, "The owner has not given you sending mail in Google Workspace; ask the owner if your work needs it.")
-	}
-	if got := f.requests(); len(got) != 0 {
-		t.Errorf("Google was sent %v", got)
-	}
-	if a, b := actionNamed("send_email"), actionNamed("send_draft"); a.schema != composeSchema || b.schema != draftSchema || a.run != nil || b.run != nil {
-		t.Errorf("send_email %+v, send_draft %+v", a, b)
-	}
-	var declared struct {
-		Properties map[string]any `json:"properties"`
-		Required   []string       `json:"required"`
-	}
-	if err := json.Unmarshal([]byte(composeSchema), &declared); err != nil || len(declared.Properties) != 8 || !slices.Equal(declared.Required, []string{"body"}) {
-		t.Errorf("compose schema %s: %v", composeSchema, err)
-	}
-
-	tools, err := g.Tools(context.Background(), agent(map[string]any{"gmail_write": true, "gmail_send": true}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, tl := range tools {
-		names = append(names, tl.Name)
-	}
-	if !slices.Equal(names, []string{"create_draft", "delete_draft", "modify_labels"}) {
-		t.Errorf("tools = %v", names)
-	}
-}
-
 // Why this test exists: a display name is shown in the owner's mail
 // program in place of the address, so a name that holds an address (an
 // @), angle brackets, or an invisible or reordering character could make

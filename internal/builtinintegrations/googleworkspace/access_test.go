@@ -66,19 +66,23 @@ func TestReadAccess(t *testing.T) {
 	}
 }
 
-// Why this test exists: this version has no approval of sends, so the
-// access form must not tell the owner that a send waits for their
-// approval: an owner who read so would turn a send switch on expecting
-// a step that does not exist.
-func TestFormPromisesNoApproval(t *testing.T) {
-	for _, f := range accessFields {
-		if s := strings.ToLower(f.title + " " + f.description); strings.Contains(s, "approv") {
-			t.Errorf("%s: %q, %q", f.key, f.title, f.description)
-		}
+// Why this test exists: an owner turning on a send switch must read
+// that each send waits for their approval, and only a switch whose
+// sends do wait may say so: a promise of a step that does not exist
+// would have the owner turn on sends expecting to see each one first.
+// The read and write switches and the lists promise no approval.
+func TestFormSaysWhichSendsWait(t *testing.T) {
+	waits := map[string]string{
+		keyGmailSend: "May send mail (each send waits for your approval)",
 	}
-	for key, title := range map[string]string{keyGmailSend: "May send mail", keyCalendarSend: "May invite and respond", keyDocsSend: "May comment"} {
-		if i := slices.IndexFunc(accessFields, func(f accessField) bool { return f.key == key }); i < 0 || accessFields[i].title != title {
-			t.Errorf("%s is not titled %q", key, title)
+	for _, f := range accessFields {
+		approves := strings.Contains(strings.ToLower(f.title+" "+f.description), "approv")
+		title, wait := waits[f.key]
+		switch {
+		case wait && f.title != title:
+			t.Errorf("%s is titled %q, want %q", f.key, f.title, title)
+		case !wait && approves && f.key != keySendTo:
+			t.Errorf("%s promises an approval: %q, %q", f.key, f.title, f.description)
 		}
 	}
 }
