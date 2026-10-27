@@ -25,7 +25,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -371,31 +370,24 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 
 // auditOutside is a built-in's Result.Outside as its audit row keeps
 // it, the one shape every row's outside is written in: the first
-// builtinintegrations.MaxOutside entries that are each an address or a
-// domain (outsideToken), or builtinintegrations.UnknownSender, scrubbed
-// and cut at 254 bytes. Anything else, such as a From header's words,
-// is dropped, so the taint line a held call reads from the rows names
-// only an address, a domain or an unknown sender.
+// builtinintegrations.MaxOutside entries that, scrubbed, are each an
+// address or a domain, builtinintegrations.UnknownSender or
+// builtinintegrations.SharedDrive (builtinintegrations.KeepsOutside),
+// cut at 254 bytes. Anything else, such as a From header's words or a
+// person's name, is dropped, so the taint line a held call reads from
+// the rows names only an address, a domain, an unknown sender or a
+// shared drive.
 func auditOutside(outside []string, scrub *strings.Replacer) []string {
 	var out []string
 	for _, a := range outside {
 		if len(out) == builtinintegrations.MaxOutside {
 			break
 		}
-		if a = scrub.Replace(strings.TrimSpace(a)); a == builtinintegrations.UnknownSender || outsideToken(a) {
+		if a = scrub.Replace(strings.TrimSpace(a)); builtinintegrations.KeepsOutside(a) {
 			out = append(out, clipText(a, 254))
 		}
 	}
 	return out
-}
-
-// outsideToken reports whether a is one token naming an address or a
-// domain: an @ or a dot in it, and no space, control or format
-// character.
-func outsideToken(a string) bool {
-	return strings.ContainsAny(a, "@.") && !strings.ContainsFunc(a, func(r rune) bool {
-		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
-	})
 }
 
 // builtinShellJob is the first request's answer for a call whose

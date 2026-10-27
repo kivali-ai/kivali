@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 )
 
 // Docs' reading is here: finding documents, a document's text a page at
@@ -386,7 +388,9 @@ func documentQuery(words string, within []string) string {
 // owner's address, "" when Kivali cannot read one; whether that is the
 // owner's domain; whether it is in a shared drive, which owns it
 // instead; who to name in Result.Outside when it is not the owner's
-// domain; and whether it counts as Kivali's (driveFile.kivalis).
+// domain (the address, else builtinintegrations.UnknownSender, or
+// builtinintegrations.SharedDrive); and whether it counts as Kivali's
+// (driveFile.kivalis).
 type docOwner struct {
 	address     string
 	own         bool
@@ -403,7 +407,7 @@ func (c *call) ownerOf(ctx context.Context, f driveFile) (docOwner, error) {
 		return docOwner{}, err
 	}
 	if len(f.Owners) == 0 {
-		return docOwner{sharedDrive: true, who: "a shared drive", kivalis: f.kivalis(me.address)}, nil
+		return docOwner{sharedDrive: true, who: builtinintegrations.SharedDrive, kivalis: f.kivalis(me.address)}, nil
 	}
 	addr := strings.ToLower(strings.TrimSpace(f.Owners[0].EmailAddress))
 	if len(addr) > 254 || !addressChars.MatchString(addr) {
@@ -411,7 +415,7 @@ func (c *call) ownerOf(ctx context.Context, f driveFile) (docOwner, error) {
 	}
 	o := docOwner{address: addr, own: me.owns(addr), kivalis: f.kivalis(me.address)}
 	if !o.own {
-		o.who = cmp.Or(addr, "an unknown owner")
+		o.who = cmp.Or(addr, builtinintegrations.UnknownSender)
 	}
 	return o, nil
 }
@@ -816,7 +820,9 @@ func listComments(ctx context.Context, c *call) (any, error) {
 }
 
 // renderComment is one comment of a page in at most room characters,
-// and who to name in Result.Outside for it: Kivali's line naming it,
+// and who to name in Result.Outside for it (its author's address, else
+// builtinintegrations.UnknownSender; "" for the owner's own): Kivali's
+// line naming it,
 // who wrote it and when, whether it is resolved and its replies; then
 // between the framing lines its author's name, the document's text it
 // is on, its own text and the links they name. Its text is cut at
@@ -833,7 +839,7 @@ func renderComment(n int, cm driveComment, me account, room int) (string, string
 	}
 	who := ""
 	if !own {
-		who = cmp.Or(addr, oneLine(cm.Author.DisplayName, authorClip), "an unknown author")
+		who = cmp.Or(addr, builtinintegrations.UnknownSender)
 	}
 	id := cm.ID
 	if !driveIDPattern.MatchString(id) {

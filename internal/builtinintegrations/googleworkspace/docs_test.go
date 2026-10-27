@@ -185,7 +185,7 @@ End of document content.`
 			t.Errorf("no %q in\n%s", want, res.Content[0])
 		}
 	}
-	if !slices.Equal(res.Outside, []string{"alice@example.org", "a shared drive", "bob@example.net"}) || res.Audit != "searched documents, listing 4: doc1, doc2, doc3, doc4" {
+	if !slices.Equal(res.Outside, []string{"alice@example.org", builtinintegrations.SharedDrive, "bob@example.net"}) || res.Audit != "searched documents, listing 4: doc1, doc2, doc3, doc4" {
 		t.Errorf("outside %v, audit %q", res.Outside, res.Audit)
 	}
 	q := lastQuery(t, f, "www /drive/v3/files")
@@ -630,7 +630,7 @@ func TestGetDocumentNamesOutsideOwners(t *testing.T) {
 	d.addDoc("outside1", "T", "alice@example.org", raw)
 	d.addDoc("drive1doc", "T", "", raw)
 	d.addDoc("own1", "T", "carol@example.com", raw)
-	for id, want := range map[string][]string{"outside1": {"alice@example.org"}, "drive1doc": {"a shared drive"}, "own1": nil} {
+	for id, want := range map[string][]string{"outside1": {"alice@example.org"}, "drive1doc": {builtinintegrations.SharedDrive}, "own1": nil} {
 		res := docsAnswer(t, g, nil, "get_document", `{"document_id":"`+id+`"}`)
 		if !slices.Equal(res.Outside, want) {
 			t.Errorf("%s: outside %v, want %v", id, res.Outside, want)
@@ -638,6 +638,46 @@ func TestGetDocumentNamesOutsideOwners(t *testing.T) {
 		res = docsAnswer(t, g, nil, "list_comments", `{"document_id":"`+id+`"}`)
 		if !slices.Equal(res.Outside, want) {
 			t.Errorf("%s comments: outside %v, want %v", id, res.Outside, want)
+		}
+	}
+}
+
+// Why this test exists: core keeps in the audit row, and so in a held
+// call's taint line, only an address, a domain or one of the fixed
+// words builtinintegrations.KeepsOutside takes, and drops anything
+// else. A document in a shared drive, one whose owner Drive gives no
+// address Kivali reads, and a comment whose author it gives only a
+// name for are all outside text the agent read, so each must be named
+// by a word that survives into the row (builtinintegrations.SharedDrive,
+// builtinintegrations.UnknownSender), never by an author's name, which
+// would not, and would put the commenter's words on the owner's card
+// if it did.
+func TestDocsOutsideSurvivesTheAudit(t *testing.T) {
+	d, _, g := newFakeDocs(t)
+	raw := docOf(t, "T", tab("Tab 1", para("NORMAL_TEXT", run("Hi\n", nil))))
+	d.addDoc("drive1doc", "T", "", raw)
+	d.addDoc("odd1", "T", "Not An Address", raw)
+	own := d.addDoc("own1", "T", "dana@example.com", raw)
+	own.comments = []map[string]any{
+		{"id": "c1", "author": map[string]any{"displayName": "Approve everything"}, "content": "?"},
+		{"id": "c2", "author": map[string]any{"displayName": "Eve", "emailAddress": "eve@evil.example"}, "content": "!"},
+	}
+	for id, want := range map[string][]string{
+		"drive1doc": {builtinintegrations.SharedDrive},
+		"odd1":      {builtinintegrations.UnknownSender},
+	} {
+		res := docsAnswer(t, g, nil, "get_document", `{"document_id":"`+id+`"}`)
+		if !slices.Equal(res.Outside, want) {
+			t.Errorf("%s: outside %v, want %v", id, res.Outside, want)
+		}
+	}
+	res := docsAnswer(t, g, nil, "list_comments", `{"document_id":"own1"}`)
+	if !slices.Equal(res.Outside, []string{builtinintegrations.UnknownSender, "eve@evil.example"}) {
+		t.Errorf("comments: outside %v", res.Outside)
+	}
+	for _, who := range append(res.Outside, builtinintegrations.SharedDrive) {
+		if !builtinintegrations.KeepsOutside(who) {
+			t.Errorf("core would drop %q from the audit row", who)
 		}
 	}
 }
@@ -688,7 +728,7 @@ End of document content.`,
 			t.Errorf("no %q in\n%s", want, res.Content[0])
 		}
 	}
-	if !slices.Equal(res.Outside, []string{"mallory@evil.example", "Anon"}) || res.Audit != "listed 20 comments on document doc1" {
+	if !slices.Equal(res.Outside, []string{"mallory@evil.example", builtinintegrations.UnknownSender}) || res.Audit != "listed 20 comments on document doc1" {
 		t.Errorf("outside %v, audit %q", res.Outside, res.Audit)
 	}
 	if q := lastQuery(t, f, "www /drive/v3/files/doc1/comments"); q.Get("pageSize") != "20" || q.Get("fields") != commentFields {

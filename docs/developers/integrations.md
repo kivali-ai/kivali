@@ -2325,8 +2325,11 @@ a message's sender, a document's owner. The row keeps the first 50
 entries that are each one address or domain, a single token holding
 an `@` or a `.`, with no space, control or format character, or
 exactly "an unknown sender" (`builtinintegrations.UnknownSender`, a
-sender Kivali could not read), each scrubbed and cut at 254 bytes,
-and drops any other entry, such as a From header's words. A held call's taint line is worked out from it
+writer whose address Kivali could not read) or "a shared drive"
+(`builtinintegrations.SharedDrive`, a document no one owns), each
+scrubbed and cut at 254 bytes (`builtinintegrations.KeepsOutside`),
+and drops any other entry, such as a From header's words or a
+person's name. A held call's taint line is worked out from it
 ([Held calls](#held-calls)). The owner's own calls
 are rows for `ceo`, and so is a roll back, with the action `rollback`
 and the versions as its reason ([Rolling back](#rolling-back)), which
@@ -2929,9 +2932,9 @@ row's last: "Before asking, this agent read 3 messages or documents
 from outside your domain, the latest from alice@example.org." With
 one, "... read 1 message or document from outside your domain, from
 alice@example.org."; with none, the line is empty. Every entry it
-counts or names is an address, a domain or "an unknown sender", the
-only entries a row's `outside` keeps ([The audit](#the-audit)), so no
-outside sender's words reach the card. Nothing else is stored for it.
+counts or names is an address, a domain, "an unknown sender" or "a
+shared drive", the only entries a row's `outside` keeps ([The
+audit](#the-audit)), so no outside sender's words reach the card. Nothing else is stored for it.
 
 Held calls live in core's memory alone. A restart of Kivali drops every
 one, unrun, with no row and no message: the agent was told that no
@@ -4630,7 +4633,9 @@ bounds, errors and scrubbing).
   the event has a title, place, description, organizer's or listed
   attendee's name or repeat rule, add to `Result.Outside` its
   organizer, its creator and its attendees that are not the owner's,
-  rooms (`resource`) left out.
+  rooms (`resource`) left out: each by address, or "an unknown
+  sender" (`builtinintegrations.UnknownSender`) for one whose address
+  Kivali does not read, never by name.
 - `find_free_time(calendar_ids?, time_min, time_max)` is `POST
   /calendar/v3/freeBusy` over at most 7 days, for `calendar_ids` (each
   checked as `calendar_id` is, at most 20), else the access's
@@ -4919,8 +4924,10 @@ calls](#held-calls)); nothing else is stored.
 
 Docs' reads name the owner of each document read or listed, or whose
 comments are listed, that is not the owner's domain, "a shared drive"
-for one in a shared drive, and the outside authors of the comments
-listed: the address, else the author's name, else "an unknown author".
+(`builtinintegrations.SharedDrive`) for one in a shared drive, and the
+outside authors of the comments listed. An owner or an author is
+named by address, else "an unknown sender", never by name, so each
+entry is one a row's `outside` keeps.
 
 #### Test connection and options
 

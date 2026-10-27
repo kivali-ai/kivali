@@ -34,6 +34,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
+	"strings"
+	"unicode"
 
 	"github.com/kivali-ai/kivali/internal/integration"
 	"github.com/kivali-ai/kivali/internal/shelljob"
@@ -131,12 +133,11 @@ type Tool struct {
 //
 // Outside, when set, names who outside the owner's domain wrote content
 // the call returned to the agent or saved into its files: each sender
-// of a message, or owner of a document, by address, once. Core keeps
-// it in the call's audit row (store.IntegrationAuditRow.Outside), at
-// most MaxOutside of them, and only the entries that are one address
-// or domain (a single token, with no space, control or format
-// character, holding an @ or a dot) or UnknownSender. Any other entry
-// is dropped.
+// of a message, or owner of a document, by address, once, or
+// UnknownSender or SharedDrive where there is no address to name. Core
+// keeps it in the call's audit row (store.IntegrationAuditRow.Outside),
+// at most MaxOutside of them, and only the entries KeepsOutside takes.
+// Any other entry, such as a person's name, is dropped.
 //
 // ShellJob, set by Call of a ShellJobIntegration, is work for the
 // agent's shell: core hands it to the agent's MCP server, which runs it
@@ -200,11 +201,34 @@ type HoldField struct {
 	Label, Value string
 }
 
-// UnknownSender is the Result.Outside entry for content whose sender
-// Kivali could not read in its own words, such as an email whose From
-// header holds no address it reads. Core keeps it as it keeps an
-// address, so such content counts toward a held call's taint line.
+// UnknownSender is the Result.Outside entry for content whose writer
+// Kivali could not name by an address it reads in its own words: an
+// email whose From header holds none, a document's owner, a comment's
+// author or an event's organizer, creator or attendee whose address
+// Google does not give. Core keeps it as it keeps an address, so such
+// content counts toward a held call's taint line.
 const UnknownSender = "an unknown sender"
+
+// SharedDrive is the Result.Outside entry for a document in a shared
+// drive, which has no owner whose domain Kivali can tell and so counts
+// as from outside. Core keeps it as it keeps an address.
+const SharedDrive = "a shared drive"
+
+// KeepsOutside reports whether core keeps a, an entry of
+// Result.Outside trimmed and scrubbed of the connection's secrets, in
+// an audit row: exactly UnknownSender or SharedDrive, or one token
+// naming an address or a domain, an @ or a dot in it and no space,
+// control or format character. These are the only words a held call's
+// taint line names, so no outside writer's own words reach the
+// owner's approval card.
+func KeepsOutside(a string) bool {
+	if a == UnknownSender || a == SharedDrive {
+		return true
+	}
+	return strings.ContainsAny(a, "@.") && !strings.ContainsFunc(a, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+	})
+}
 
 // MaxOutside bounds the addresses of Result.Outside an audit row
 // keeps, the first ones; each is cut at 254 bytes, an address's
