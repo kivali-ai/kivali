@@ -339,10 +339,19 @@ func mapsEqual(a, b map[string]string) bool {
 // names branches, and the one an agent pairs with a Git push. It opens
 // the pull request from a head branch already on GitHub, moving no
 // commits, and a branch that is not a branch name (or names another
-// owner's fork) is refused before GitHub is reached.
+// owner's fork) is refused before GitHub is reached. Its token must
+// read contents besides writing pull requests: GitHub resolves the
+// branches with it and refuses a token that cannot read them with 422
+// "not all refs are readable", as the fake does here, so a token
+// narrowed to pull requests alone opens nothing.
 func TestCreatePullRequest(t *testing.T) {
 	g, f := newTest(t)
-	f.route("POST /repos/acme/widgets/pulls", 201, `{"number":9,"html_url":"https://github.com/acme/widgets/pull/9"}`)
+	f.routeFunc("POST /repos/acme/widgets/pulls", func(r recorded) reply {
+		if r.Grant == nil || r.Grant.Permissions["contents"] == "" {
+			return reply{Status: 422, Body: `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"not all refs are readable"}],"documentation_url":"https://docs.github.com/rest/pulls/pulls#create-a-pull-request"}`}
+		}
+		return reply{Status: 201, Body: `{"number":9,"html_url":"https://github.com/acme/widgets/pull/9"}`}
+	})
 	writer := agent(true, "acme/*")
 	r := g.callT(t, writer, "create_pull_request", map[string]any{
 		"repository": "acme/widgets", "title": "Fix the build", "head": "agent/fix-1", "base": "main", "body": "Fixes #3.", "draft": true,
@@ -358,7 +367,7 @@ func TestCreatePullRequest(t *testing.T) {
 	if body["title"] != "Fix the build" || body["head"] != "agent/fix-1" || body["base"] != "main" || body["body"] != "Fixes #3." || body["draft"] != true {
 		t.Errorf("body %v", body)
 	}
-	if g := api[0].Grant; g == nil || !mapsEqual(g.Permissions, map[string]string{"metadata": "read", "pull_requests": "write"}) {
+	if g := api[0].Grant; g == nil || !mapsEqual(g.Permissions, map[string]string{"metadata": "read", "pull_requests": "write", "contents": "read"}) {
 		t.Errorf("grant %+v", g)
 	}
 	for _, head := range []any{"-x", "a..b", "a b", "owner:branch", "refs/heads/", "main\n", ".hidden", "x.lock", "", 3} {

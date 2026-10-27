@@ -1072,7 +1072,11 @@ func createPullRequest(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	tok, err := c.token(ctx, repo, perms("pull_requests", "write"))
+	// contents read besides pull_requests write: GitHub resolves the
+	// head and base branches with the token, and refuses a pull request
+	// (422, "not all refs are readable") from one that may not read the
+	// repository's contents.
+	tok, err := c.token(ctx, repo, perms("pull_requests", "write", "contents", "read"))
 	if err != nil {
 		return nil, err
 	}
