@@ -785,7 +785,7 @@ func notOwn(cal string) string {
 // an all-day event's last day must reach Google as the day after, as
 // Google counts it; times that do not read, or end before they start,
 // must be refused before anything is written; and a call that invites
-// anyone must not run in this version, sending nothing to Google.
+// anyone must not run without the send switch, sending nothing to Google.
 func TestCreateEvent(t *testing.T) {
 	f, g := newFakeCalendar(t)
 	res := calAnswer(t, g, calWrites(), "create_event", `{"title":"Focus","start":"2026-10-27T09:00:00+01:00","end":"2026-10-27T10:00:00+01:00","time_zone":"Europe/London","description":"Prep","location":"Desk","attendees":[]}`)
@@ -856,7 +856,7 @@ func updateFixture(t *testing.T, f *fakeCalendar) {
 // given, ask Google to email no one, keep the end when only the start
 // moves, and clear the time when an event becomes all-day; the event's
 // own attendee list given back is no change and must not be sent, while
-// any other list is an invitation that must not run in this version. A
+// any other list is an invitation that must not run without the send switch. A
 // change to an event that invites someone other than the owner, or that
 // someone else organized, shows on their calendars, so it is a send
 // too, and must not run whatever it changes.

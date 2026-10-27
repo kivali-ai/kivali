@@ -759,12 +759,12 @@ func TestHeldCallTaintLine(t *testing.T) {
 	srv.callAgentIntegration(context.Background(), "dana", "echo_echo", nil)
 
 	holdCall(srv, "dana", emailHold)
-	if got := onlyHold(t, srv).taint; got != "Before asking, this agent read 3 messages or documents from outside your domain, the latest from alice@example.org." {
+	if got := onlyHold(t, srv).taint; got != "Before asking, this agent read 3 messages, events or documents from outside your domain, the latest from alice@example.org." {
 		t.Errorf("dana's taint = %q", got)
 	}
 	holdCall(srv, "lee", emailHold)
 	for _, h := range srv.heldCalls.list() {
-		if h.agent == "lee" && h.taint != "Before asking, this agent read 1 message or document from outside your domain, from lee-only@example.net." {
+		if h.agent == "lee" && h.taint != "Before asking, this agent read 1 message, event or document from outside your domain, from lee-only@example.net." {
 			t.Errorf("lee's taint = %q", h.taint)
 		}
 	}
@@ -783,7 +783,7 @@ func TestHeldCallTaintCountsAnUnknownSender(t *testing.T) {
 	echo.Outside = []string{builtinintegrations.UnknownSender}
 	srv.callAgentIntegration(context.Background(), "dana", "echo_echo", nil)
 	holdCall(srv, "dana", emailHold)
-	if got := onlyHold(t, srv).taint; got != "Before asking, this agent read 1 message or document from outside your domain, from an unknown sender." {
+	if got := onlyHold(t, srv).taint; got != "Before asking, this agent read 1 message, event or document from outside your domain, from an unknown sender." {
 		t.Errorf("taint = %q", got)
 	}
 }

@@ -21,8 +21,7 @@ import (
 // (stored access is read by them) and its three live lists, and name
 // profile as Test connection without listing it. Each action must sit
 // under the switch of its bucket, so the page groups it there, and be
-// one this version runs, so the page never promises what an agent
-// cannot do.
+// one Call runs, so the page never promises what an agent cannot do.
 func TestManifest(t *testing.T) {
 	m := New().Manifest()
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {

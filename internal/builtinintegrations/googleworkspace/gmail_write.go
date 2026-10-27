@@ -724,7 +724,7 @@ func labelName(id string, table []gmailLabel) string {
 
 // modifyLabels adds labels to a message and removes others
 // (messages.modify), each named as resolveLabels reads them. Adding
-// TRASH or SPAM is refused: this version moves no mail there. When the
+// TRASH or SPAM is refused: Kivali moves no mail there. When the
 // access names labels, every label added or removed must be one of them
 // or alwaysChangeable, and the message must carry one of them (read in
 // format minimal, as get_message decides). The answer names the labels
@@ -758,7 +758,7 @@ func modifyLabels(ctx context.Context, c *call) (any, error) {
 		return nil, err
 	}
 	if slices.Contains(addIDs, "TRASH") || slices.Contains(addIDs, "SPAM") {
-		return nil, refuse("Kivali does not move mail to Trash or Spam in this version. To take a message out of the inbox, remove INBOX, which archives it.",
+		return nil, refuse("Kivali does not move mail to Trash or Spam. To take a message out of the inbox, remove INBOX, which archives it.",
 			"moving mail to Trash or Spam is not supported")
 	}
 	for _, l := range addIDs {

@@ -421,7 +421,7 @@ func (s *Server) heldCallGone(h *integrationHold) (reason, words string) {
 }
 
 // heldCallTaint is the taint line of a call slug holds on name at now:
-// how many messages or documents from outside the owner's domain the
+// how many messages, events or documents from outside the owner's domain the
 // agent's calls of it returned in the heldCallTaintWindow before, as
 // the audit's outside lists name them, and who sent the latest; empty
 // when none did.
@@ -446,9 +446,9 @@ func (s *Server) heldCallTaint(name, slug string, now time.Time) string {
 	case 0:
 		return ""
 	case 1:
-		return "Before asking, this agent read 1 message or document from outside your domain, from " + latest + "."
+		return "Before asking, this agent read 1 message, event or document from outside your domain, from " + latest + "."
 	}
-	return fmt.Sprintf("Before asking, this agent read %d messages or documents from outside your domain, the latest from %s.", n, latest)
+	return fmt.Sprintf("Before asking, this agent read %d messages, events or documents from outside your domain, the latest from %s.", n, latest)
 }
 
 // awaitHeldCall waits for h's end: the owner's answers, one at a time,

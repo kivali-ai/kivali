@@ -388,8 +388,8 @@ func TestDeleteDraft(t *testing.T) {
 // and marks mail read, so a label must reach Gmail as its id however the
 // agent names it: by name with capitals ignored, by id, as an option the
 // access form writes, by a name holding parentheses, Gmail's own by
-// theirs. Archiving is removing INBOX. Moving mail to Trash or Spam is
-// not in this version and must be refused in words saying so; a label
+// theirs. Archiving is removing INBOX. Kivali does not move mail to Trash or
+// Spam, so that must be refused in words saying so; a label
 // Gmail does not have, nothing to change, or one label both added and
 // removed fail before Gmail changes anything. The answer names the
 // message's labels afterwards, and the audit the ids changed.
@@ -416,7 +416,7 @@ func TestModifyLabels(t *testing.T) {
 	}
 	modified := len(requestsFor(f, "gmail POST"))
 
-	noTrash := "Kivali does not move mail to Trash or Spam in this version. To take a message out of the inbox, remove INBOX, which archives it."
+	noTrash := "Kivali does not move mail to Trash or Spam. To take a message out of the inbox, remove INBOX, which archives it."
 	writeRefused(t, g, dana, "modify_labels", `{"message_id":"m1","add":["Trash"]}`, noTrash)
 	writeRefused(t, g, dana, "modify_labels", `{"message_id":"m1","add":["SPAM"],"remove":["INBOX"]}`, noTrash)
 	writeFailed(t, g, dana, "modify_labels", `{"message_id":"m1","add":["Nope"]}`, `Gmail has no label "Nope"; name a label by its name or its id, as list_labels lists them.`)

@@ -101,7 +101,7 @@ func goldenHome() Home {
 						{Label: "Body", Value: "Hi Alice,\n\nThe signed quote is attached as **asked**.\n\n> On Monday you wrote: send it by Friday."},
 					},
 					Recipients: []string{"alice@example.org"},
-					Taint:      "Before asking, this agent read 3 messages or documents from outside your domain, the latest from alice@example.org.",
+					Taint:      "Before asking, this agent read 3 messages, events or documents from outside your domain, the latest from alice@example.org.",
 				},
 			},
 		},

@@ -2948,9 +2948,9 @@ The row's *taint line* warns the owner that the agent may be acting on
 outside text. When the call is held, core reads the newest 500 rows
 of the integration's audit, takes the agent's rows of the 24 hours
 before with `outside` set, counts their entries and names the newest
-row's last: "Before asking, this agent read 3 messages or documents
+row's last: "Before asking, this agent read 3 messages, events or documents
 from outside your domain, the latest from alice@example.org." With
-one, "... read 1 message or document from outside your domain, from
+one, "... read 1 message, event or document from outside your domain, from
 alice@example.org."; with none, the line is empty. Every entry it
 counts or names is an address, a domain, "an unknown sender" or "a
 shared drive", the only entries a row's `outside` keeps ([The
@@ -4532,8 +4532,8 @@ returns text a sender wrote.
   UNREAD, STARRED, IMPORTANT, SPAM or TRASH, capitals ignored, whether
   Gmail lists it or not; else the name of exactly one label, capitals
   ignored. An entry naming none, or several, fails in words. Adding
-  TRASH or SPAM is refused, "Kivali does not move mail to Trash or Spam
-  in this version.", with how to archive instead, audited as `moving
+  TRASH or SPAM is refused, "Kivali does not move mail to Trash or
+  Spam.", with how to archive instead, audited as `moving
   mail to Trash or Spam is not supported`; so is naming no label, or
   one both added and removed. When `gmail_labels` names labels, each
   label added or removed must be one of them or INBOX, UNREAD or
