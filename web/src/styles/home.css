@@ -133,6 +133,34 @@
   white-space: pre-wrap;
 }
 
+/* A held call's field, exactly as it will go: preformatted, wrapped, never rendered. */
+.app-home-hold-value {
+  margin: 0;
+  flex: 1 1 100%;
+  min-width: 0;
+  font: var(--type-caption);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The taint line: the agent read outside mail or documents before asking. An ink border, its icon in signal ink. */
+.app-home-taint {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) calc(var(--space-2) + var(--space-1));
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-md);
+}
+
+.app-home-taint-mark {
+  display: inline-flex;
+  flex: none;
+  margin-top: 1px;
+  color: var(--signal-ink);
+}
+
 /* ---- Queue ---- */
 .app-home-queue-head {
   display: flex;

@@ -57,8 +57,9 @@ func TestEveryBuiltinPassesTheCheck(t *testing.T) {
 // Why this test exists: the test built-in is what the server's tests
 // prove dispatch with. A manifest of its that the check refuses would
 // make those tests prove something no real built-in could ship. Each of
-// its shapes is held to it: a token connection, a sign-in one, and a
-// setup one, alone and handing over to a browser or a device sign-in.
+// its shapes is held to it: a token connection, a sign-in one, one with
+// the held action, and a setup one, alone and handing over to a
+// browser or a device sign-in.
 // Echo implements the setup hooks in every shape, so outside its setup
 // shape they must do nothing: rows or an Uninstall call there would
 // change every other test of a token or sign-in built-in.
@@ -70,7 +71,9 @@ func TestEchoPassesTheCheck(t *testing.T) {
 		Method: integration.MethodDevice, DeviceEndpoint: ep + "/device", TokenEndpoint: ep + "/token",
 		CredentialKeys: map[string]string{"access_token": "TOKEN"},
 	}
-	for _, e := range []*echotest.Echo{token, signIn} {
+	holds := echotest.New()
+	holds.Holds = true
+	for _, e := range []*echotest.Echo{token, signIn, holds} {
 		checkRegistry(t, builtinintegrations.Registry{e}, false)
 		rows, err := e.Requirements(context.Background(), builtinintegrations.Connection{})
 		if rows != nil || err != nil || e.Uninstall(context.Background(), builtinintegrations.Connection{}) != nil || len(e.Calls()) != 0 {

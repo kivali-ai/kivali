@@ -209,6 +209,8 @@ export function needKindLabel(item: NeedItem): string {
       return 'Web budget';
     case 'integration_requirement':
       return 'Integration';
+    case 'integration_hold':
+      return 'Integration action';
     case 'proposal':
       return PROPOSAL_LABELS[item.proposal_kind ?? ''] ?? 'Proposal';
     default:

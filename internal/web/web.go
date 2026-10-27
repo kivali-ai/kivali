@@ -172,6 +172,9 @@ type Server struct {
 	// requirementsCache keeps what each integration last answered for
 	// its own requirement rows (integration_requirements.go).
 	requirementsCache requirementsCache
+	// heldCalls are the built-ins' calls waiting for the owner's
+	// approval (integration_hold.go).
+	heldCalls heldCalls
 	// SessionCodec is the session cookie's codec, which also signs the
 	// setup flow cookie (integration_signin_browser.go). Without
 	// one the session middleware's is used, and without that a key of

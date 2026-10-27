@@ -196,6 +196,8 @@ func labelForType(t store.MessageType, decision string) string {
 		return "Notification"
 	case store.MsgCEONotificationAck:
 		return "Acknowledged"
+	case store.MsgHeldCall:
+		return "Held call"
 	default:
 		return string(t)
 	}
@@ -440,6 +442,13 @@ func (v InboxView) naturalLead() string {
 	case store.MsgCEONotificationAck:
 		return ceoReplyLead("notification", stripDecisionPrefix(v.Title), v.InReplyTo)
 
+	case store.MsgHeldCall:
+		// Core speaking about a call the agent made: the body says how
+		// it ended, in core's words, with what the integration answered.
+		// No "(at <path>)": nothing may point at it.
+		return fmt.Sprintf("Kivali reports how your integration call %q, which waited for the owner's approval, ended. Nothing is owed back on this message.",
+			stripDecisionPrefix(v.Title))
+
 	case store.MsgCEOApprovalRequest, store.MsgCEONotification:
 		// These types are addressed to the CEO, so they don't
 		// arrive as an inbox_delivery on an agent's chat; rendered
@@ -459,10 +468,11 @@ func assignmentRefString(id int) string { return fmt.Sprintf("#%d", id) }
 
 // stripDecisionPrefix returns the original request title from a CEO
 // reply's "Approved: X" / "Denied: X" / "Acknowledged: X" title
-// prefix, so the paraphrase can reference the original ask by its
-// own title (easier for the model to correlate than a filename).
+// prefix, or a held call's "Not answered: X", so the paraphrase can
+// reference the original ask by its own title (easier for the model to
+// correlate than a filename).
 func stripDecisionPrefix(title string) string {
-	for _, p := range []string{"Approved: ", "Denied: ", "Acknowledged: "} {
+	for _, p := range []string{"Approved: ", "Denied: ", "Acknowledged: ", "Not answered: "} {
 		if strings.HasPrefix(title, p) {
 			return strings.TrimPrefix(title, p)
 		}

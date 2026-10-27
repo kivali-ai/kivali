@@ -141,12 +141,56 @@ type Tool struct {
 // Complete. Content and IsError are not read then; Audit is the reason
 // of the row core writes as it hands the job out ("started: ..."), and
 // Complete's Result gives the reason of the row that ends the call.
+//
+// Hold, set by Call, makes the call a held call: one that waits for
+// the owner's approval before anything is done (Hold). Such a Result
+// has no Content, and core reads nothing else of it.
 type Result struct {
 	Content  []string
 	IsError  bool
 	Audit    string
 	Outside  []string
 	ShellJob *shelljob.Job
+	Hold     *Hold
+}
+
+// Hold is an action that waits for the owner's approval: what Call
+// captured of it, and how to perform it. Call does nothing outward
+// before it returns one.
+//
+// Core keeps the call (a held call), answers the agent at once that it
+// waits for the owner and that the outcome comes to its chat, and puts
+// a Needs you row before the owner with Title, Fields and Recipients.
+// Approved, core works the agent's access and the connection out again
+// exactly as for a call and calls Run once, with the connection read at
+// that moment, so a sign-in's token is current; Run's Result is what
+// the agent hears in its chat, and its Audit, or failing that its
+// answer, is the audit row's reason after "approved: ". Denied, or not
+// answered within a day, Run is never called. Held calls live in core's
+// memory alone: a restart of Kivali drops every one, unrun.
+type Hold struct {
+	// Title is the row in a few words, naming what goes where ("Send an
+	// email to alice@example.org").
+	Title string
+	// Fields are what the owner reads before answering, in order: each
+	// a label and the value exactly as it will go (From, To, Subject,
+	// Body). They are shown as text, never rendered.
+	Fields []HoldField
+	// Recipients are the people the action reaches, as addresses; empty
+	// for none.
+	Recipients []string
+	// Run performs exactly what Fields show, from what Call captured
+	// when it held the call (the message as built then, the event's
+	// body), never read again from the agent or from the service. It
+	// runs under the deadline of a call and must honour ctx. A Refusal
+	// says it did nothing; any other error, or a Result with IsError,
+	// is a failure the agent reads.
+	Run func(ctx context.Context, conn Connection) (*Result, error)
+}
+
+// HoldField is one line of what a held call does, for the owner.
+type HoldField struct {
+	Label, Value string
 }
 
 // MaxOutside bounds the addresses of Result.Outside an audit row

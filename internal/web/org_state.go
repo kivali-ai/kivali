@@ -88,10 +88,11 @@ func (s *Server) orgSnapshotValue() orgSnapshot {
 	// cached inbox read queueStatus counted from (ceoNeeds).
 	_, ceoPaths := s.ceoNeeds()
 	// A web task's rows on Needs you (a sign-in, an upload to approve,
-	// a budget notice) come and go with no inbox entry; their IDs join
-	// the list so Home refetches for them too, and the count with them.
+	// a budget notice) and a held call's come and go with no inbox
+	// entry; their IDs join the list so Home refetches for them too,
+	// and the count with them.
 	unactioned := ts.InboxUnactioned
-	if webNeeds := s.SubagentService.webNeedIDs(); len(webNeeds) > 0 {
+	if webNeeds := append(s.SubagentService.webNeedIDs(), s.heldCalls.needIDs()...); len(webNeeds) > 0 {
 		ceoPaths = append(append([]string{}, ceoPaths...), webNeeds...)
 		sort.Strings(ceoPaths)
 		unactioned += len(webNeeds)

@@ -278,6 +278,10 @@ func (s *Server) builtinListedTools(ctx context.Context, v agentIntegration, slu
 // result in words. That writes the call's one audit row. A Refusal, on
 // either request, is audited as not allowed and answered at once.
 //
+// A Call that answers with a Hold has the call held for the owner's
+// approval (holdAgentCall, integration_hold.go): the agent hears at
+// once that it waits, and the outcome reaches its chat later.
+//
 // Each request is a call of its own under integrationCallTimeout; the
 // job runs between them in the shell, under the job's own bound.
 func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, args json.RawMessage, result *agentpod.IntegrationShellJobResult) agentpod.IntegrationCallResponse {
@@ -333,6 +337,13 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 	if errors.As(callErr, &refusal) {
 		s.auditAgentCall(v.name, start, slug, tool, false, scrub.Replace(refusal.Reason)+jobNote)
 		return integrationError(scrub.Replace(refusal.Text))
+	}
+	if callErr == nil && res != nil && res.Hold != nil {
+		if result != nil {
+			s.auditAgentCall(v.name, start, slug, tool, true, "the integration held a shell job's second request")
+			return integrationError(fmt.Sprintf("The %s integration did not finish the call; tell the owner.", v.display))
+		}
+		return s.holdAgentCall(start, slug, v, tool, res.Hold, scrub)
 	}
 	if callErr == nil && res != nil && res.ShellJob != nil {
 		if result != nil {

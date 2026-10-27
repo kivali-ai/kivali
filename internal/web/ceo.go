@@ -316,6 +316,8 @@ func (s *Server) respondAsCEO(ctx context.Context, kind responseKind, approved *
 			unlockProvision()
 			return refuseApply("The offboard", "offboard apply: ", oerr, proposer)
 		}
+		// Its calls waiting for the owner's approval end unrun.
+		s.endAgentHeldCalls(slug)
 		// An archived agent cannot be woken, so its open assignments move
 		// to its manager with a note on each (docs/developers/assignments.md §Rules).
 		// Best effort after the archive: the departure is done either

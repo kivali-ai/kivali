@@ -32,6 +32,13 @@ const (
 	// other message and takes no reply: the assignment is the place to
 	// act. See docs/developers/assignments.md §Wakes.
 	MsgAssignmentEvent MessageType = "assignment_event"
+	// MsgHeldCall is how an agent's call of an integration that waited
+	// for the owner's approval (a held call) ended: approved and run,
+	// with what the integration answered, denied with the owner's
+	// note, or not answered in time. Written by core, never by an
+	// agent; From is the owner, and it reaches the agent at once. It
+	// takes no reply: nothing is owed back on it.
+	MsgHeldCall MessageType = "held_call"
 )
 
 // AssignmentRef is the front matter an assignment event carries: which
@@ -48,7 +55,7 @@ func KnownMessageTypes() []MessageType {
 	return []MessageType{
 		MsgNotice,
 		MsgCEOApprovalRequest, MsgCEOApprovalResponse, MsgCEONotification,
-		MsgCEONotificationAck, MsgAssignmentEvent,
+		MsgCEONotificationAck, MsgAssignmentEvent, MsgHeldCall,
 	}
 }
 
@@ -69,10 +76,11 @@ func (t MessageType) IsCEOReply() bool {
 // by another message's InReplyTo. A notice is a tell: nothing is owed
 // back and nothing can be sent back, so no message may point at one.
 // An assignment event is the tracker speaking: the reply is a change
-// to the assignment, not a message. Everything else is repliable
-// (ceo_approval_request by the CEO's response, and so on).
+// to the assignment, not a message. A held call's outcome is core
+// reporting what happened, with nothing owed back. Everything else is
+// repliable (ceo_approval_request by the CEO's response, and so on).
 func (t MessageType) TakesReplies() bool {
-	return t != MsgNotice && t != MsgAssignmentEvent
+	return t != MsgNotice && t != MsgAssignmentEvent && t != MsgHeldCall
 }
 
 // DeliversToCEO reports whether the message lands in the CEO's inbox

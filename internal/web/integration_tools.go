@@ -115,6 +115,16 @@ func refuseSettingUp(display string) string {
 // integration's connection is not an installed one.
 const reasonSettingUp = "the connection is being set up"
 
+// The audit's reasons for the other refusals agentIntegrationFor
+// makes; an access that no longer applies has its why after
+// reasonInvalidAccess.
+const (
+	reasonNoVersion     = "no version is approved"
+	reasonDisabled      = "the integration is disabled"
+	reasonNoAccess      = "no access"
+	reasonInvalidAccess = "the access no longer applies: "
+)
+
 // connectionBeingSetUp reports whether name's connection is not one an
 // agent may call through, though it may exist: an install of it under
 // way, one a stopped Kivali left unfinished (SetupPending), one being
@@ -143,10 +153,10 @@ func (s *Server) agentIntegrationFor(it store.Integration, slug string) (agentIn
 		return v, nil
 	}
 	if it.CurrentVersion == "" {
-		return refuse(refuseNoVersion(v.display), "no version is approved")
+		return refuse(refuseNoVersion(v.display), reasonNoVersion)
 	}
 	if !it.Enabled {
-		return refuse(refuseDisabled(v.display), "the integration is disabled")
+		return refuse(refuseDisabled(v.display), reasonDisabled)
 	}
 	rows, err := s.Store.ListIntegrationAccess(it.Name)
 	if err != nil {
@@ -154,10 +164,10 @@ func (s *Server) agentIntegrationFor(it store.Integration, slug string) (agentIn
 	}
 	i := slices.IndexFunc(rows, func(a store.IntegrationAccess) bool { return a.Slug == slug })
 	if i < 0 {
-		return refuse(refuseNoAccess(v.display), "no access")
+		return refuse(refuseNoAccess(v.display), reasonNoAccess)
 	}
 	if why := rows[i].Invalid; why != "" {
-		return refuse(refuseInvalid(v.display, why), "the access no longer applies: "+why)
+		return refuse(refuseInvalid(v.display, why), reasonInvalidAccess+why)
 	}
 	if !s.integrationRunning(it) {
 		return refuse(refuseNotRunning(v.display), errNotRunning)

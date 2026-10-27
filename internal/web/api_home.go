@@ -84,6 +84,7 @@ func (s *Server) handleAPIHome(w http.ResponseWriter, r *http.Request) {
 			needs = append(needs, s.webBudgetItem(n))
 		}
 	}
+	needs = append(needs, s.integrationHoldItems()...)
 	needs = append(needs, s.integrationRequirementItems(r.Context())...)
 	queue := make([]apitypes.QueueItem, 0, len(pending))
 	for _, p := range pending {
@@ -857,7 +858,12 @@ func (s *Server) handleAPINeedsResponse(kind responseKind, approved *bool) http.
 				files = append(files, r.MultipartForm.File[f]...)
 			}
 		}
-		if handled, out, err := s.answerWebNeed(kind, approved, r.FormValue("path"), r.FormValue("message")); handled {
+		path, message := r.FormValue("path"), r.FormValue("message")
+		handled, out, err := s.answerWebNeed(kind, approved, path, message)
+		if !handled {
+			handled, out, err = s.answerIntegrationHold(kind, approved, path, message)
+		}
+		if handled {
 			if err != nil {
 				writeNeedsError(w, err)
 				return
@@ -866,7 +872,7 @@ func (s *Server) handleAPINeedsResponse(kind responseKind, approved *bool) http.
 			return
 		}
 		v := s.newHomeView()
-		done, err := s.respondAsCEO(r.Context(), kind, approved, r.FormValue("path"), r.FormValue("message"), files)
+		done, err := s.respondAsCEO(r.Context(), kind, approved, path, message, files)
 		if err != nil {
 			writeNeedsError(w, err)
 			return
