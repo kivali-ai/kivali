@@ -25,7 +25,6 @@ func delimitDocument(s string) string { return delimit(s, documentContentStart, 
 // with includeTabsContent, every tab's content under Tabs; without, the
 // first tab's under Body, DocumentStyle and NamedStyles.
 type docsDocument struct {
-	DocumentID    string           `json:"documentId"`
 	Title         string           `json:"title"`
 	Body          *docsBody        `json:"body"`
 	DocumentStyle *docsDocStyle    `json:"documentStyle"`

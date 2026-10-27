@@ -327,9 +327,11 @@ On Google Workspace's page, **Connect** shows the steps on Google's side above t
 3. Publish an External app: under **Audience**, choose **Publish app**. An app left in Testing has Google end its sign-in every seven days, and agents cannot use Google Workspace until you sign in again. Google does not review an app only you use, so the first time you sign in, Google says "Google hasn't verified this app": choose **Advanced**, then go on to the app. An Internal app has nothing to publish.
 4. Create a client. Choose **Desktop app** for a team on your computer, which you open at `127.0.0.1`: Google takes its sign-in at any port, so there is nothing to register. Choose **Web application** for a team you open at another address, such as a server's or the team's address for other devices, and add the **Redirect address** the page shows under **Authorized redirect URIs**. The page shows the address it is open at, so open it at the address you will sign in from.
 5. Download the client's JSON where Google shows the client's secret, paste the whole file into **Client JSON**, and choose **Continue**. Kivali reads the client id and secret from it and keeps nothing else of the file. A file that is not an OAuth client's, or that lacks the secret, is asked for again, with what is wrong.
-6. Choose **Continue to accounts.google.com**, sign in, and allow what Kivali asks for: reading, composing and labelling Gmail, Google Calendar's events and calendars, Google Docs, and reading Google Drive. Google lets you untick some; an action that needs one you left unticked is refused. Google sends you back, and Google Workspace is connected.
+6. Choose **Continue to accounts.google.com**, sign in, and allow what Kivali asks for: reading, composing and labelling Gmail, Google Calendar's events and calendars, Google Docs, reading Google Drive, and the Google Drive files Kivali creates. Google lets you untick some; an action that needs one you left unticked is refused. Google sends you back, and Google Workspace is connected.
 
 Kivali keeps the client's id and secret and the sign-in's tokens as secrets: they are never shown, and Google Workspace's calls are given only a token that works at that moment, which Kivali renews. **Test connection** names the Google account the sign-in is for ("Signed in as dana@example.com").
+
+An agent whose action needs a permission the sign-in lacks is told your sign-in does not allow it, and asks you. The **Sign-in** requirement does not show which permissions Google granted. Creating a document needs the permission for the Google Drive files Kivali creates, which a sign-in made before Kivali asked for it lacks. To add a permission, choose **Sign out**, then sign in again with the **Sign-in** requirement's **Fix**: Google asks again for everything Kivali needs, and you allow it all.
 
 When Google no longer accepts the sign-in, the **Sign-in** requirement is not met, and **Needs you** lists it until you sign in again with its **Fix**. Whenever Google refuses the sign-in, the requirement adds that if this came about a week after you signed in, the app is likely still in Testing: publish it, then sign in again.
 
@@ -409,7 +411,7 @@ With **May read documents**, an agent can:
 
 With **May write documents**, an agent can:
 
-- Create a document, with its text, in a folder. Kivali marks each document it creates as made by Kivali, in a note on the document that only your OAuth client can read or set.
+- Create a document, with its text, in a folder. Kivali marks each document it creates as made by Kivali, in a note on the document that only your OAuth client can read or set. Google Drive makes the document with that note, in its folder. When Drive will not add a file to the folder, Kivali makes the document at the top of your My Drive instead and tells the agent, which cannot read it there while its access names folders.
 - Add text at the end of a document.
 - Replace a piece of text everywhere it appears in a document.
 

@@ -1,13 +1,10 @@
 package googleworkspace
 
 import (
-	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -46,53 +43,6 @@ func (c *call) writableDocument(ctx context.Context, id string) (driveFile, erro
 	return f, nil
 }
 
-// docsRequest sends a request that changes something to path on a,
-// body as its JSON, and decodes the JSON answer into out (nil to read
-// none). It is get's counterpart: the same pinned origins, client,
-// bounds and error words.
-func (g *GoogleWorkspace) docsRequest(ctx context.Context, token, method string, a api, path string, body, out any) error {
-	base, err := g.base(a)
-	if err != nil {
-		return err
-	}
-	b, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, method, base.String()+path, bytes.NewReader(b))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Kivali")
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := g.httpClient().Do(req)
-	if err != nil {
-		return transportError(ctx, err, token)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	got, err := io.ReadAll(io.LimitReader(resp.Body, maxAnswerBytes+1))
-	switch {
-	case err != nil:
-		return transportError(ctx, err, token)
-	case len(got) > maxAnswerBytes:
-		return &apiError{Message: "its answer is larger than Kivali reads"}
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		e := readError(got, resp.StatusCode)
-		e.Message = scrub(e.Message, token)
-		return e
-	}
-	if out == nil {
-		return nil
-	}
-	if err := json.Unmarshal(got, out); err != nil {
-		return &apiError{Message: "its answer is not JSON Kivali reads"}
-	}
-	return nil
-}
-
 // unanswered is a write Google did not answer, which may or may not
 // have been made, in words saying so.
 func unanswered(err error) error {
@@ -106,7 +56,7 @@ func unanswered(err error) error {
 // batchUpdate applies requests to the document id, in order, and reads
 // Google's replies into out (nil for none).
 func (c *call) batchUpdate(ctx context.Context, id string, requests []any, out any) error {
-	return c.g.docsRequest(ctx, c.token, http.MethodPost, docsAPI, "/v1/documents/"+url.PathEscape(id)+":batchUpdate",
+	return c.g.post(ctx, c.token, docsAPI, "/v1/documents/"+url.PathEscape(id)+":batchUpdate",
 		map[string]any{"requests": requests}, out)
 }
 
@@ -276,13 +226,13 @@ func writeText(a args, key string, required bool) ([]mdParagraph, int, error) {
 	return paras, n, nil
 }
 
-// createDocument makes a document titled title (documents.create),
-// writes body into it, then marks it as Kivali's and moves it into its
-// folder (files.update). The folder is checked first: folder_id, which
-// must be one the access includes or inside one, else the first folder
-// the access names, else the Drive's own top. Once the document is
-// made, what fails after is said in the answer, with the document's
-// id.
+// createDocument makes a Google Doc titled title through Drive
+// (newDocument), marked as Kivali's and in its folder from the start,
+// then writes body into it (batchUpdate). The folder is checked first:
+// folder_id, which must be one the access includes or inside one, else
+// the first folder the access names, else none, the top of the owner's
+// My Drive. Once the document is made, a failure to write its text is
+// said in the answer, with the document's id.
 func createDocument(ctx context.Context, c *call) (any, error) {
 	title, err := c.args.text("title", true, nameClip)
 	if err != nil {
@@ -316,67 +266,89 @@ func createDocument(ctx context.Context, c *call) (any, error) {
 		folder = c.access.docsFolders[0]
 	}
 
-	var made docsDocument
-	if err := c.g.docsRequest(ctx, c.token, http.MethodPost, docsAPI, "/v1/documents", map[string]any{"title": title}, &made); err != nil {
+	asked := folder
+	id, refused, err := c.newDocument(ctx, title, folder)
+	if err != nil {
 		return nil, unanswered(err)
 	}
-	id := made.DocumentID
-	if !driveIDPattern.MatchString(id) {
-		return nil, failure("Google made the document and answered no id Kivali reads; tell the owner.")
-	}
-	// undone is what was not done once the document was made, why the
-	// first failure's words.
-	var undone []string
-	why := ""
-	failed := func(what string, err error) {
-		undone = append(undone, what)
-		if why == "" {
-			why = writeWords(err)
-		}
-	}
-	if len(paras) > 0 {
-		at, empty := bodyEnd(made.Body)
-		prefix := "\n"
-		if empty {
-			prefix = ""
-		}
-		if err := c.batchUpdate(ctx, id, insertRequests(at, prefix, paras), nil); err != nil {
-			failed("writing its text", err)
-			chars = 0
-		}
-	}
-	q := url.Values{"supportsAllDrives": {"true"}, "fields": {"id,parents"}}
-	what := "marking it as made by Kivali"
-	if folder != "" {
-		f, err := c.file(ctx, id, "parents")
-		if err != nil {
-			failed("moving it into folder "+folder, err)
-			folder = ""
-		} else {
-			q.Set("addParents", folder)
-			if len(f.Parents) > 0 {
-				q.Set("removeParents", strings.Join(f.Parents, ","))
-			}
-			what += " and moving it into folder " + folder
-		}
-	}
-	mark := map[string]any{"appProperties": map[string]string{kivaliMark: cmp.Or(c.agent, "kivali")}}
-	if err := c.g.docsRequest(ctx, c.token, http.MethodPatch, googleAPI, filePath(id)+"?"+q.Encode(), mark, nil); err != nil {
-		failed(what, err)
+	if refused != "" {
 		folder = ""
 	}
-
 	where := ""
 	if folder != "" {
 		where = " in folder " + folder
 	}
-	c.audit = fmt.Sprintf("created document %s%s with %d characters of text", id, where, chars)
-	if len(undone) > 0 {
-		left := strings.Join(undone, ", then ")
-		c.audit += "; could not finish " + left
-		return fmt.Sprintf("Created document %s%s, but Kivali could not finish %s: %s", id, where, left, why), nil
+	// A Google Doc Drive makes is one empty paragraph, so the body is
+	// its text from index 1.
+	why := ""
+	if len(paras) > 0 {
+		if err := c.batchUpdate(ctx, id, insertRequests(1, "", paras), nil); err != nil {
+			why = writeWords(err)
+		}
 	}
-	return fmt.Sprintf("Created document %s%s with %d characters of text, marked as made by Kivali.", id, where, chars), nil
+	answer := fmt.Sprintf("Created document %s%s with %d characters of text, marked as made by Kivali.", id, where, chars)
+	c.audit = fmt.Sprintf("created document %s%s with %d characters of text", id, where, chars)
+	if why != "" {
+		answer = fmt.Sprintf("Created document %s%s, marked as made by Kivali, but Kivali could not write its text: %s", id, where, why)
+		c.audit = fmt.Sprintf("created document %s%s; could not write its text", id, where)
+	}
+	if refused != "" {
+		answer += " Google would not put it in folder " + asked + " (" + refused + "), so Kivali made it at the top of the owner's My Drive."
+		if len(c.access.docsFolders) > 0 {
+			answer += " It is outside the folders your access includes, so you cannot read or change it; tell the owner."
+		}
+		c.audit += "; Google refused folder " + asked + ", so it is at the top of My Drive"
+	}
+	return answer, nil
+}
+
+// newDocument makes an empty Google Doc titled title through Drive
+// (files.create), carrying Kivali's mark and, when folder is set, in
+// that folder, and answers its id. When Drive refuses the folder
+// itself, with a 403 or a 404 whose words name it, the document is
+// made again with no folder, at the top of the owner's My Drive, and
+// refused is Google's answer for the folder. Any other failure is the
+// error and nothing is made again: Google not answering or a 5xx may
+// have made the document.
+func (c *call) newDocument(ctx context.Context, title, folder string) (id, refused string, err error) {
+	file := map[string]any{
+		"name":          title,
+		"mimeType":      documentType,
+		"appProperties": map[string]string{kivaliMark: cmp.Or(c.agent, "kivali")},
+	}
+	path := "/drive/v3/files?" + url.Values{"fields": {"id"}, "supportsAllDrives": {"true"}}.Encode()
+	var made driveFile
+	if folder != "" {
+		file["parents"] = []string{folder}
+		err = c.g.post(ctx, c.token, googleAPI, path, file, &made)
+		var ae *apiError
+		if !errors.As(err, &ae) || !ae.refuses(folder) {
+			id, err = madeID(made, err)
+			return id, "", err
+		}
+		refused = fmt.Sprintf("HTTP %d: %s", ae.Status, sentence(ae.Message))
+		delete(file, "parents")
+	}
+	err = c.g.post(ctx, c.token, googleAPI, path, file, &made)
+	id, err = madeID(made, err)
+	return id, refused, err
+}
+
+// refuses reports whether Google's answer refuses the Drive file id
+// itself: a 403 or a 404, not a rate limit, whose words name it.
+func (e *apiError) refuses(id string) bool {
+	return (e.Status == http.StatusForbidden || e.Status == http.StatusNotFound) && !e.RateLimited && strings.Contains(e.Message, id)
+}
+
+// madeID is the id of the file Drive answered it made, or err.
+func madeID(made driveFile, err error) (string, error) {
+	if err != nil {
+		return "", err
+	}
+	if !driveIDPattern.MatchString(made.ID) {
+		return "", failure("Google made the document and answered no id Kivali reads; tell the owner.")
+	}
+	return made.ID, nil
 }
 
 // writeWords is a write's failure in the agent's words, a sentence.

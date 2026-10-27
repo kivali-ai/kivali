@@ -698,13 +698,14 @@ func TestListCommentsFitInOneAnswer(t *testing.T) {
 }
 
 // Why this test exists: create_document must leave a document the agent
-// may later change and the owner can find: made, its text written in
-// the Markdown the description promises (headings, list items, bold,
-// paragraphs as written), marked as Kivali's with the agent's slug, and
-// moved into its folder out of the Drive's top; the folder must be
-// within the access's before anything is made, and with none named the
-// document goes in the first folder the access names, so the agent can
-// still read it.
+// may later change and the owner can find: made through Drive as a
+// Google Doc already marked as Kivali's with the agent's slug and in its
+// folder, so no later step can leave it unmarked or at the Drive's top;
+// then its text written in the Markdown the description promises
+// (headings, list items, bold, paragraphs as written). The folder must
+// be within the access's before anything is made, and with none named
+// the document goes in the first folder the access names, so the agent
+// can still read it.
 func TestCreateDocument(t *testing.T) {
 	d, _, g := newFakeDocs(t)
 	d.addFolder("fold1", "Projects")
@@ -718,8 +719,13 @@ func TestCreateDocument(t *testing.T) {
 		t.Errorf("answer %q, audit %q", res.Content[0], res.Audit)
 	}
 	w := d.changes()
-	if len(w) != 3 || w[0].path != "/v1/documents?" || w[0].body["title"] != "Launch plan" || w[1].path != "/v1/documents/madeDoc1:batchUpdate?" || w[2].method != "PATCH" {
+	if len(w) != 2 || w[0].method != "POST" || !strings.HasPrefix(w[0].path, "/drive/v3/files?") || w[1].path != "/v1/documents/madeDoc1:batchUpdate?" {
 		t.Fatalf("writes = %+v", w)
+	}
+	made := w[0].body
+	if made["name"] != "Launch plan" || made["mimeType"] != documentType || !slices.Equal(made["parents"].([]any), []any{"fold1"}) ||
+		made["appProperties"].(map[string]any)[kivaliMark] != "dana" {
+		t.Errorf("Drive was asked to make %v", made)
 	}
 	reqs := w[1].body["requests"].([]any)
 	insert := reqs[0].(map[string]any)["insertText"].(map[string]any)
@@ -739,16 +745,11 @@ func TestCreateDocument(t *testing.T) {
 	if !boldSeen {
 		t.Errorf("bold not over \"bold\": %v", reqs)
 	}
-	patch, _ := url.ParseQuery(strings.SplitN(w[2].path, "?", 2)[1])
-	if !strings.HasPrefix(w[2].path, "/drive/v3/files/madeDoc1?") || patch.Get("addParents") != "fold1" || patch.Get("removeParents") != "rootFolder" ||
-		w[2].body["appProperties"].(map[string]any)[kivaliMark] != "dana" {
-		t.Errorf("the mark and move: %s %v", w[2].path, w[2].body)
-	}
-	made := d.get("madeDoc1")
+	doc := d.get("madeDoc1")
 	want := []fakePara{{"Plan", "HEADING_1", false}, {"Intro with bold words", "NORMAL_TEXT", false}, {"one", "NORMAL_TEXT", true},
 		{"two", "NORMAL_TEXT", true}, {"", "NORMAL_TEXT", false}, {"End", "NORMAL_TEXT", false}}
-	if !slices.Equal(made.paras, want) {
-		t.Errorf("the document holds %+v", made.paras)
+	if !slices.Equal(doc.paras, want) || !slices.Equal(doc.file.Parents, []string{"fold1"}) {
+		t.Errorf("the document holds %+v, in %v", doc.paras, doc.file.Parents)
 	}
 	res = docsAnswer(t, g, access, "get_document", `{"document_id":"madeDoc1"}`)
 	if !strings.Contains(res.Content[0], "Title: Launch plan\n\n# Plan\nIntro with bold words\n- one\n- two\n\nEnd\nEnd of document content.") ||
@@ -766,25 +767,90 @@ func TestCreateDocument(t *testing.T) {
 		t.Errorf("a refused create changed Google: %+v", got[before:])
 	}
 	res = docsAnswer(t, g, access, "create_document", `{"title":"Second"}`)
-	if res.Content[0] != "Created document madeDoc2 in folder fold1 with 0 characters of text, marked as made by Kivali." || len(d.changes()) != before+2 {
+	if res.Content[0] != "Created document madeDoc2 in folder fold1 with 0 characters of text, marked as made by Kivali." || len(d.changes()) != before+1 ||
+		!slices.Equal(d.get("madeDoc2").file.Parents, []string{"fold1"}) {
 		t.Errorf("no folder named: %q, %+v", res.Content[0], d.changes()[before:])
 	}
 	res = docsAnswer(t, g, nil, "create_document", `{"title":"Third"}`)
-	if res.Content[0] != "Created document madeDoc3 with 0 characters of text, marked as made by Kivali." || !slices.Equal(d.get("madeDoc3").file.Parents, []string{"rootFolder"}) {
+	if res.Content[0] != "Created document madeDoc3 with 0 characters of text, marked as made by Kivali." || !slices.Equal(d.get("madeDoc3").file.Parents, []string{"rootFolder"}) ||
+		d.changes()[before+1].body["parents"] != nil {
 		t.Errorf("no folders at all: %q", res.Content[0])
 	}
 }
 
-// Why this test exists: once a document is made, a failure to mark or
-// move it must reach the agent with the document's id and what is left
-// undone, not as if nothing were made.
+// Why this test exists: once a document is made, a failure to write its
+// text must reach the agent with the document's id and what is left
+// undone, not as if nothing were made; the document is still Kivali's,
+// since Drive made it with the mark.
 func TestCreateDocumentSaysWhatItCouldNotFinish(t *testing.T) {
-	_, f, g := newFakeDocs(t)
-	f.failWith("/drive/v3/files/madeDoc1", 403, `{"error":{"code":403,"message":"Request had insufficient authentication scopes.","errors":[{"reason":"insufficientPermissions"}]}}`)
+	d, f, g := newFakeDocs(t)
+	f.failWith("/v1/documents/madeDoc1:batchUpdate", 503, `{"error":{"code":503,"message":"The service is currently unavailable."}}`)
 	res := docsAnswer(t, g, nil, "create_document", `{"title":"T","body":"x"}`)
-	if res.Content[0] != "Created document madeDoc1, but Kivali could not finish marking it as made by Kivali: Google refused this (HTTP 403): the owner's sign-in does not allow it. Ask the owner." ||
-		res.Audit != "created document madeDoc1 with 1 characters of text; could not finish marking it as made by Kivali" {
+	if res.Content[0] != "Created document madeDoc1, marked as made by Kivali, but Kivali could not write its text: Google answered 503: The service is currently unavailable. Try again later." ||
+		res.Audit != "created document madeDoc1; could not write its text" {
 		t.Errorf("answer %q, audit %q", res.Content[0], res.Audit)
+	}
+	if !d.get("madeDoc1").file.madeByKivali() {
+		t.Error("the document is not marked as Kivali's")
+	}
+}
+
+// Why this test exists: Drive can refuse to make a file in a folder the
+// sign-in reads but may not add to. Then, and only when Google's answer
+// is a 403 or a 404 naming the folder, the document is made again at the
+// top of My Drive, and the agent is told the folder could not be used
+// and that it cannot read the document back. A refusal that does not
+// name the folder (a scope left unticked), a 5xx or no answer at all may
+// mean nothing or something was made, so nothing is made again.
+func TestCreateDocumentFolderRefused(t *testing.T) {
+	cases := []struct {
+		name   string
+		refuse fakeError
+		again  bool
+		answer string
+	}{
+		{"404 naming it", fakeError{status: 404, body: `{"error":{"code":404,"message":"File not found: fold9."}}`}, true,
+			"Created document madeDoc1 with 1 characters of text, marked as made by Kivali. Google would not put it in folder fold9 (HTTP 404: File not found: fold9), so Kivali made it at the top of the owner's My Drive. It is outside the folders your access includes, so you cannot read or change it; tell the owner."},
+		{"403 naming it", fakeError{status: 403, body: `{"error":{"code":403,"message":"The user does not have sufficient permissions for file fold9.","errors":[{"reason":"insufficientFilePermissions"}]}}`}, true,
+			"Created document madeDoc1 with 1 characters of text, marked as made by Kivali. Google would not put it in folder fold9 (HTTP 403: The user does not have sufficient permissions for file fold9), so Kivali made it at the top of the owner's My Drive. It is outside the folders your access includes, so you cannot read or change it; tell the owner."},
+		{"403 for the sign-in", fakeError{status: 403, body: `{"error":{"code":403,"message":"Request had insufficient authentication scopes.","errors":[{"reason":"insufficientPermissions"}]}}`}, false,
+			"Google refused this (HTTP 403): the owner's sign-in does not allow it. Ask the owner."},
+		{"503 naming it", fakeError{status: 503, body: `{"error":{"code":503,"message":"Backend error for fold9."}}`}, false,
+			"Google answered 503: Backend error for fold9. Try again later."},
+		{"no answer", fakeError{status: 0, body: ""}, false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, _, g := newFakeDocs(t)
+			d.addFolder("fold9", "Team")
+			d.get("fold9").refuseChild = &tc.refuse
+			res, err := callDocs(t, g, map[string]any{"docs_folders": []string{"fold9"}}, "create_document", `{"title":"T","body":"x"}`)
+			if err != nil || res == nil {
+				t.Fatalf("%+v, %v", res, err)
+			}
+			var creates []fakeWrite
+			for _, w := range d.changes() {
+				if strings.HasPrefix(w.path, "/drive/v3/files?") {
+					creates = append(creates, w)
+				}
+			}
+			if !tc.again {
+				if len(creates) != 1 || !res.IsError || (tc.answer != "" && res.Content[0] != tc.answer) {
+					t.Errorf("made %d times, answer %+v", len(creates), res)
+				}
+				if tc.refuse.status == 0 && !strings.Contains(res.Content[0], "Google did not answer") {
+					t.Errorf("no answer reads %q", res.Content[0])
+				}
+				return
+			}
+			if len(creates) != 2 || creates[1].body["parents"] != nil || res.IsError || res.Content[0] != tc.answer ||
+				res.Audit != "created document madeDoc1 with 1 characters of text; Google refused folder fold9, so it is at the top of My Drive" {
+				t.Errorf("made %d times (%+v), answer %q, audit %q", len(creates), creates, res.Content[0], res.Audit)
+			}
+			if doc := d.get("madeDoc1"); !slices.Equal(doc.file.Parents, []string{"rootFolder"}) || !doc.file.madeByKivali() || doc.paras[0].text != "x" {
+				t.Errorf("the document made again: %+v", doc)
+			}
+		})
 	}
 }
 
