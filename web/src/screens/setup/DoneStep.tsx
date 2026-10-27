@@ -15,7 +15,7 @@ export interface DoneStepProps {
 /** Done: one button into Home, and what Needs you will hold. */
 export function DoneStep({ fileCount, fromFiles, personal = false, onHome }: DoneStepProps) {
   const drafting = fromFiles && fileCount > 0;
-  let next = 'It will introduce itself in Home, and Needs you will show its first message.';
+  let next = 'It will send you a few questions about your business in Needs you, then propose the About and Values sections for you to approve.';
   if (personal) {
     next = 'It will send you a few questions in Needs you, then propose the About and Values sections for you to approve.';
   } else if (drafting) {

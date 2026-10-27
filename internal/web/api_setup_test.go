@@ -368,7 +368,7 @@ func TestAPISetupSeedCoSRunsInTheBackground(t *testing.T) {
 	<-entered // the model call is under way
 	fake.Advance(12 * time.Second)
 	p := getProgress(t, srv)
-	want := "Reading your files=done, Writing its first briefing=running, Hiring=queued"
+	want := "Reading your files=done, Writing its first briefing=running, Hiring=queued, Asking it to get to know your business=queued"
 	if p.State != apitypes.SetupProgressStateRunning || stageStates(p) != want || p.ElapsedS != 12 {
 		t.Fatalf("mid-hire: %s [%s] %ds, want running [%s] 12s", p.State, stageStates(p), p.ElapsedS, want)
 	}
@@ -386,7 +386,7 @@ func TestAPISetupSeedCoSRunsInTheBackground(t *testing.T) {
 	waitSeed(t, srv)
 	fake.Advance(time.Minute) // elapsed freezes when the hire ends
 	p = getProgress(t, srv)
-	want = "Reading your files=done, Writing its first briefing=done, Hiring=done"
+	want = "Reading your files=done, Writing its first briefing=done, Hiring=done, Asking it to get to know your business=done"
 	if p.State != apitypes.SetupProgressStateDone || stageStates(p) != want || p.ElapsedS != 12 || p.Error != "" {
 		t.Fatalf("after: %s [%s] %ds %q, want done [%s] 12s", p.State, stageStates(p), p.ElapsedS, p.Error, want)
 	}
@@ -397,8 +397,12 @@ func TestAPISetupSeedCoSRunsInTheBackground(t *testing.T) {
 	if c, err := srv.Store.ReadHandbook(); err != nil || c != seed.Handbook {
 		t.Errorf("handbook: the default should be written when none is stored (err %v)", err)
 	}
-	if hist, _ := srv.Store.ReadChatHistory(cosSlug); len(hist) != 0 {
-		t.Errorf("without handbook_from_files the chief of staff gets no first message; chat = %+v", hist)
+	// Without handbook_from_files a work team's Chief of Staff is still
+	// woken, with the message that asks the CEO about the business: a
+	// team with nothing to read would otherwise start on a memory
+	// written from nothing, and the CEO would hear nothing from it.
+	if hist, _ := srv.Store.ReadChatHistory(cosSlug); len(hist) != 1 || hist[0].Content != strings.TrimSpace(seed.WorkFirstMessage) {
+		t.Errorf("without handbook_from_files the chief of staff gets the work first message; chat = %+v", hist)
 	}
 	if got := srv.Store.ReadAutoRelease(); !got.Enabled || got.Delay != 30*time.Second {
 		t.Errorf("a new team's auto-release = %+v, want 30s", got)
@@ -524,7 +528,7 @@ func TestAPISetupSeedCoSFailureIsReportedAndRetryable(t *testing.T) {
 	}
 	waitSeed(t, srv)
 	p := getProgress(t, srv)
-	want := "Reading your files=done, Writing its first briefing=failed, Hiring=queued"
+	want := "Reading your files=done, Writing its first briefing=failed, Hiring=queued, Asking it to get to know your business=queued"
 	if p.State != apitypes.SetupProgressStateFailed || stageStates(p) != want || p.Error == "" || p.Who == "" {
 		t.Fatalf("failed hire: %s [%s] %q / %q, want failed [%s] with error and who", p.State, stageStates(p), p.Error, p.Who, want)
 	}
@@ -654,7 +658,7 @@ func TestAPISetupSeedCoSHungModelCallTimesOut(t *testing.T) {
 	waitSeed(t, srv)
 
 	p := getProgress(t, srv)
-	want := "Reading your files=done, Writing its first briefing=failed, Hiring=queued"
+	want := "Reading your files=done, Writing its first briefing=failed, Hiring=queued, Asking it to get to know your business=queued"
 	if p.State != apitypes.SetupProgressStateFailed || stageStates(p) != want {
 		t.Fatalf("timed-out hire: %s [%s], want failed [%s]", p.State, stageStates(p), want)
 	}
@@ -704,7 +708,7 @@ func TestAPISetupSeedCoSPanicIsReportedAsFailed(t *testing.T) {
 	}
 	waitSeed(t, srv)
 	p := getProgress(t, srv)
-	want := "Reading your files=done, Writing its first briefing=failed, Hiring=queued"
+	want := "Reading your files=done, Writing its first briefing=failed, Hiring=queued, Asking it to get to know your business=queued"
 	if p.State != apitypes.SetupProgressStateFailed || stageStates(p) != want {
 		t.Fatalf("panicked hire: %s [%s], want failed [%s]", p.State, stageStates(p), want)
 	}

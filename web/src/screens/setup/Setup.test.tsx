@@ -576,7 +576,7 @@ describe('Done', () => {
     serve({ ...goSetup, step: 'done', files: [] }, [{ ...goProgress, state: 'done' }]);
     await renderSetup();
     expect(screen.queryByText(/drafting a handbook/)).toBeNull();
-    expect(screen.getByText(/It will introduce itself in Home/)).toBeInTheDocument();
+    expect(screen.getByText(/It will send you a few questions about your business in Needs you/)).toBeInTheDocument();
   });
 });
 

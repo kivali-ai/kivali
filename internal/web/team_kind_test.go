@@ -143,8 +143,8 @@ func TestAPISetupSeedCoSWorkKeepsTheWorkSeed(t *testing.T) {
 	if c, _ := srv.Store.ReadHandbook(); c != seed.Handbook {
 		t.Error("a work team should store the work handbook")
 	}
-	if hist, _ := srv.Store.ReadChatHistory(cosSlug); len(hist) != 0 {
-		t.Errorf("a work team without handbook_from_files gets no first message; chat = %+v", hist)
+	if hist, _ := srv.Store.ReadChatHistory(cosSlug); len(hist) != 1 || hist[0].Content != strings.TrimSpace(seed.WorkFirstMessage) {
+		t.Errorf("a work team without handbook_from_files gets the work first message; chat = %+v", hist)
 	}
 	if sent := capture.sent(t); strings.Contains(sent, "the person this team works for") || !strings.Contains(sent, "about the business") {
 		t.Error("a work team's seed call should use the work instruction")

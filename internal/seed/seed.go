@@ -92,6 +92,16 @@ var KivaliRoleSlugs = []string{graph.ChiefOfStaffSlug, graph.KivaliDeveloperSlug
 //go:embed personal_first_message.md
 var PersonalFirstMessage string
 
+// WorkFirstMessage is a work team's Chief of Staff's first message
+// when setup is not asked to write the handbook from the project
+// files: ask the CEO a few questions about the business, leaving out
+// what the handbook and files already answer, then draft the
+// handbook's About section. It is sent as the CEO's own message.
+// Edit internal/seed/work_first_message.md to change it.
+//
+//go:embed work_first_message.md
+var WorkFirstMessage string
+
 // ChiefOfStaffRole is the Chief of Staff's role, before
 // ChiefOfStaffRoleFor fits it to the team's kind. Setup writes it as
 // the agent's role.md, and every boot writes it again (KivaliRole).

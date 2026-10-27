@@ -498,6 +498,12 @@ func (s *Server) cosSeedFromRequest(w http.ResponseWriter, req apitypes.SeedCoSR
 		plan.FirstMessageLabel = personalFirstMessageLabel
 	case req.HandbookFromFiles:
 		plan.FirstMessage = strings.TrimSpace(seed.HandbookFromFilesMessage)
+	default:
+		// A work team whose handbook is not drafted from the files:
+		// the Chief of Staff asks about the business instead, so its
+		// memory and the handbook come from the owner, never a guess.
+		plan.FirstMessage = strings.TrimSpace(seed.WorkFirstMessage)
+		plan.FirstMessageLabel = workFirstMessageLabel
 	}
 	return plan, true
 }
