@@ -169,7 +169,16 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        // The opener's click script is left out: it is injected into every
+        // webview, catches each click on a link with target="_blank" (and
+        // every ctrl- or shift-click on a link), prevents the navigation and
+        // asks the plugin over IPC to open the page. A team's web view has
+        // no IPC (capabilities/shell-pages.json), so such a link would do
+        // nothing. Without the script the click is a navigation, which the
+        // team window's `on_navigation` and `on_new_window` route to the
+        // system browser (windows.rs); the bundled pages have no such links
+        // and open release notes through the `open_external` command.
+        .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(commands::handler())
         .setup(move |app| {
