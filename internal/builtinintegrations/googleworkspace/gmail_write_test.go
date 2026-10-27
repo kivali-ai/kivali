@@ -464,6 +464,44 @@ func TestModifyLabelsRestricted(t *testing.T) {
 	}
 }
 
+// Why this test exists: an access that names no labels still does not
+// read Spam or Trash. Changing labels without reading the message first
+// would let an empty access add INBOX to a message in Spam or Trash and
+// pull it out, so modify_labels must refuse those messages as not
+// included, before Gmail changes anything.
+func TestModifyLabelsSpamTrashEmptyAccess(t *testing.T) {
+	f, _, g := newFakeGmail(t)
+	searchMail(f)
+	dana := writer(map[string]any{})
+	for _, id := range []string{"m4", "m6"} {
+		writeRefused(t, g, dana, "modify_labels", `{"message_id":"`+id+`","add":["INBOX"]}`,
+			"Message "+id+" is not in the labels your access includes; ask the owner if your work needs it.")
+	}
+	if got := requestsFor(f, "gmail POST"); len(got) != 0 {
+		t.Errorf("Gmail was asked to change %v", got)
+	}
+}
+
+// Why this test exists: create_draft says a reply's message is not a
+// draft and not in Spam or Trash. That held for the thread path only; a
+// reply by in_reply_to_message_id must refuse the same messages.
+func TestCreateDraftReplyByIDRefusesDraftSpamTrash(t *testing.T) {
+	f, _, g := newFakeGmail(t)
+	replyMail(f)
+	withMail(f,
+		mailMsg{id: "m6b", thread: "t6", labels: []string{"SPAM"}, at: monday, from: "spam@example.org", to: "dana@example.com", subject: "Six", plain: "b"},
+		mailMsg{id: "m6c", thread: "t6", labels: []string{"TRASH"}, at: monday, from: "bin@example.org", to: "dana@example.com", subject: "Six", plain: "c"},
+		mailMsg{id: "m6d", thread: "t6", labels: []string{"DRAFT"}, at: monday, from: "dana@example.com", to: "zed@example.org", subject: "Six", plain: "d"},
+	)
+	dana := writer(map[string]any{})
+	for _, id := range []string{"m6b", "m6c"} {
+		writeRefused(t, g, dana, "create_draft", `{"in_reply_to_message_id":"`+id+`","body":"Hi"}`,
+			"Message "+id+" is not in the labels your access includes; ask the owner if your work needs it.")
+	}
+	writeRefused(t, g, dana, "create_draft", `{"in_reply_to_message_id":"m6d","body":"Hi"}`,
+		"Message m6d is a draft; reply to a sent or received message.")
+}
+
 // Why this test exists: sending waits for the owner's approval, which
 // this version does not have, so send_email and send_draft are declared
 // with the arguments they take and never given to an agent: a call with
