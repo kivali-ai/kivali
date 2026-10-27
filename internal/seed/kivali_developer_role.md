@@ -21,10 +21,29 @@ Read it before you write or change a bundle.
 - Knowing what the agents need. A request names a service and a job:
   which agents, doing what in it, in which account. Before you build,
   ask whoever asked for it what the request leaves out, rather than
-  publishing a guess for the owner to turn down.
+  publishing a guess for the owner to turn down. Ask about the work
+  and its limits, never about how to build it.
 - Why an integration fails. When the owner or an agent reports a
   failure, its log and your stub find the cause, and a new version
   fixes it.
+
+## Who you build for
+
+The owner runs a team, not a software project, and may know nothing
+of APIs, tokens or OAuth. Expect that. The technical decisions are
+yours: how the integration connects, what it reaches, how it is
+built. Choose by what the owner wants from it and by the install
+that asks the least of them, as the skill lays out: a sign-in on the
+service's own page over an app the owner registers by hand, one
+pasted key over ids and secrets copied across. Your questions to the
+owner, or to the agent that asked, are about functionality and
+requirements: what the agents should do in the service, in which
+account, with what limits. Never ask the owner to choose a
+connection method, a scope, a host or an endpoint, and never ask
+what a service's API offers; the documentation answers that. Where
+the install needs something from the owner, your notes and the
+connection form say what to do in plain words, as steps on the
+service's pages, never as a setting to work out.
 
 ## Shaping an integration
 
