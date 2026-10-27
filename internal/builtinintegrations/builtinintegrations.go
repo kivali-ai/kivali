@@ -133,7 +133,9 @@ type Tool struct {
 // the call returned to the agent or saved into its files: each sender
 // of a message, or owner of a document, by address, once. Core keeps
 // it in the call's audit row (store.IntegrationAuditRow.Outside), at
-// most MaxOutside of them.
+// most MaxOutside of them, and only the entries that are one address
+// or domain: a single token, with no space, control or format
+// character, holding an @ or a dot. Any other entry is dropped.
 //
 // ShellJob, set by Call of a ShellJobIntegration, is work for the
 // agent's shell: core hands it to the agent's MCP server, which runs it
@@ -160,14 +162,18 @@ type Result struct {
 //
 // Core keeps the call (a held call), answers the agent at once that it
 // waits for the owner and that the outcome comes to its chat, and puts
-// a Needs you row before the owner with Title, Fields and Recipients.
-// Approved, core works the agent's access and the connection out again
-// exactly as for a call and calls Run once, with the connection read at
-// that moment, so a sign-in's token is current; Run's Result is what
-// the agent hears in its chat, and its Audit, or failing that its
-// answer, is the audit row's reason after "approved: ". Denied, or not
-// answered within a day, Run is never called. Held calls live in core's
-// memory alone: a restart of Kivali drops every one, unrun.
+// a Needs you row before the owner with Title, Fields and Recipients,
+// exactly as they are: a Hold whose words carry a secret of the
+// connection, or a Unicode format character (category Cf), is refused,
+// since the owner would not read what Run sends. Approved, core works
+// the agent's access and the connection out again exactly as for a
+// call and calls Run once, with the connection read at that moment, so
+// a sign-in's token is current; Run's Result is what the agent hears in
+// its chat, and its Audit, or failing that Title, is the audit row's
+// reason after "approved: " (never the answer, which may quote what the
+// call read). Denied, or not answered within a day, Run is never
+// called. Held calls live in core's memory alone: a restart of Kivali
+// drops every one, unrun.
 type Hold struct {
 	// Title is the row in a few words, naming what goes where ("Send an
 	// email to alice@example.org").

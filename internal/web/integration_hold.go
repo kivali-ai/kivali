@@ -8,21 +8,25 @@
 // at once, not as an error, that it waits and that the outcome comes to
 // its chat; the agent's turn carries on. Home lists an integration_hold
 // need: the title, each field as the built-in captured it, who it
-// reaches, and the taint line (heldCallTaint). At most
+// reaches, and the taint line (heldCallTaint). A hold the owner could
+// not read as Run sends it is refused: one carrying the connection's
+// secret, which the owner would read scrubbed, or a Unicode format
+// character, which shows as nothing. At most
 // maxHeldCallsPerAgent of an agent's calls wait at once; another is
 // refused before it is held.
 //
 // Approve works the integration out again exactly as a call does (the
 // agent still on the team, agentIntegrationFor, the agent's listed
-// actions, the connection). A refusal there is the owner's answer, and
-// the call keeps waiting. Otherwise core runs Hold.Run once, with the
-// connection read then, under a call's deadline, writes the row of how
-// it ended ("approved: ...") and tells the agent in its chat, a
-// held_call message. Deny, heldCallLimit with no answer, and the
-// integration disabled, disconnected or uninstalled or the agent
-// offboarded end it unrun, with a row and, while the agent is on the
-// team, a message. Each held call is answered once; a later answer is a
-// 409. A restart of core drops every held call with nothing written:
+// actions, the connection). A refusal there is the owner's answer,
+// audited as not run, and the call keeps waiting. Otherwise core runs
+// Hold.Run once, with the connection read then, under a call's
+// deadline, writes the row of how it ended ("approved: ...") and tells
+// the agent in its chat, a held_call message. Deny, heldCallLimit with
+// no answer, and the integration disabled, disconnected or uninstalled
+// or the agent offboarded end it unrun, with a row and, while the agent
+// is on the team, a message; so does a hold made as one of those
+// happens. Each held call is answered once; a later answer is a 409. A
+// restart of core drops every held call with nothing written:
 // the agent was told that no word within a day means it was not done.
 
 package web
@@ -43,6 +47,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/kivali-ai/kivali/internal/agent"
 	"github.com/kivali-ai/kivali/internal/agentpod"
@@ -94,6 +99,25 @@ const reasonTooManyHeld = "the owner has five of the agent's requests waiting"
 
 func refuseTooManyHeld() string {
 	return "The owner has five of your requests waiting for approval. Wait for their answers in your chat before asking for another."
+}
+
+// reasonHeldCallSecret is the audit's reason for a hold whose words
+// carry the connection's secret: the owner would read "[secret]" where
+// Run sends the secret itself, so it is never held.
+const reasonHeldCallSecret = "the call carries the connection's secret"
+
+func refuseHeldCallSecret(display string) string {
+	return "This request carries the " + display + " integration's secret, so it was not held for the owner's approval."
+}
+
+// reasonHeldCallFormat is the audit's reason for a hold whose words
+// hold a Unicode format character (category Cf: zero-width spaces and
+// joiners, direction marks and overrides, the byte order mark), which
+// the owner would not see and Run would send.
+const reasonHeldCallFormat = "the call holds invisible formatting characters"
+
+func refuseHeldCallFormat() string {
+	return "This request holds invisible formatting characters (Unicode format characters, such as zero-width spaces or direction marks), which the owner cannot see before approving. Remove them and ask again."
 }
 
 // errHeldCallGone is an answer to a held call that is no longer
@@ -155,6 +179,9 @@ type heldCalls struct {
 	// last is the date of the last outcome message written, so two
 	// outcomes in one instant are two files.
 	last time.Time
+	// added, when set, is given each held call as add registers it. A
+	// test seam, for a call that may end before the test could list it.
+	added func(*integrationHold)
 }
 
 // add registers h unless its agent already has maxHeldCallsPerAgent
@@ -175,6 +202,9 @@ func (hc *heldCalls) add(h *integrationHold) bool {
 		hc.byID = map[string]*integrationHold{}
 	}
 	hc.byID[h.id] = h
+	if hc.added != nil {
+		hc.added(h)
+	}
 	return true
 }
 
@@ -267,22 +297,34 @@ func oneLine(s string, n int) string {
 }
 
 // holdAgentCall holds slug's call of tool on v, whose built-in
-// answered with hold, and answers the agent that it waits; scrub is
-// the connection's scrubber, which every word the owner reads goes
-// through. A hold with nothing to run, or too large for the owner to
-// read, is the integration's failure; one past the agent's limit is
-// refused.
+// answered with hold, and answers the agent that it waits. What the
+// owner reads is what Run does: a hold whose words carry the
+// connection's secret (scrub, the connection's scrubber, would change
+// them) or a Unicode format character is refused, never shown altered.
+// A hold with nothing to run is the integration's failure; one too
+// large for the owner to read, or past the agent's limit, is refused.
+// A hold made as its integration is turned off or its agent leaves
+// ends at once, as theirs do (heldCallGone).
 func (s *Server) holdAgentCall(start time.Time, slug string, v agentIntegration, tool string, hold *builtinintegrations.Hold, scrub *strings.Replacer) agentpod.IntegrationCallResponse {
-	title := oneLine(scrub.Replace(hold.Title), heldCallTitleMax)
+	title := oneLine(hold.Title, heldCallTitleMax)
 	if hold.Run == nil || title == "" {
-		s.auditAgentCall(v.name, start, slug, tool, true, "the integration held a call with nothing to run")
+		s.auditAgentCall(v.name, start, slug, tool, false, "the integration held a call with nothing to run")
 		return integrationError(fmt.Sprintf("The %s integration did not finish the call; tell the owner.", v.display))
+	}
+	words := heldCallWords(hold)
+	if slices.ContainsFunc(words, func(w string) bool { return scrub.Replace(w) != w }) {
+		s.auditAgentCall(v.name, start, slug, tool, false, reasonHeldCallSecret)
+		return integrationError(refuseHeldCallSecret(v.display))
+	}
+	if slices.ContainsFunc(words, hasFormatRune) {
+		s.auditAgentCall(v.name, start, slug, tool, false, reasonHeldCallFormat)
+		return integrationError(refuseHeldCallFormat())
 	}
 	size := 0
 	fields := make([]builtinintegrations.HoldField, 0, len(hold.Fields))
 	for _, f := range hold.Fields {
 		size += len(f.Label) + len(f.Value)
-		fields = append(fields, builtinintegrations.HoldField{Label: oneLine(scrub.Replace(f.Label), heldCallTitleMax), Value: scrub.Replace(f.Value)})
+		fields = append(fields, builtinintegrations.HoldField{Label: oneLine(f.Label, heldCallTitleMax), Value: f.Value})
 	}
 	if len(fields) > maxHeldCallFields || size > maxHeldCallBytes {
 		s.auditAgentCall(v.name, start, slug, tool, false, "the call is too large for the owner to read")
@@ -290,7 +332,7 @@ func (s *Server) holdAgentCall(start time.Time, slug string, v agentIntegration,
 	}
 	recipients := []string{}
 	for _, r := range hold.Recipients {
-		if r = oneLine(scrub.Replace(r), heldCallRecipientMax); r != "" {
+		if r = oneLine(r, heldCallRecipientMax); r != "" {
 			recipients = append(recipients, r)
 		}
 	}
@@ -312,11 +354,58 @@ func (s *Server) holdAgentCall(start time.Time, slug string, v agentIntegration,
 		return integrationError(refuseTooManyHeld())
 	}
 	// Armed before the call answers, so the limit counts from the hold.
+	// The row is written before awaitHeldCall runs, so it comes before
+	// the row of how the call ended.
 	t := s.clk().NewTimer(heldCallLimit)
-	go s.awaitHeldCall(h, t)
 	s.auditAgentCall(v.name, start, slug, tool, true, "waiting for the owner's approval: "+title)
+	go s.awaitHeldCall(h, t)
+	// The owner may have turned the integration off, or the agent left,
+	// after the call was worked out and before h was added, when ending
+	// their held calls passed h by.
+	if reason, words := s.heldCallGone(h); reason != "" {
+		s.heldCalls.stopWhere(func(o *integrationHold) bool { return o == h }, reason, words)
+	}
 	s.NotifyOrgState()
 	return agentpod.IntegrationCallResponse{Content: []string{heldCallWaiting}}
+}
+
+// heldCallWords is every word of hold the owner reads: the title, each
+// field's label and value, and the recipients.
+func heldCallWords(hold *builtinintegrations.Hold) []string {
+	out := make([]string, 0, 1+2*len(hold.Fields)+len(hold.Recipients))
+	out = append(out, hold.Title)
+	for _, f := range hold.Fields {
+		out = append(out, f.Label, f.Value)
+	}
+	return append(out, hold.Recipients...)
+}
+
+// hasFormatRune reports whether w holds a Unicode format character
+// (category Cf), which shows as nothing on the owner's screen.
+func hasFormatRune(w string) bool {
+	return strings.IndexFunc(w, func(r rune) bool { return unicode.Is(unicode.Cf, r) }) >= 0
+}
+
+// heldCallGone is why h may no longer wait, in the words the owner's
+// action or the agent's leaving ends a held call with
+// (endHeldCallsOf, endAgentHeldCalls): the audit's reason and the
+// agent's words. Both are empty while its agent is on the team and its
+// integration installed, enabled and connected.
+func (s *Server) heldCallGone(h *integrationHold) (reason, words string) {
+	if _, err := s.Store.GetAgent(h.agent); errors.Is(err, store.ErrNotFound) {
+		return reasonAgentLeft, wordsAgentLeft
+	}
+	it, err := s.Store.GetIntegration(h.integration)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "the owner uninstalled the integration", "the owner uninstalled the " + h.display + " integration"
+	case err == nil && !it.Enabled:
+		return "the owner disabled the integration", "the owner disabled the " + h.display + " integration"
+	}
+	if _, err := s.Store.GetIntegrationConnection(h.integration); errors.Is(err, store.ErrNotFound) {
+		return "the owner disconnected the integration", "the owner disconnected the " + h.display + " integration"
+	}
+	return "", ""
 }
 
 // heldCallTaint is the taint line of a call slug holds on name at now:
@@ -401,6 +490,7 @@ func (s *Server) answerHeldCall(h *integrationHold, a heldCallAnswer) (apitypes.
 	ctx := context.Background()
 	v, conn, scrub, why := s.heldCallTarget(ctx, h, name)
 	if why != "" {
+		s.auditAgentCall(h.integration, start, h.agent, h.tool, false, "approved, not run: "+why)
 		return apitypes.NeedActionResponse{}, false, &ceoRefusal{
 			Status: http.StatusConflict,
 			Msg:    "integration_hold approve: " + why,
@@ -419,31 +509,32 @@ func (s *Server) answerHeldCall(h *integrationHold, a heldCallAnswer) (apitypes.
 		return apitypes.NeedActionResponse{Result: "Approved, but " + v.display + " refused it: " + ownerQuote(words) + ". " + told, Link: link}, true, nil
 	}
 	var resp agentpod.IntegrationCallResponse
-	failed := ""
 	if callErr == nil && res != nil && (res.Hold != nil || res.ShellJob != nil) {
 		resp = integrationError(fmt.Sprintf("The %s integration did not finish the call; tell the owner.", v.display))
-		failed = "the integration asked for another step"
 	} else {
 		raw, err := builtinResultJSON(res, callErr)
-		resp, failed = integrationCallAnswer(v.display, raw, err)
+		resp, _ = integrationCallAnswer(v.display, raw, err)
 	}
 	for i := range resp.Content {
 		resp.Content[i] = scrub.Replace(resp.Content[i])
 	}
 	answer := strings.Join(resp.Content, "\n\n")
-	reason := cmp.Or(failed, answer)
+	// The row names what was done in the built-in's words (Run's Audit)
+	// or, failing them, by the title the owner approved; never by Run's
+	// answer, which may quote what the call read.
+	reason := h.title
 	var outside []string
 	if callErr == nil && res != nil {
-		reason = cmp.Or(res.Audit, reason)
+		reason = cmp.Or(scrub.Replace(res.Audit), reason)
 		outside = auditOutside(res.Outside, scrub)
 	}
 	quoted := fenced(clipText(answer, heldCallAnswerMax))
 	if resp.IsError {
-		s.endHeldCall(h, start, true, "approved: "+scrub.Replace(reason), outside, "Approved: "+h.title,
+		s.endHeldCall(h, start, true, "approved, then failed: "+reason, outside, "Approved: "+h.title,
 			"The owner approved it, and Kivali ran it, but the "+v.display+" integration answered with an error:\n\n"+quoted+note)
 		return apitypes.NeedActionResponse{Result: "Approved, but " + v.display + " answered with an error: " + ownerQuote(answer) + ". " + told, Link: link}, true, nil
 	}
-	s.endHeldCall(h, start, true, "approved: "+scrub.Replace(reason), outside, "Approved: "+h.title,
+	s.endHeldCall(h, start, true, "approved: "+reason, outside, "Approved: "+h.title,
 		"The owner approved it, and Kivali ran it. The "+v.display+" integration answered:\n\n"+quoted+note)
 	return apitypes.NeedActionResponse{Result: "Approved and done. " + told, Link: link}, true, nil
 }
@@ -593,10 +684,17 @@ func (s *Server) endHeldCallsOf(name, reason, words string) {
 	s.heldCalls.stopWhere(func(h *integrationHold) bool { return h.integration == name }, reason, words)
 }
 
+// The audit's reason and the agent's words for a held call ended as
+// its agent left the team.
+const (
+	reasonAgentLeft = "the agent left the team"
+	wordsAgentLeft  = "you left the team"
+)
+
 // endAgentHeldCalls ends, unrun, every call slug holds, as it leaves
 // the team.
 func (s *Server) endAgentHeldCalls(slug string) {
-	s.heldCalls.stopWhere(func(h *integrationHold) bool { return h.agent == slug }, "the agent left the team", "you left the team")
+	s.heldCalls.stopWhere(func(h *integrationHold) bool { return h.agent == slug }, reasonAgentLeft, wordsAgentLeft)
 }
 
 // integrationHoldItems are the Needs-you rows of every held call,
