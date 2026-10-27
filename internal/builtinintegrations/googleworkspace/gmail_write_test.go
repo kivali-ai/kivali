@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/quotedprintable"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
+	"github.com/kivali-ai/kivali/internal/clock"
 )
 
 // writer is a caller whose access has gmail_write on, and m besides.
@@ -332,7 +334,7 @@ func TestMessageEncoding(t *testing.T) {
 	} {
 		m := &composition{from: mail.Address{Address: "dana@example.com"}, to: []*mail.Address{{Name: "Eve\r\nBcc: evil@example.net", Address: "eve@example.org"}},
 			subject: "Hi", ownSubject: true, body: body}
-		msg, err := mail.ReadMessage(bytes.NewReader(m.message("dana")))
+		msg, err := mail.ReadMessage(bytes.NewReader(m.message("dana", monday)))
 		if err != nil {
 			t.Fatalf("%q: %v", body, err)
 		}
@@ -500,4 +502,105 @@ func TestGmailSendNotAvailable(t *testing.T) {
 	if !slices.Equal(names, []string{"create_draft", "delete_draft", "modify_labels"}) {
 		t.Errorf("tools = %v", names)
 	}
+}
+
+// Why this test exists: a display name is shown in the owner's mail
+// program in place of the address, so a name that holds an address (an
+// @), angle brackets, or an invisible or reordering character could make
+// a recipient read as someone else. Such a name is refused in words that
+// say to give a plain name or none, before anything reaches Google.
+func TestCreateDraftRefusesMisleadingNames(t *testing.T) {
+	f, _, g := newFakeGmail(t)
+	for _, name := range []string{`ceo@bank.example`, `Dana <ceo@bank.example>`, "Dana\u202e", "Da\u200bna"} {
+		entry, _ := json.Marshal(`"` + strings.ReplaceAll(name, `"`, ``) + `" <eve@example.org>`)
+		args := `{"to":[` + string(entry) + `],"subject":"s","body":"b"}`
+		res, err := callWrite(g, writer(map[string]any{}), "create_draft", args)
+		var ref *builtinintegrations.Refusal
+		if res != nil || !errors.As(err, &ref) || !strings.Contains(ref.Text, "give a plain name, or none.") {
+			t.Errorf("the name %q = %+v, %v", name, res, err)
+		}
+	}
+	if got := f.requests(); len(got) != 0 {
+		t.Errorf("Google was sent %v", got)
+	}
+}
+
+// Why this test exists: a draft with no Date header leaves the owner's
+// mail program to date it by when it was opened, so the message writes
+// its own, from the injected clock, in RFC 5322's form.
+func TestCreateDraftDatesTheMessage(t *testing.T) {
+	_, w, g := newFakeGmail(t)
+	g.Clock = clock.NewFakeAt(monday)
+	writeAnswer(t, g, writer(map[string]any{}), "create_draft", `{"to":["bob@example.com"],"subject":"Hi","body":"x"}`)
+	msg, _ := draftMessage(t, w, "r-1")
+	if got := msg.Header.Get("Date"); got != "Mon, 26 Oct 2026 09:00:00 +0000" {
+		t.Errorf("Date: %q", got)
+	}
+}
+
+// Why this test exists: a reply must be addressed by who wrote the
+// message it answers: one the owner sent goes to its To even when it
+// carries a Reply-To, which is for replies to its sender; the latest
+// message of a conversation for thread_id alone must be mail the owner
+// received or sent, never a draft, a message in Spam or one in Trash; a
+// reply to a message with a long References keeps the first and the
+// last 19 of them, 20 in all; and a reply to all that names more than
+// 100 addresses is refused in words that tell the agent to name the
+// recipients itself.
+func TestCreateDraftReplyEdges(t *testing.T) {
+	f, w, g := newFakeGmail(t)
+	replyMail(f)
+	withMail(f,
+		mailMsg{id: "m5", thread: "t5", labels: []string{"SENT"}, at: monday, from: "Dana <dana@example.com>", to: "Erin <erin@example.org>", subject: "Plans", plain: "five"},
+		mailMsg{id: "m6a", thread: "t6", labels: []string{"INBOX"}, at: monday, from: "zed@example.org", to: "dana@example.com", subject: "Six", plain: "a"},
+		mailMsg{id: "m6b", thread: "t6", labels: []string{"SPAM"}, at: monday.Add(time.Hour), from: "spam@example.org", to: "dana@example.com", subject: "Six", plain: "b"},
+		mailMsg{id: "m6c", thread: "t6", labels: []string{"TRASH"}, at: monday.Add(2 * time.Hour), from: "bin@example.org", to: "dana@example.com", subject: "Six", plain: "c"},
+		mailMsg{id: "m6d", thread: "t6", labels: []string{"DRAFT"}, at: monday.Add(3 * time.Hour), from: "dana@example.com", to: "zed@example.org", subject: "Six", plain: "d"},
+		mailMsg{id: "m7", thread: "t7", labels: []string{"INBOX"}, at: monday, from: "zed@example.org", to: "dana@example.com", subject: "Seven", plain: "g"},
+		mailMsg{id: "m8", thread: "t8", labels: []string{"INBOX"}, at: monday, from: "zed@example.org", to: "dana@example.com", subject: "Eight", plain: "h"},
+	)
+	var refs, many []string
+	for i := 1; i <= 25; i++ {
+		refs = append(refs, fmt.Sprintf("<r%d@x.example>", i))
+	}
+	for i := 1; i <= 101; i++ {
+		many = append(many, fmt.Sprintf("p%d@example.net", i))
+	}
+	for i := range f.mail {
+		switch f.mail[i].ID {
+		case "m5":
+			f.mail[i].Payload.Headers = append(f.mail[i].Payload.Headers, gmailHeader{"Reply-To", "Billing <billing@example.org>"})
+		case "m7":
+			f.mail[i].Payload.Headers = append(f.mail[i].Payload.Headers, gmailHeader{"References", strings.Join(refs, " ")})
+		case "m8":
+			f.mail[i].Payload.Headers = append(f.mail[i].Payload.Headers, gmailHeader{"Cc", strings.Join(many, ", ")})
+		}
+	}
+	dana := writer(map[string]any{})
+
+	writeAnswer(t, g, dana, "create_draft", `{"in_reply_to_message_id":"m5","body":"Any news?"}`)
+	msg, _ := draftMessage(t, w, "r-1")
+	if got := addresses(t, msg, "To"); !slices.Equal(got, []string{"Erin <erin@example.org>"}) {
+		t.Errorf("the owner's message with a Reply-To: To %q", got)
+	}
+
+	writeAnswer(t, g, dana, "create_draft", `{"thread_id":"t6","body":"Hi"}`)
+	msg, _ = draftMessage(t, w, "r-2")
+	if got := msg.Header.Get("In-Reply-To"); got != "<m6a@example.org>" {
+		t.Errorf("thread t6 replied to %q, not its only received message", got)
+	}
+
+	writeAnswer(t, g, dana, "create_draft", `{"in_reply_to_message_id":"m7","body":"Hi"}`)
+	msg, _ = draftMessage(t, w, "r-3")
+	want := []string{"<r1@x.example>"}
+	for i := 8; i <= 25; i++ {
+		want = append(want, fmt.Sprintf("<r%d@x.example>", i))
+	}
+	want = append(want, "<m7@example.org>")
+	if got := strings.Fields(msg.Header.Get("References")); !slices.Equal(got, want) {
+		t.Errorf("References: %v, want %v", got, want)
+	}
+
+	writeRefused(t, g, dana, "create_draft", `{"in_reply_to_message_id":"m8","reply_all":true,"body":"Hi"}`,
+		"Replying to all of message m8 names 102 addresses, and an email goes to at most 100; name the recipients in to (and cc) yourself.")
 }

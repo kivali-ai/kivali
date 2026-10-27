@@ -42,8 +42,7 @@ func TestManifest(t *testing.T) {
 		t.Errorf("connection = %+v", c)
 	}
 	wantScopes := []string{
-		"https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/gmail.compose",
-		"https://www.googleapis.com/auth/gmail.labels", "https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/calendar.events",
+		"https://www.googleapis.com/auth/gmail.modify", "https://www.googleapis.com/auth/calendar.events",
 		"https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/documents",
 		"https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/drive.file",
 	}
