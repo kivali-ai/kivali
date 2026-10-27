@@ -22,7 +22,8 @@
         "setup_only": true
       }
     ],
-    "no_return": false
+    "no_return": false,
+    "copy": []
   },
   "expires_at": "2026-10-21T10:10:00Z"
 }

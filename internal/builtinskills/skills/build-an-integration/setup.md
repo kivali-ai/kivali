@@ -76,7 +76,7 @@ owner reads as why the setup did not finish, and `try.py` as a
 - "<Integration>'s setup named a page on <host>, which its manifest
   does not declare"
 - "<Integration>'s setup asked for <key>, which its manifest does not
-  declare"; "<Integration>'s setup asked for a form with no fields"
+  declare"
 - "<Integration>'s setup tried to keep <key>, which its manifest does
   not declare"
 - "<Integration>'s setup gave no next step"; "<Integration>'s setup
@@ -142,7 +142,7 @@ The answer is one step, and optionally what to keep and to carry:
 
 | `step` holds | Shape |
 | --- | --- |
-| exactly one of | `"form": {"words", "fields": [keys]}`; `"go": {"words", "url", "post", "no_return", "stateless"}` (`post` an object of strings, or lists of strings for a key posted more than once; the rest optional); `"wait": {"words", "url", "code"}` (`url` and `code` optional); `"done": true` |
+| exactly one of | `"form": {"words", "fields": [keys], "url", "copy": [values]}` (`fields` may be empty, for a step the owner takes on the service; `url` and `copy` optional); `"go": {"words", "url", "post", "no_return", "stateless"}` (`post` an object of strings, or lists of strings for a key posted more than once; the rest optional); `"wait": {"words", "url", "code"}` (`url` and `code` optional); `"done": true` |
 | optionally | `"keep": {key: value}` and `"state": {key: value}`, strings |
 
 An error is a JSON-RPC error, and its message is what the owner reads
@@ -162,11 +162,26 @@ why. Start the setup again once it runs".
 
 For what only the owner knows or can get: a key from the service's
 settings, an account or workspace name, a token the service shows once.
+And, with no fields, for something the owner does on the service by
+hand where nothing comes back to check: making a project, turning on
+an API, registering an address.
 
-- The page shows the step's words, then "<Integration> asks for" and
-  each field: its title, its words as the hint (with "Used during
-  setup and never kept." for a setup-only one), a password box for a
-  secret one. Continue and Cancel.
+- The page shows the step's words, then the page to open (`url`, on a
+  declared host, opened in a new tab so the owner comes back to the
+  flow) and what to copy there (`copy`, each with a Copy button), then
+  "<Integration> asks for" and each field: its title, its words as the
+  hint (with "Used during setup and never kept." for a setup-only
+  one), a password box for a secret one. Continue and Cancel.
+- A step the owner takes by hand is one thing to do, in words under
+  200 characters that name what to choose on the page, with the page
+  linked: `{"words": "Create a project, or pick one you have.",
+  "fields": [], "url": "https://console.example/projects/new"}`. Walk
+  the owner through a console one page at a time rather than listing
+  every step in `setup_notes`; keep the notes to what the setup is
+  for and how long it takes. What the owner copies to the page, such
+  as the address the service must send the browser back to, goes in
+  `copy`, never in the words: `answer.addresses` has every address
+  the team signs in at.
 - Ask only declared fields, and no more than the next call needs.
 - Check the answer at once, against the service where you can, and
   answer the same Form again with words saying what was wrong ("Deals

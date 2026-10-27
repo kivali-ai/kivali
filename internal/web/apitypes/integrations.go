@@ -398,8 +398,9 @@ type SetupFlowStep struct {
 	Kind SetupFlowStepKind `json:"kind"`
 	// Words say what to do.
 	Words string `json:"words"`
-	// Fields is a form's fields, in order; empty for the other kinds.
-	// Answer them with POST .../setup/answer.
+	// Fields is a form's fields, in order; empty for a form step you take
+	// on the service, and for the other kinds. Answer them with POST
+	// .../setup/answer.
 	Fields []SetupField `json:"fields"`
 	// StartURL is, for a go step, where the page sends the browser:
 	// /connect/start?flow=<id>, which Kivali Desktop opens in the
@@ -409,13 +410,20 @@ type SetupFlowStep struct {
 	// nowhere afterwards (a settings page): the page opens start_url in
 	// a new tab and stays, and the flow goes on at once.
 	NoReturn bool `json:"no_return"`
-	// URL is, for a wait step, a page on the service to open meanwhile.
+	// URL is, for a form or a wait step, a page on the service to open
+	// meanwhile, in a new tab.
 	URL *string `json:"url,omitempty"`
-	// Host is the host the step sends you to: a go step's, or a wait
-	// step's page's.
+	// Host is the host the step sends you to: a go step's, or a form or
+	// a wait step's page's.
 	Host *string `json:"host,omitempty"`
 	// Code is, for a wait step, a code to enter on its page.
 	Code *string `json:"code,omitempty"`
+	// Copy is, for a form step, what to copy to its page, such as an
+	// address to register, each with a Copy button; empty for nothing,
+	// and for the other kinds. A form step with no fields is one you
+	// take on the service: its words, its page and what to copy there,
+	// then Continue.
+	Copy []string `json:"copy"`
 }
 
 // SetupFlowProgress is how far a running step has got, in the

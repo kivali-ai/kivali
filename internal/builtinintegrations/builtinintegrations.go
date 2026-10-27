@@ -343,14 +343,26 @@ type Step struct {
 	State map[string]string
 }
 
-// Form is a step the owner fills in. Core draws the fields under the
-// integration's name.
+// Form is a step the owner takes on Kivali's page: fields to fill in,
+// which core draws under the integration's name, or something to do on
+// the service by hand, with its page linked and the values to enter
+// there. Continue hands what was entered to the next call.
 type Form struct {
 	// Words say what to do, for the owner.
 	Words string
 	// Fields names the fields to ask for, in the order drawn: keys of
-	// the manifest's setup.fields.
+	// the manifest's setup.fields. None asks for nothing: the step is
+	// its words, its page and its values, and Continue alone.
 	Fields []string
+	// URL is a page on the service for the owner to open meanwhile, on
+	// one of setup.hosts, opened in a new tab so the flow stays; empty
+	// for none.
+	URL string
+	// Copy is what the owner copies to that page, such as an address to
+	// register, each shown with a Copy button. Shown as given and never
+	// scrubbed: Setup chose to show it, so it is never a value Setup
+	// keeps secret.
+	Copy []string
 }
 
 // Go is a step that sends the owner's browser to the service, by a

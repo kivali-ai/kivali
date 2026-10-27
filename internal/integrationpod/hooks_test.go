@@ -54,6 +54,8 @@ func TestParseSetupResult(t *testing.T) {
 	}{
 		{"form", `{"step":{"form":{"words":"Paste the key.","fields":["key"]},"state":{"at":"key"}}}`,
 			builtinintegrations.Step{Form: &builtinintegrations.Form{Words: "Paste the key.", Fields: []string{"key"}}, State: map[string]string{"at": "key"}}},
+		{"form by hand", `{"step":{"form":{"words":"Register the address.","fields":[],"url":"https://app.example/apps/new","copy":["https://team.example/connect/callback"]}}}`,
+			builtinintegrations.Step{Form: &builtinintegrations.Form{Words: "Register the address.", Fields: []string{}, URL: "https://app.example/apps/new", Copy: []string{"https://team.example/connect/callback"}}}},
 		{"go", `{"step":{"go":{"words":"Approve it.","url":"https://app.example/new","post":{"manifest":"{}","scope":["a","b"]},"no_return":true,"stateless":true},"keep":{"app_id":"7"}}}`,
 			builtinintegrations.Step{Go: &builtinintegrations.Go{Words: "Approve it.", URL: "https://app.example/new", Post: url.Values{"manifest": {"{}"}, "scope": {"a", "b"}}, NoReturn: true, Stateless: true}, Keep: map[string]string{"app_id": "7"}}},
 		{"wait", `{"step":{"wait":{"words":"Enter the code.","url":"https://app.example/device","code":"WDJB-MJHT"}},"_meta":{}}`,

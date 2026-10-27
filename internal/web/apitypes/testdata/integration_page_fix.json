@@ -165,7 +165,8 @@
       "no_return": false,
       "url": "https://github.com/login/device?user_code=WDJB-MJHT",
       "host": "github.com",
-      "code": "WDJB-MJHT"
+      "code": "WDJB-MJHT",
+      "copy": []
     },
     "expires_at": "2026-10-21T10:10:00Z"
   },

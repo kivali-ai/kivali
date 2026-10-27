@@ -13,8 +13,10 @@
 // server's clock, first with an empty Answer and then with what each
 // step gave back, until it answers Done or an error:
 //
-//   - Form: core draws the declared fields; POST .../setup/answer hands
-//     what the owner entered to the next call as Answer.Form.
+//   - Form: core draws the declared fields, a page to open and values
+//     to copy there; POST .../setup/answer hands what the owner entered
+//     to the next call as Answer.Form. A Form with no fields is a step
+//     the owner takes on the service by hand, and Continue goes on.
 //   - Go: the page sends the browser to GET /connect/start?flow=<id>,
 //     which sets the flow's cookie and sends it on to the service (a
 //     303, or a page whose form posts itself). The service sends it
@@ -524,12 +526,19 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 	}
 	// A step's words are scrubbed whole, then cut: a bundle's step is
 	// someone else's text, and the page shows only so much. A Wait's
-	// code is cut and not scrubbed: the driver chose to show it, for the
-	// owner to enter on the service's page.
+	// code and a Form's values to copy are cut and not scrubbed: the
+	// driver chose to show them, for the owner to enter on the
+	// service's page.
 	words := func(w string) string { return clipRunes(scrub.Replace(w), signInWordsRunes) }
 	switch st := run.step; {
 	case run.state == apitypes.SetupFlowStateForm && st.Form != nil:
-		step := &apitypes.SetupFlowStep{Kind: apitypes.SetupFlowStepKindForm, Words: words(st.Form.Words), Fields: []apitypes.SetupField{}}
+		step := &apitypes.SetupFlowStep{
+			Kind: apitypes.SetupFlowStepKindForm, Words: words(st.Form.Words), Fields: []apitypes.SetupField{}, Copy: []string{},
+			URL: optString(scrub.Replace(st.Form.URL)), Host: optString(setupURLHost(st.Form.URL)),
+		}
+		for _, v := range st.Form.Copy {
+			step.Copy = append(step.Copy, clipRunes(v, setupCopyRunes))
+		}
 		for _, k := range st.Form.Fields {
 			if f, ok := run.spec.fields.Field(k); ok {
 				step.Fields = append(step.Fields, apitypes.SetupField{
@@ -540,12 +549,12 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 		out.Step = step
 	case run.state == apitypes.SetupFlowStateGo && st.Go != nil:
 		out.Step = &apitypes.SetupFlowStep{
-			Kind: apitypes.SetupFlowStepKindGo, Words: words(st.Go.Words), Fields: []apitypes.SetupField{},
+			Kind: apitypes.SetupFlowStepKindGo, Words: words(st.Go.Words), Fields: []apitypes.SetupField{}, Copy: []string{},
 			StartURL: optString(connectStartPath + "?flow=" + run.id), Host: optString(setupURLHost(st.Go.URL)), NoReturn: st.Go.NoReturn,
 		}
 	case run.state == apitypes.SetupFlowStateWait && st.Wait != nil:
 		out.Step = &apitypes.SetupFlowStep{
-			Kind: apitypes.SetupFlowStepKindWait, Words: words(st.Wait.Words), Fields: []apitypes.SetupField{},
+			Kind: apitypes.SetupFlowStepKindWait, Words: words(st.Wait.Words), Fields: []apitypes.SetupField{}, Copy: []string{},
 			URL: optString(scrub.Replace(st.Wait.URL)), Host: optString(setupURLHost(st.Wait.URL)),
 			Code: optString(clipRunes(st.Wait.Code, setupCodeRunes)),
 		}
@@ -951,20 +960,22 @@ func (spec setupSpec) check(display string, step builtinintegrations.Step) error
 		return fmt.Errorf("%s's setup gave more to keep and carry than Kivali holds for a step (%d KiB)", display, setupCarryMax>>10)
 	}
 	switch {
-	case step.Go != nil && len(step.Go.URL) > setupURLMax, step.Wait != nil && len(step.Wait.URL) > setupURLMax:
+	case step.Form != nil && len(step.Form.URL) > setupURLMax, step.Go != nil && len(step.Go.URL) > setupURLMax, step.Wait != nil && len(step.Wait.URL) > setupURLMax:
 		return fmt.Errorf("%s's setup named an address longer than %d characters", display, setupURLMax)
+	case step.Form != nil && len(step.Form.Copy) > setupCopyMax:
+		return fmt.Errorf("%s's setup gave more than %d values to copy", display, setupCopyMax)
 	case step.Go != nil && valuesBytes(step.Go.Post) > setupCarryMax:
 		return fmt.Errorf("%s's setup gave a form to post larger than Kivali sends (%d KiB)", display, setupCarryMax>>10)
 	}
 	switch {
 	case step.Form != nil:
-		if len(step.Form.Fields) == 0 {
-			return fmt.Errorf("%s's setup asked for a form with no fields", display)
-		}
 		for _, k := range step.Form.Fields {
 			if _, ok := spec.fields.Field(k); !ok {
 				return fmt.Errorf("%s's setup asked for %s, which its manifest does not declare", display, k)
 			}
+		}
+		if step.Form.URL != "" && !setupURLAllowed(step.Form.URL, spec.hosts) {
+			return fmt.Errorf("%s's setup named a page on %s, which its manifest does not declare", display, setupURLWords(step.Form.URL))
 		}
 	case step.Go != nil:
 		if !setupURLAllowed(step.Go.URL, spec.hosts) {
@@ -983,13 +994,16 @@ func (spec setupSpec) check(display string, step builtinintegrations.Step) error
 }
 
 // Bounds of a step, which for a bundle is someone else's code: the
-// longest address a Go or a Wait may name, the most a step may keep and
-// carry in its State together, and the most a Go may post; and the
-// longest Wait code the page shows.
+// longest address a Form, a Go or a Wait may name, the most a step may
+// keep and carry in its State together, and the most a Go may post;
+// the longest Wait code the page shows; and the most values a Form may
+// give to copy, and the longest the page shows of each.
 const (
 	setupURLMax    = 4096
 	setupCarryMax  = 64 << 10
 	setupCodeRunes = 64
+	setupCopyMax   = 10
+	setupCopyRunes = 1024
 )
 
 // mapBytes is the size of m's keys and values.
