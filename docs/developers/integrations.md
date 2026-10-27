@@ -4377,7 +4377,9 @@ In-Reply-To); for `thread_id` alone, the thread's (`threads/{id}` in
 the same format), taking its latest message by `internalDate` that
 the access includes and is not a draft, in Spam or in Trash. The message must be one the
 access includes (`call.readable`), refused as reading refuses one, and
-in `thread_id` when both are given. `In-Reply-To` is its Message-ID,
+in `thread_id` when both are given. A reply by `in_reply_to_message_id`
+refuses a draft too, and Spam or Trash unless the access names them (as
+`call.readable` decides). `In-Reply-To` is its Message-ID,
 and `References` its References (else its In-Reply-To) then its
 Message-ID, the first and the last 19 kept past 20. The subject is the
 agent's, or the message's when it gives none, with "Re: " before it

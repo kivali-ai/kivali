@@ -258,6 +258,9 @@ func (c *call) replyTo(ctx context.Context, m *composition, reply, thread string
 		if !c.readable(r) {
 			return notIncluded("Message", reply)
 		}
+		if slices.Contains(r.LabelIDs, "DRAFT") {
+			return badArgument("Message " + reply + " is a draft; reply to a sent or received message.")
+		}
 		if thread != "" && r.ThreadID != thread {
 			return badArgument(fmt.Sprintf("Message %s is not in thread %s; give one of them.", reply, thread))
 		}
@@ -765,13 +768,16 @@ func modifyLabels(ctx context.Context, c *call) (any, error) {
 					"the access does not include the label "+l)
 			}
 		}
-		var m gmailMessage
-		if err := c.g.get(ctx, c.token, gmailAPI, messagePath(id)+"?format=minimal", &m); err != nil {
-			return nil, err
-		}
-		if !c.readable(m) {
-			return nil, notIncluded("Message", id)
-		}
+	}
+	// The message is read whatever the access names, so that mail in
+	// Spam or Trash, which the access reads only when it names them, is
+	// not changed (an INBOX add would pull it out).
+	var m gmailMessage
+	if err := c.g.get(ctx, c.token, gmailAPI, messagePath(id)+"?format=minimal", &m); err != nil {
+		return nil, err
+	}
+	if !c.readable(m) {
+		return nil, notIncluded("Message", id)
 	}
 	change := struct {
 		Add    []string `json:"addLabelIds,omitempty"`
