@@ -183,6 +183,13 @@ func (g *GoogleWorkspace) change(ctx context.Context, token string, a api, metho
 // answer read, Google's error answer as an apiError, and the JSON
 // answer decoded into out (nil to read none).
 func (g *GoogleWorkspace) send(ctx context.Context, token, method string, a api, path string, body []byte, most int, out any) error {
+	return g.sendIfMatch(ctx, token, method, a, path, body, most, out, "")
+}
+
+// sendIfMatch is send with the header If-Match: etag, when etag is not
+// "": Google then does it only to the version of the resource etag
+// names, and answers 412 for any other.
+func (g *GoogleWorkspace) sendIfMatch(ctx context.Context, token, method string, a api, path string, body []byte, most int, out any, etag string) error {
 	base, err := g.base(a)
 	if err != nil {
 		return err
@@ -201,6 +208,9 @@ func (g *GoogleWorkspace) send(ctx context.Context, token, method string, a api,
 	}
 	req.Header.Set("User-Agent", "Kivali")
 	req.Header.Set("Authorization", "Bearer "+token)
+	if etag != "" {
+		req.Header.Set("If-Match", etag)
+	}
 	resp, err := g.httpClient().Do(req)
 	if err != nil {
 		return transportError(ctx, err, token)

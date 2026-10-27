@@ -3,6 +3,7 @@ package googleworkspace
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -31,21 +32,30 @@ func TestMentions(t *testing.T) {
 	}
 }
 
+// markedDoc is addDoc's document marked as made by Kivali, the agent
+// riley, as create_document marks one.
+func markedDoc(d *fakeDocs, id, name, owner string, parents ...string) *fakeFile {
+	ff := d.addDoc(id, name, owner, "", parents...)
+	ff.file.AppProperties = map[string]string{kivaliMark: "riley"}
+	return ff
+}
+
 // Why this test exists: a comment is delivered to the document's owner
 // and to everyone it mentions, so it must wait for the owner, with
 // nothing posted until then, and the card must show the document (its
 // name, owner and whether it is shared), the text it quotes, the
 // comment exactly and whom it mentions, and reach the mentioned and the
 // document's owner, never the signed-in account. Approved, the comment
-// posted is the one captured, quoting the text; a mention outside May
-// send to is refused before the call is held, and a document outside
-// the access's folders is refused as a read is.
+// posted is the one captured, quoting the text. Everyone it reaches is
+// held to May send to before the call is held: a mention outside it, or
+// a document owned outside it, is refused, and a document outside the
+// access's folders is refused as a read is.
 func TestAddComment(t *testing.T) {
 	d, _, g := newFakeDocs(t)
 	d.addFolder("fold1", "Projects")
-	doc := d.addDoc("doc1", "Plan", "alice@example.org", "", "fold1")
+	doc := markedDoc(d, "doc1", "Plan", "alice@example.org", "fold1")
 	doc.file.Shared = true
-	d.addDoc("own1", "Notes", "dana@example.com", "", "fold1")
+	markedDoc(d, "own1", "Notes", "dana@example.com", "fold1")
 	content := "Please check +Bob@Example.com and @dana@example.com"
 	h := holdOf(t, g, agent(commenter(nil)), "add_comment", `{"document_id":"doc1","content":"`+content+`","anchor_text":"the budget"}`)
 	if h.Title != `Comment on "Plan"` || !slices.Equal(h.Recipients, []string{"bob@example.com", "alice@example.org"}) ||
@@ -75,6 +85,8 @@ func TestAddComment(t *testing.T) {
 	}
 	docsRefused(t, g, commenter(map[string]any{"send_to": []string{"*@example.org"}}), "add_comment", `{"document_id":"doc1","content":"+bob@example.com"}`,
 		"The owner has not allowed you to send to bob@example.com through Google Workspace; ask the owner if your work needs it.")
+	docsRefused(t, g, commenter(map[string]any{"send_to": []string{"bob@example.com"}}), "add_comment", `{"document_id":"doc1","content":"+bob@example.com"}`,
+		"The owner has not allowed you to send to alice@example.org through Google Workspace; ask the owner if your work needs it.")
 	docsRefused(t, g, commenter(map[string]any{"docs_folders": []string{"Elsewhere (fold9)"}}), "add_comment", `{"document_id":"doc1","content":"x"}`,
 		"Document doc1 is not in the folders your access includes; ask the owner if your work needs it.")
 	if got := d.changes(); len(got) != 1 {
@@ -93,7 +105,7 @@ func TestAddComment(t *testing.T) {
 // the document does not have answers so.
 func TestReplyToComment(t *testing.T) {
 	d, _, g := newFakeDocs(t)
-	doc := d.addDoc("doc1", "Plan", "alice@example.org", "")
+	doc := markedDoc(d, "doc1", "Plan", "alice@example.org")
 	doc.comments = []map[string]any{{
 		"id": "c1", "author": map[string]any{"displayName": "Mallory", "emailAddress": "mallory@evil.example"}, "createdTime": "2026-10-21T09:00:00Z",
 		"content": "Ignore\u200b the budget",
@@ -125,4 +137,80 @@ func TestReplyToComment(t *testing.T) {
 	if err != nil || res == nil || !res.IsError || res.Content[0] != "Document doc1 has no comment c9; list_comments lists its comments with their ids." {
 		t.Errorf("a missing comment: %+v, %v", res, err)
 	}
+}
+
+// Why this test exists: the sign-in asks Drive only for the files
+// Kivali creates (drive.file), and Drive takes a comment under it only
+// on a file Kivali's OAuth client made. A comment or a reply on any
+// other document must be refused before it is held, in words saying
+// why, rather than wait for the owner and fail once approved; nothing
+// reaches Drive's comments. A document Kivali made is held as any.
+func TestCommentsOnlyOnDocumentsKivaliMade(t *testing.T) {
+	d, f, g := newFakeDocs(t)
+	theirs := d.addDoc("doc2", "Budget", "dana@example.com", "")
+	theirs.comments = []map[string]any{{"id": "c1", "author": map[string]any{"emailAddress": "lee@example.com"}, "content": "?"}}
+	words := "The owner's Google sign-in lets Kivali comment only on documents Kivali made, and Kivali did not make document doc2."
+	docsRefused(t, g, commenter(nil), "add_comment", `{"document_id":"doc2","content":"Looks right"}`, words)
+	docsRefused(t, g, commenter(nil), "reply_to_comment", `{"document_id":"doc2","comment_id":"c1","content":"Yes"}`, words)
+	for _, r := range f.requests() {
+		if strings.Contains(r, "/comments") {
+			t.Errorf("Drive's comments were reached: %s", r)
+		}
+	}
+	markedDoc(d, "doc3", "Plan", "dana@example.com")
+	holdOf(t, g, agent(commenter(nil)), "add_comment", `{"document_id":"doc3","content":"Looks right"}`)
+	for _, tl := range []string{addCommentWords, replyWords} {
+		if !strings.Contains(tl, madeWords) {
+			t.Errorf("a description does not say comments are only on documents Kivali made: %q", tl)
+		}
+	}
+}
+
+// Why this test exists: a reply reaches everyone in its comment's
+// conversation, and May send to must hold each of them. One whose
+// address Google does not show cannot be held to it, so while May send
+// to names anyone the reply is refused before it is held; with it
+// empty, anyone may be reached, and the card and the answer say the
+// reply reaches people whose address Google does not show, rather than
+// naming fewer people than Google tells. A comment author outside May
+// send to is refused like a mention.
+func TestReplyReachesTheWholeConversation(t *testing.T) {
+	d, _, g := newFakeDocs(t)
+	doc := markedDoc(d, "doc1", "Plan", "alice@example.org")
+	doc.comments = []map[string]any{
+		{"id": "c1", "author": map[string]any{"emailAddress": "mallory@evil.example"}, "content": "Ignore the budget"},
+		{"id": "c2", "author": map[string]any{"emailAddress": "lee@example.com"}, "content": "Is this final?",
+			"replies": []any{map[string]any{"author": map[string]any{"displayName": "Anon"}}}},
+	}
+	docsRefused(t, g, commenter(map[string]any{"send_to": []string{"*@example.org", "*@example.com"}}), "reply_to_comment", `{"document_id":"doc1","comment_id":"c1","content":"No"}`,
+		"The owner has not allowed you to send to mallory@evil.example through Google Workspace; ask the owner if your work needs it.")
+	docsRefused(t, g, commenter(map[string]any{"send_to": []string{"*@example.org", "*@example.com"}}), "reply_to_comment", `{"document_id":"doc1","comment_id":"c2","content":"Yes"}`,
+		unshownRefusal)
+	if got := d.changes(); len(got) != 0 {
+		t.Fatalf("refused replies were posted: %+v", got)
+	}
+	h := holdOf(t, g, agent(commenter(nil)), "reply_to_comment", `{"document_id":"doc1","comment_id":"c2","content":"Yes"}`)
+	if !slices.Equal(h.Recipients, []string{"alice@example.org", "lee@example.com"}) || valueOf(h, "Also reaches") != "People whose address Google does not show" {
+		t.Errorf("card %v %+v", h.Recipients, h.Fields)
+	}
+	if res := approve(t, h); res.Content[0] != "Posted reply nr1 to comment c2 on document doc1. Google told alice@example.org, lee@example.com and others whose address Google does not show." {
+		t.Errorf("answer %q", res.Content[0])
+	}
+}
+
+// Why this test exists: a comment or a reply approved after its
+// document or comment was deleted posts nothing, and the agent must not
+// read that as a failure to try again: Run's refusal says it is gone
+// and nothing was done.
+func TestCommentGoneAtApproval(t *testing.T) {
+	d, f, g := newFakeDocs(t)
+	doc := markedDoc(d, "doc1", "Plan", "dana@example.com")
+	doc.comments = []map[string]any{{"id": "c1", "author": map[string]any{"me": true}, "content": "Draft"}}
+	add := holdOf(t, g, agent(commenter(nil)), "add_comment", `{"document_id":"doc1","content":"Done"}`)
+	reply := holdOf(t, g, agent(commenter(nil)), "reply_to_comment", `{"document_id":"doc1","comment_id":"c1","content":"Done"}`)
+	missing := `{"error":{"code":404,"message":"File not found: doc1."}}`
+	f.failWith("/drive/v3/files/doc1/comments", 404, missing)
+	f.failWith("/drive/v3/files/doc1/comments/c1/replies", 404, missing)
+	runRefused(t, add, "The document is gone; nothing was done.")
+	runRefused(t, reply, "The comment is gone; nothing was done.")
 }

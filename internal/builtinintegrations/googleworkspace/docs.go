@@ -109,7 +109,7 @@ var docsActions = []action{
 	{
 		name:             actionAddComment,
 		description:      addCommentWords,
-		ownerDescription: "Ask to comment on a document. The comment is posted only once you approve it.",
+		ownerDescription: "Ask to comment on a document Kivali made. The comment is posted only once you approve it.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id"},
 			"content":     map[string]string{"type": "string", "description": "the comment's text, mentioning people as +address"},
@@ -121,7 +121,7 @@ var docsActions = []action{
 	{
 		name:             actionReplyToComment,
 		description:      replyWords,
-		ownerDescription: "Ask to reply to a comment on a document. The reply is posted only once you approve it.",
+		ownerDescription: "Ask to reply to a comment on a document Kivali made. The reply is posted only once you approve it.",
 		schema: schema(map[string]any{
 			"document_id": map[string]string{"type": "string", "description": "the document's id"},
 			"comment_id":  map[string]string{"type": "string", "description": "the comment's id, as list_comments lists it"},

@@ -45,9 +45,10 @@ const timeWords = "RFC 3339 with its offset, such as 2026-10-27T09:00:00+01:00"
 const ownWords = "the owner's own calendars: the primary calendar, and those whose role is owner and whose id ends in " + groupCalendarSuffix
 
 // calendarActions is Calendar's actions, read, write, then send. A
-// create_event or update_event call that sets or changes who is
-// invited, and an update_event or delete_event call on an event that
-// has attendees other than the owner or another organizer, is a send
+// create_event call that invites anyone but the owner, an update_event
+// call that changes who is invited, and an update_event or delete_event
+// call on an event that has attendees other than the owner or another
+// organizer, is a send
 // (isSend, calendar_write.go), which also needs the send switch and
 // waits for the owner's approval; the rest of each is a write, so each
 // is one action under the write switch.
@@ -99,7 +100,7 @@ var calendarActions = []action{
 	},
 	{
 		name:             actionCreateEvent,
-		description:      "Create an event on one of " + ownWords + "; Google emails no one about it. start and end are in " + timeWords + ", end after start; for an all-day event, both are dates such as 2026-10-27, end being its last day (the same as start for one day), and all_day may say so. time_zone is an IANA time zone such as Europe/London; the calendar's own when left out. calendar_id is the calendar's id as list_calendars gives it; without it, the primary calendar. Kivali marks the event as one it created, which delete_event looks for, and answers its id. With no attendees, Google emails no one about it. attendees invites people, which is a send: Google invites each of them once the owner approves, and every attendee must be one the owner allows you to send to." + sendWaitsWords,
+		description:      "Create an event on one of " + ownWords + "; Google emails no one about it. start and end are in " + timeWords + ", end after start; for an all-day event, both are dates such as 2026-10-27, end being its last day (the same as start for one day), and all_day may say so. time_zone is an IANA time zone such as Europe/London; the calendar's own when left out. calendar_id is the calendar's id as list_calendars gives it; without it, the primary calendar. Kivali marks the event as one it created, which delete_event looks for, and answers its id. With no attendees, Google emails no one about it. attendees invites people, which is a send: Google invites each of them once the owner approves, and every attendee must be one the owner allows you to send to. Attendees that are only the owner's own addresses invite no one else, and Google emails no one about them." + sendWaitsWords,
 		ownerDescription: "Create an event on one of your own calendars, telling no one. One that invites people waits for your approval.",
 		schema: schema(map[string]any{
 			"calendar_id": map[string]string{"type": "string", "description": "the calendar's id, as list_calendars gives it; the primary calendar when left out"},
@@ -117,7 +118,7 @@ var calendarActions = []action{
 	},
 	{
 		name:             actionUpdateEvent,
-		description:      "Change an event on one of " + ownWords + ", by the calendar's id and the event's. Only the fields you give change: title, start, end, time_zone, description, location and all_day, each as create_event takes it, and attendees, the whole list of addresses it invites; a start or end given alone keeps the other as it is, and to turn an event into an all-day one or back, give both. A change to an event the owner organized that has no attendees other than the owner, giving no attendees or the event's own, is a write, and Google emails no one about it. Changing who an event invites, or changing an event that has other attendees or another organizer, is a send: Google tells the people it reaches once the owner approves, and everyone it adds must be one the owner allows you to send to." + sendWaitsWords,
+		description:      "Change an event on one of " + ownWords + ", by the calendar's id and the event's. Only the fields you give change: title, start, end, time_zone, description, location and all_day, each as create_event takes it, and attendees, the whole list of addresses it invites; a start or end given alone keeps the other as it is, and to turn an event into an all-day one or back, give both. A change to an event the owner organized that has no attendees other than the owner, giving no attendees or the event's own, is a write, and Google emails no one about it. Changing who an event invites, or changing an event that has other attendees or another organizer, is a send: Google tells the people it reaches once the owner approves (its attendees after the change, those it removes and its organizer), and each must be one the owner allows you to send to. Changing who an event invites is refused when Google lists only some of its attendees or shows no address for one. If the event changes before the owner approves, nothing is done." + sendWaitsWords,
 		ownerDescription: "Change an event on one of your own calendars, telling no one when it invites no one but you. Changing who it invites, or an event that invites others, waits for your approval.",
 		schema: schema(map[string]any{
 			"calendar_id": map[string]string{"type": "string", "description": "the calendar's id, as list_calendars gives it"},
@@ -136,7 +137,7 @@ var calendarActions = []action{
 	},
 	{
 		name:             actionDeleteEvent,
-		description:      "Delete an event Kivali created on this account, from one of " + ownWords + ", by the calendar's id and the event's. An event Kivali did not create is refused. Deleting one that has no attendees other than the owner is a write, and Google emails no one about it. Deleting one that has other attendees or another organizer is a send: Google tells them once the owner approves." + sendWaitsWords,
+		description:      "Delete an event Kivali created on this account, from one of " + ownWords + ", by the calendar's id and the event's. An event Kivali did not create is refused. Deleting one that has no attendees other than the owner is a write, and Google emails no one about it. Deleting one that has other attendees or another organizer is a send: Google tells them once the owner approves, and each must be one the owner allows you to send to. If the event changes before the owner approves, nothing is done." + sendWaitsWords,
 		ownerDescription: "Delete an event Kivali created on this account, on one of your own calendars, telling no one when it invites no one but you. Deleting one that invites others waits for your approval.",
 		schema: schema(map[string]any{
 			"calendar_id": map[string]string{"type": "string", "description": "the calendar's id, as list_calendars gives it"},
@@ -147,7 +148,7 @@ var calendarActions = []action{
 	},
 	{
 		name:             actionRespondToInvitation,
-		description:      "Answer an invitation for the owner, on one of " + ownWords + ", by the calendar's id and the event's: response is accepted, declined or tentative, and comment a note to the organizer. Only the owner's own answer changes, and Google tells the organizer once the owner approves. An event the owner organized, or one that does not invite the owner, is refused." + waitsWords,
+		description:      "Answer an invitation for the owner, on one of " + ownWords + ", by the calendar's id and the event's: response is accepted, declined or tentative, and comment a note to the organizer. Only the owner's own answer changes, and Google tells the organizer once the owner approves; the organizer must be one the owner allows you to send to. An event the owner organized, or one that does not invite the owner, is refused." + waitsWords,
 		ownerDescription: "Ask to answer an invitation: yes, no or maybe. The answer goes only once you approve it.",
 		schema: schema(map[string]any{
 			"calendar_id": map[string]string{"type": "string", "description": "the calendar's id, as list_calendars gives it"},
@@ -459,6 +460,7 @@ func (cc *calCall) owner(ctx context.Context) (calOwner, error) {
 // (calendars/{id}/events/{id}).
 type calEvent struct {
 	ID               string        `json:"id"`
+	Etag             string        `json:"etag"`
 	Status           string        `json:"status"`
 	Summary          string        `json:"summary"`
 	Description      string        `json:"description"`

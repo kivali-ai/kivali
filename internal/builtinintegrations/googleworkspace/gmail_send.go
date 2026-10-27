@@ -31,7 +31,7 @@ import (
 // The descriptions of Gmail's sends, which the agent reads.
 const (
 	sendEmailWords = "Ask the owner to send an email from the owner's Gmail. Give to, cc and bcc as lists, one address an entry, a subject, and body as plain text; to reply, give in_reply_to_message_id, or thread_id alone, which must be in the labels your access includes: the reply joins its conversation and is addressed as create_draft addresses one. The email goes to the addresses alone, with no names: a name given with an address is left out. Every address must be one the owner allows you to send to." + waitsWords
-	sendDraftWords = "Ask the owner to send a draft in the owner's Gmail, by its id: one create_draft wrote, or one the owner wrote. It is sent as it is when you ask, and then deleted from Drafts. Every address it names must be one the owner allows you to send to. A draft with attachments is refused: the owner can send it from Gmail." + waitsWords
+	sendDraftWords = "Ask the owner to send a draft in the owner's Gmail, by its id: one create_draft wrote, or one the owner wrote. It is sent as it is when you ask, and then deleted from Drafts. Every address it names must be one the owner allows you to send to. A draft with attachments, with more than one text or formatted part or a part of another kind, or holding invisible characters, is refused, since the owner could not see all of it before approving: the owner can send it from Gmail." + waitsWords
 )
 
 // sendPath is messages.send.
@@ -117,9 +117,10 @@ func repliedWords(from, date, subject string) string {
 // sendEmail holds the email the arguments describe (readComposition) for
 // the owner's approval. Names are left out of its addresses, so the
 // card's plain addresses are what goes; every address must be one
-// send_to allows. The message is built now, without Kivali's mark,
-// dated now; Run sends it (messages.send), in the replied message's
-// thread for a reply.
+// send_to allows. A reply's card names the message id its In-Reply-To
+// and References end with (Threading). The message is built now,
+// without Kivali's mark, dated now; Run sends it (messages.send), in the
+// replied message's thread for a reply.
 func sendEmail(ctx context.Context, c *call) (any, error) {
 	m, err := readComposition(ctx, c)
 	if err != nil {
@@ -149,12 +150,16 @@ func sendEmail(ctx context.Context, c *call) (any, error) {
 	if m.reply != "" {
 		fields = append(fields, field("In reply to", repliedWords(m.repliedFrom, m.repliedDate, m.repliedSubject)))
 	}
+	if m.inReplyTo != "" {
+		fields = append(fields, field("Threading", m.inReplyTo))
+	}
 	fields = append(fields, field("Body", m.body))
 	reply := m.reply
 	return &held{
 		title:      "Send an email to " + firstAnd(to),
 		fields:     fields,
 		recipients: to,
+		needs:      keyGmailSend,
 		run: func(ctx context.Context, c *call) (any, error) {
 			sent, err := c.sendMessage(ctx, payload)
 			if err != nil {
@@ -185,11 +190,14 @@ type gmailDraft struct {
 // draft, Kivali's or not, as drafts.get answers it in format raw now.
 // Its mark is taken out of the message, and the card shows the rest as
 // it will go (draftFields); every address it names must be one send_to
-// allows, and a draft with attachments is refused. Run sends those
-// bytes (messages.send) in the draft's thread, then deletes the draft,
-// unless it changed after the owner saw it: then the bytes the owner saw
-// are what goes, and the changed draft stays. A draft gone by then is
-// not sent.
+// allows. A draft the card cannot show whole is refused: one with
+// attachments, with more than one text or HTML part or a part of
+// another type (draftContent.unshown), or whose text holds a format
+// character other than the zero-width joiner (hidesText). Run sends
+// those bytes (messages.send) in the draft's thread, then deletes the
+// draft, unless it changed after the owner saw it: then the bytes the
+// owner saw are what goes, and the changed draft stays. A draft gone by
+// then is not sent.
 func sendDraft(ctx context.Context, c *call) (any, error) {
 	id, err := c.args.id("draft_id", draftIDPattern)
 	if err != nil {
@@ -215,8 +223,16 @@ func sendDraft(ctx context.Context, c *call) (any, error) {
 	if content.attachments > 0 {
 		return nil, refuse("Draft "+id+" has attachments, which Kivali does not send; the owner can send it from Gmail.", "draft "+id+" has attachments")
 	}
+	if found := content.unshown(); found != "" {
+		return nil, refuse("Draft "+id+" has "+found+", and Kivali shows the owner one text part and one formatted part and nothing else, so it cannot show the owner all of what it would send; the owner can send it from Gmail.",
+			"draft "+id+" has "+found)
+	}
 	if !content.hasPlain && !content.hasHTML {
 		return nil, failure("Draft " + id + " has no text Kivali can show the owner; the owner can send it from Gmail.")
+	}
+	if content.hidden {
+		return nil, refuse("Draft "+id+" holds invisible characters (Unicode format characters, such as zero-width spaces or direction marks), which the owner cannot see before approving. The owner must remove them in Gmail before Kivali can send it.",
+			"draft "+id+" holds invisible formatting characters")
 	}
 	lists := map[string][]*mail.Address{}
 	var to []string
@@ -251,13 +267,12 @@ func sendDraft(ctx context.Context, c *call) (any, error) {
 		title:      "Send a draft to " + firstAnd(to),
 		fields:     fields,
 		recipients: to,
+		needs:      keyGmailSend,
 		run: func(ctx context.Context, c *call) (any, error) {
 			var now gmailDraft
 			err := c.g.get(ctx, c.token, gmailAPI, draftPath(id)+"?format=minimal", &now)
-			var ae *apiError
-			if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
-				return nil, refuse("Draft "+id+" is no longer in the owner's Drafts: it was sent or deleted after the owner saw it, so Kivali sent nothing.",
-					"draft "+id+" was gone")
+			if g := gone(err, "The draft", "draft "+id+" was gone"); g != nil {
+				return nil, g
 			}
 			if err != nil {
 				return nil, err
@@ -275,6 +290,7 @@ func sendDraft(ctx context.Context, c *call) (any, error) {
 			if err := c.g.change(ctx, c.token, gmailAPI, http.MethodDelete, draftPath(id), nil, nil); err != nil {
 				c.audit += "; the draft could not be deleted"
 				words := err.Error()
+				var ae *apiError
 				if errors.As(err, &ae) {
 					words = agentWords(ae)
 				}
@@ -426,12 +442,44 @@ func withoutHeader(raw []byte, name string) []byte {
 
 // draftContent is a draft's message as its card shows it: its headers,
 // its first text part and its first HTML part that are not
-// attachments, decoded, and how many attachments it has.
+// attachments, decoded, and how many attachments it has. plainParts and
+// htmlParts count its text and HTML parts that are not attachments,
+// others names the type of each other part that is not one, once, and
+// hidden is whether a text or HTML part holds a format character other
+// than the zero-width joiner (hidesText): what the card cannot show.
 type draftContent struct {
-	headers           []gmailHeader
-	plain, html       string
-	hasPlain, hasHTML bool
-	attachments       int
+	headers               []gmailHeader
+	plain, html           string
+	hasPlain, hasHTML     bool
+	attachments           int
+	plainParts, htmlParts int
+	others                []string
+	hidden                bool
+}
+
+// maxNamedTypes bounds the other parts' types unshown names.
+const maxNamedTypes = 5
+
+// unshown is what d holds that its card cannot show, in words for the
+// agent and the audit ("2 text parts, a part of type image/png"), ""
+// for nothing: more than one text part or HTML part, of which the card
+// shows the first, and each part of another type.
+func (d *draftContent) unshown() string {
+	var found []string
+	if d.plainParts > 1 {
+		found = append(found, fmt.Sprintf("%d text parts", d.plainParts))
+	}
+	if d.htmlParts > 1 {
+		found = append(found, fmt.Sprintf("%d formatted (HTML) parts", d.htmlParts))
+	}
+	for i, media := range d.others {
+		if i == maxNamedTypes {
+			found = append(found, fmt.Sprintf("%d parts of other types", len(d.others)-i))
+			break
+		}
+		found = append(found, "a part of type "+media)
+	}
+	return strings.Join(found, ", ")
 }
 
 // The bounds of reading a draft: its parts in all and how deep they
@@ -443,9 +491,10 @@ const (
 
 // readDraft reads raw, a message, into its headers and its body's
 // parts: text/plain and text/html each decoded from its
-// Content-Transfer-Encoding and its character set, line ends "\n";
-// any part with a file name, said to be an attachment, or of another
-// type counted as an attachment. An error says why it does not read.
+// Content-Transfer-Encoding and its character set, line ends "\n", and
+// counted; any part with a file name or said to be an attachment
+// counted as an attachment, and any other part's type kept in others.
+// An error says why it does not read.
 func readDraft(raw []byte) (*draftContent, error) {
 	msg, err := mail.ReadMessage(bytes.NewReader(raw))
 	if err != nil {
@@ -489,7 +538,9 @@ func readDraft(raw []byte) (*draftContent, error) {
 			}
 		}
 		if media != "text/plain" && media != "text/html" {
-			d.attachments++
+			if !slices.Contains(d.others, media) {
+				d.others = append(d.others, media)
+			}
 			return nil
 		}
 		var r io.Reader
@@ -511,11 +562,16 @@ func readDraft(raw []byte) (*draftContent, error) {
 			return errors.New("its body is larger than Kivali reads")
 		}
 		text := strings.ReplaceAll(decodeCharset(b, h.Get("Content-Type")), "\r\n", "\n")
-		switch {
-		case media == "text/plain" && !d.hasPlain:
-			d.plain, d.hasPlain = text, true
-		case media == "text/html" && !d.hasHTML:
-			d.html, d.hasHTML = text, true
+		d.hidden = d.hidden || hidesText(text)
+		switch media {
+		case "text/plain":
+			if d.plainParts++; !d.hasPlain {
+				d.plain, d.hasPlain = text, true
+			}
+		case "text/html":
+			if d.htmlParts++; !d.hasHTML {
+				d.html, d.hasHTML = text, true
+			}
 		}
 		return nil
 	}

@@ -20,15 +20,18 @@ import (
 // fakeCalendar is Google Calendar's API run in-process on its own
 // www.googleapis.com origin, and Gmail's profile on its own: the
 // account's calendar list, each calendar's events (listed, read,
-// inserted, patched and deleted as Calendar does) and their busy
-// times. Every request must carry testToken as its bearer, or it is
-// answered 401 as Google answers.
+// inserted, patched and deleted as Calendar does, each with an etag
+// that every change moves on, a patch or a delete with an If-Match of
+// another refused 412) and their busy times. Every request must carry
+// testToken as its bearer, or it is answered 401 as Google answers.
 type fakeCalendar struct {
 	gmail, www *httptest.Server
 
 	mu   sync.Mutex
 	seen []fakeCalRequest
 	next int
+	// version numbers the etags the fake gives.
+	version int
 
 	// calendars is the account's list; events each calendar's, as
 	// Calendar answers them; busy each calendar's busy times as
@@ -43,9 +46,9 @@ type fakeCalendar struct {
 }
 
 // fakeCalRequest is one request the fake was sent: its method, its
-// path as sent (escaped), its query and its body.
+// path as sent (escaped), its query, its body and its If-Match header.
 type fakeCalRequest struct {
-	method, path, query, body string
+	method, path, query, body, ifMatch string
 }
 
 func (r fakeCalRequest) String() string { return r.method + " " + r.path + "?" + r.query }
@@ -84,8 +87,37 @@ func (f *fakeCalendar) add(t *testing.T, cal string, events ...string) {
 		if _, ok := e["status"]; !ok {
 			e["status"] = "confirmed"
 		}
+		if _, ok := e["etag"]; !ok {
+			e["etag"] = f.etag()
+		}
 		f.events[cal] = append(f.events[cal], e)
 	}
+}
+
+// etag is a new etag, as Calendar writes one: a number in quotes.
+func (f *fakeCalendar) etag() string {
+	f.version++
+	return fmt.Sprintf(`"%d"`, 3181161784712000+f.version)
+}
+
+// touch changes the event id on the calendar cal as someone else's edit
+// does in Google Calendar: its title, and so its etag.
+func (f *fakeCalendar) touch(cal, id, title string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, e := range f.events[cal] {
+		if e["id"] == id {
+			e["summary"], e["etag"] = title, f.etag()
+		}
+	}
+}
+
+// drop deletes the event id on the calendar cal as someone else does
+// in Google Calendar.
+func (f *fakeCalendar) drop(cal, id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events[cal] = slices.DeleteFunc(f.events[cal], func(e map[string]any) bool { return e["id"] == id })
 }
 
 // requests is every request the fake was sent to the Calendar origin.
@@ -140,7 +172,7 @@ func (f *fakeCalendar) serveCalendar(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.seen = append(f.seen, fakeCalRequest{r.Method, r.URL.EscapedPath(), r.URL.RawQuery, string(body)})
+	f.seen = append(f.seen, fakeCalRequest{r.Method, r.URL.EscapedPath(), r.URL.RawQuery, string(body), r.Header.Get("If-Match")})
 	w.Header().Set("Content-Type", "application/json")
 	if r.Header.Get("Authorization") != "Bearer "+testToken {
 		http.Error(w, `{"error":{"code":401,"message":"Request had invalid authentication credentials."}}`, http.StatusUnauthorized)
@@ -248,6 +280,7 @@ func (f *fakeCalendar) insert(w http.ResponseWriter, cal string, body []byte) {
 	f.next++
 	e["id"] = fmt.Sprintf("ev%03d", f.next)
 	e["status"] = "confirmed"
+	e["etag"] = f.etag()
 	e["organizer"] = map[string]any{"email": cal, "self": true}
 	e["creator"] = map[string]any{"email": "dana@example.com", "self": true}
 	f.events[cal] = append(f.events[cal], e)
@@ -255,12 +288,18 @@ func (f *fakeCalendar) insert(w http.ResponseWriter, cal string, body []byte) {
 }
 
 // one is events.get, events.patch (its fields merged in, an object's
-// fields merged and null clearing one) and events.delete, which
-// answers no content.
+// fields merged and null clearing one, and a new etag) and
+// events.delete, which answers no content. A patch or a delete whose
+// If-Match is not the event's etag is refused 412, as Calendar refuses
+// one.
 func (f *fakeCalendar) one(w http.ResponseWriter, r *http.Request, cal, id string, body []byte) {
 	i := slices.IndexFunc(f.events[cal], func(e map[string]any) bool { return e["id"] == id })
 	if i < 0 {
 		calNotFound(w)
+		return
+	}
+	if m := r.Header.Get("If-Match"); m != "" && r.Method != http.MethodGet && m != f.events[cal][i]["etag"] {
+		http.Error(w, `{"error":{"code":412,"message":"Precondition Failed","errors":[{"reason":"conditionNotMet"}]}}`, http.StatusPreconditionFailed)
 		return
 	}
 	switch r.Method {
@@ -273,6 +312,7 @@ func (f *fakeCalendar) one(w http.ResponseWriter, r *http.Request, cal, id strin
 			return
 		}
 		mergePatch(f.events[cal][i], patch)
+		f.events[cal][i]["etag"] = f.etag()
 		writeJSON(w, f.events[cal][i])
 	case http.MethodDelete:
 		f.events[cal] = slices.Delete(f.events[cal], i, i+1)
