@@ -13,8 +13,9 @@ import (
 // Gmail and back: the token core handed in, Gmail's origin, the answer
 // as the agent reads it. An agent whose access names labels must see
 // only those, however the owner's entries name them (an option as the
-// form stores it, or a bare id); an empty list is every label; and a
-// list naming none of the account's labels says so rather than
+// form stores it, or a bare id); an empty list is every label but Spam
+// and Trash, which an agent reads only when its access names them; and
+// a list naming none of the account's labels says so rather than
 // answering nothing.
 func TestListLabels(t *testing.T) {
 	f, g := newFakeGoogle(t)
@@ -29,8 +30,11 @@ func TestListLabels(t *testing.T) {
 	}
 
 	all := answer(map[string]any{})
-	if want := "Inbox (INBOX)\nSent (SENT)\nDrafts (DRAFT)\nTrash (TRASH)\nAlpha/Work (Label_3)\nClients (old) (Label_12)\nzeta (Label_9)"; all != want {
+	if want := "Inbox (INBOX)\nSent (SENT)\nDrafts (DRAFT)\nAlpha/Work (Label_3)\nClients (old) (Label_12)\nzeta (Label_9)"; all != want {
 		t.Errorf("every label:\n%s", all)
+	}
+	if trash := answer(map[string]any{"gmail_labels": []string{"Trash (TRASH)"}}); trash != "Trash (TRASH)" {
+		t.Errorf("the Trash named: %q", trash)
 	}
 	some := answer(map[string]any{"gmail_labels": []string{"Inbox (INBOX)", "Clients (old) (Label_12)", "Label_9", "Gone (Label_404)"}})
 	if want := "Inbox (INBOX)\nClients (old) (Label_12)\nzeta (Label_9)"; some != want {
@@ -45,7 +49,7 @@ func TestListLabels(t *testing.T) {
 			t.Errorf("request %s", r)
 		}
 	}
-	if len(f.requests()) != 3 {
+	if len(f.requests()) != 4 {
 		t.Errorf("requests = %v", f.requests())
 	}
 }

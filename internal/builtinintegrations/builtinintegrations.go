@@ -93,10 +93,13 @@ type Caller struct {
 // file came with: letters, digits, dots, dashes and underscores, not
 // starting with a dot. The file is named after name as a web task's
 // download is (files.CleanDownloadName), with -2, -3 for a name already
-// there. Core writes it as it is, never opening or running it; r
-// holding more than limit fails the save and leaves no file. An error
-// is in words for the agent ("/files/integrations is a symbolic
-// link"), naming no path outside its files.
+// there; a file already there under one of those names with the same
+// bytes is answered in its place. A folder holds at most
+// files.MaxIntegrationFolderFiles files: one more fails the save. Core
+// writes it as it is, never opening or running it; r holding more than
+// limit fails the save and leaves no file. An error is in words for
+// the agent ("/files/integrations is a symbolic link"), naming no path
+// outside its files.
 type SaveFunc func(folder, name string, r io.Reader, limit int64) (path string, err error)
 
 // Connection is the connection's values, read by core at the moment of

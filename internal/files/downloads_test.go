@@ -136,3 +136,50 @@ func TestWriteIntegrationDownload(t *testing.T) {
 		t.Errorf("the agent's file became %q", b)
 	}
 }
+
+// Why this test exists: a built-in saves what an agent asks for, as
+// often as it asks, into a folder the agent cannot clear by asking
+// again. The same file asked for again must be answered at the path it
+// was saved at rather than saved twice, while another file of the same
+// name and size gets a name of its own; and a folder holding 20 files
+// must take no other, failing in words that say it is full and leaving
+// nothing behind, while a file already in it is still answered.
+func TestIntegrationDownloadFolderReusesAndFills(t *testing.T) {
+	storage := filepath.Join(t.TempDir(), "memory")
+	save := func(name, data string) (string, error) {
+		return WriteIntegrationDownload(storage, "google-workspace", "m1", name, strings.NewReader(data), 1<<20)
+	}
+	const folder = "integrations/google-workspace/untrusted-downloads/m1"
+	first, err := save("a.pdf", "same")
+	again, err2 := save("a.pdf", "same")
+	if err != nil || err2 != nil || first != folder+"/a.pdf" || again != first {
+		t.Fatalf("saved twice: %q, %v then %q, %v", first, err, again, err2)
+	}
+	other, err := save("a.pdf", "diff")
+	if err != nil || other != folder+"/a-2.pdf" {
+		t.Errorf("another file of the name and size = %q, %v", other, err)
+	}
+	if p, err := save("a.pdf", "diff"); err != nil || p != other {
+		t.Errorf("the other saved again = %q, %v", p, err)
+	}
+	for i := range MaxIntegrationFolderFiles - 2 {
+		if _, err := save("f"+strings.Repeat("x", i)+".txt", "x"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := filepath.Join(storage, filepath.FromSlash(folder))
+	for _, tc := range [][2]string{{"new.txt", "x"}, {"a.pdf", "third"}} {
+		_, err := save(tc[0], tc[1])
+		var pe *PathError
+		if !errors.As(err, &pe) || !errors.Is(err, ErrFolderFull) || pe.Path != folder ||
+			err.Error() != folder+" is full, holding the 20 files Kivali saves into one folder" {
+			t.Errorf("%s into a full folder: %v", tc[0], err)
+		}
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != MaxIntegrationFolderFiles {
+		t.Errorf("a full folder holds %d entries, %v", len(entries), err)
+	}
+	if p, err := save("a.pdf", "same"); err != nil || p != first {
+		t.Errorf("a file already in a full folder = %q, %v", p, err)
+	}
+}

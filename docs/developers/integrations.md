@@ -2462,7 +2462,14 @@ type SignInAdviser interface{ SignInAdvice(refusal string) string }
   `/files/integrations/<integration>/untrusted-downloads/<folder>/`,
   named by `files.CleanDownloadName` with `-2`, `-3` for a name already
   there, at most the call's `limit` bytes, and answers the path the
-  agent reads it at. `folder` is one plain path element the built-in
+  agent reads it at. A file already there under one of those names
+  with the same bytes is answered in its place, the new copy removed;
+  a folder holding `files.MaxIntegrationFolderFiles` (20) entries takes
+  no other, failing in words ("/files/integrations/<integration>/
+  untrusted-downloads/<folder> is full, holding the 20 files Kivali
+  saves into one folder") and leaving nothing. A web task's downloads
+  (`files.WriteUntrustedDownload`) keep their own naming, with no such
+  cap. `folder` is one plain path element the built-in
   chooses (Google Workspace's is the message's id). The agent writes
   its `/files/`, so each directory on the way is made when missing and
   opened without following a link: a link or a file the agent left
@@ -4078,7 +4085,11 @@ Its audit reason is "listed N labels".
 #### Reading mail
 
 A message is the access's when it carries one of `gmail_labels`' ids,
-or the list is empty (`call.readable`); one that is not is refused,
+or the list is empty, and carries SPAM or TRASH only when the list
+names that label, whatever else it carries (`call.readable`): an empty
+list is every label but Spam and Trash (`labelIncluded`, which
+`list_labels`, a search's `label` and a heading's labels go by too).
+One that is not is refused,
 "Message <id> is not in the labels your access includes; ask the owner
 if your work needs it.", audited as `message <id> is outside the
 access's labels`. Ids are checked before anything reaches Google: a
@@ -4088,7 +4099,7 @@ message's or thread's letters and digits, a label's letters, digits,
 - `search_messages(query, label?, page_token?)` is `GET
   /gmail/v1/users/me/messages` with `q`, `maxResults=25` and
   `pageToken`, then each message's metadata (`format=metadata`, the
-  headers From, To, Subject and Authentication-Results), five requests
+  headers From, Reply-To, To, Subject and Authentication-Results), five requests
   at a time; one gone since (404) is left out. `label` (an id, or an
   option as stored) must be in the access's list, or the call is
   refused naming it before anything reaches Google; it holds the search
@@ -4100,27 +4111,31 @@ message's or thread's letters and digits, a label's letters, digits,
   `next_page_token` are Gmail's own, so paging on never skips or
   repeats a message; a page may list fewer than 25, or none with more
   to come, and says when it left messages out. Every message listed is
-  checked against the labels, whichever way the page was asked for.
-  `includeSpamTrash` is set when Spam or Trash is among the labels.
+  checked against the labels and `call.readable`, whichever way the
+  page was asked for. `includeSpamTrash` is set when Spam or Trash is
+  among the labels.
   Each message is a numbered heading, a provenance line and, framed,
-  From, To, Subject and Gmail's snippet (HTML characters unescaped,
+  From, Reply-To, To, Subject and Gmail's snippet (HTML characters unescaped,
   cut at 500), with its own links. Audit: "searched mail, listing N
   messages: <the first ten ids> and M more".
 - `get_message(id)` is `GET /gmail/v1/users/me/messages/{id}?format=full`
   rendered (`renderMessage`): a heading (the message's and thread's
   ids, when Gmail received it from `internalDate`, the labels it
   carries that the access includes by option, and "unread"), the
-  provenance line, then framed the headers From, To, Cc, Date, Subject
+  provenance line, then framed the headers From, Reply-To, To, Cc, Date, Subject
   and Message-ID, each decoded (RFC 2047), one line and cut at 1000
   characters; the body; its links; its attachments; and after the
   framing Kivali's notes (hidden text, a cut, links past 50, no text
   body, a body over 8 MB). Audit: "read message <id>".
-- `get_thread(id)` is `GET /gmail/v1/users/me/threads/{id}?format=full`,
-  its messages sorted by `internalDate`, each the access includes
-  rendered as `get_message` renders one, after a line saying how many
-  it left out; one with none is refused as a message is. Audit: "read
-  thread <id>: N messages (<ids>), M outside the access's labels left
-  out".
+- `get_thread(id)` is `GET /gmail/v1/users/me/threads/{id}` with
+  `format=metadata` (labels, `internalDate` and the Date header, no
+  bodies), its messages sorted by `internalDate`, each the access
+  includes read in full (`messages/{id}?format=full`) only when there
+  is room to render it, and rendered as `get_message` renders one,
+  after a line saying how many it left out; one gone since (404), or
+  no longer the access's, is left out. A thread with none is refused as
+  a message is. Audit: "read thread <id>: N messages (<ids>), M outside
+  the access's labels left out".
 - `get_attachment(message_id, attachment_id)` is in [Attachments](#attachments).
 
 The body is the first `text/plain` part that is not an attachment
@@ -4136,7 +4151,8 @@ characters) with each framing it opens closed: a body is cut at
 60,000 characters, and shorter when the whole message would not fit in
 the room left, the note saying where; `get_thread` keeps 2,000 back for
 its own lines and, once fewer than 3,000 are left, names the remaining
-messages for `get_message` instead. A search page keeps the same 2,000
+messages for `get_message` instead, the first ten and how many more
+(`idList`). A search page keeps the same 2,000
 back and names the messages it has no room for, its headers cut at
 300 characters; only the senders it lists are in `Result.Outside`.
 Links listed after a cut body are those the kept text names. A
@@ -4144,60 +4160,92 @@ message lists at most 50 attachments.
 
 #### The text an email becomes
 
-`gmail_text.go` holds the mitigations against what an email says to
-the agent.
+`gmail_text.go` and `gmail_style.go` hold the mitigations against what
+an email says to the agent.
 
 - **Framing.** Everything the sender wrote (headers, body, snippet,
   the links' URLs, attachment names) is between two fixed lines,
   "Content of an untrusted email follows." and "End of email
   content.", the browser pod's pattern for a page
-  (`internal/browserpod/snapshot.go`). A line of the email that has the
-  letters of either, whatever its case, spacing and punctuation, is
-  quoted with "> " (`delimitEmail`), so an email cannot close its own
-  framing and write on as Kivali. Kivali's own lines are outside it.
+  (`internal/browserpod/snapshot.go`). A line of the email whose
+  letters start with the letters of either, whatever its case,
+  spacing, punctuation and what follows, is quoted with "> "
+  (`delimitEmail`), so an email cannot close its own framing and write
+  on as Kivali. Letters are compared after NFKC folding (a full-width
+  letter reads as its plain one); look-alike letters of other scripts
+  (a Cyrillic "е") are not mapped to Latin. Kivali's own lines are
+  outside it.
   The descriptions of `search_messages`, `get_message` and
   `get_thread` say the framed text is untrusted and may read like
   instructions, which the agent does not follow, as `web_snapshot`'s
   does.
 - **Provenance.** Kivali's line before each email: "Sender: <address>,
-  from your domain" or "from outside your domain", then "Gmail's sender
-  checks: SPF <r>, DKIM <r>, DMARC <r>." or "not checked.". The address
-  is From's, by `net/mail`, written only when it is plain characters
-  (no quoted local part carrying the sender's words), else "an address
-  Kivali could not read". The owner's domain is the signed-in address's
-  (`users/me/profile`, read once a call); for an account at `gmail.com`
-  or `googlemail.com` only that address counts. An address at the
-  domain is the owner's only when Gmail's checks do not refute it
-  (`checks.refute`: DMARC failed, or Gmail checked and neither SPF nor
-  DKIM passed), since anyone can write the owner's domain in From. The
-  checks are read from the first Authentication-Results header, and
-  only when its authserv-id is `mx.google.com`: Gmail writes its own
-  above every header a message came with, so one lower down, or one
-  that is not Gmail's, is the sender's and is ignored. A method given
-  twice (a message signed twice) is pass when one passed; a result that
-  is not a plain word is "unknown".
+  from your domain" or "from outside your domain" (with ": the sender
+  claims your domain, but Gmail's checks do not confirm it" for an
+  address at the owner's domain that is not confirmed), then, when
+  Reply-To holds an address at a domain other than From's, "; replies
+  go to <address>, a different domain" ("; replies go to an address
+  Kivali could not read" for one it cannot read; `replyElsewhere`),
+  then "Gmail's sender checks: SPF <r>, DKIM <r>, DMARC <r>." or "not
+  checked.". The address is From's, by `net/mail`, written only when it
+  is plain characters (no quoted local part carrying the sender's
+  words), else "an address Kivali could not read". The owner's domain
+  is the signed-in address's (`users/me/profile`, read once a call);
+  for an account at `gmail.com` or `googlemail.com` only that address
+  counts. Anyone can write the owner's domain in From, and a relay
+  passes SPF and DKIM for its own domain, so an address at the domain
+  is the owner's only when Gmail's checks confirm that domain
+  (`checks.confirms`): DMARC passed with `header.from` the From
+  domain, or a passing DKIM identity (`header.d`, else `header.i`'s
+  domain) or the passing SPF identity (`smtp.mailfrom`'s domain) is the
+  From domain or under it; or, for a message with no checks, when it
+  carries SENT or DRAFT, which only the account can set. The checks are
+  read from the first Authentication-Results header, and only when its
+  authserv-id is `mx.google.com`: Gmail writes its own above every
+  header a message came with, so one lower down, or one that is not
+  Gmail's, is the sender's and is ignored. Its results are split at
+  ";" outside quoted strings, comments dropped (`authResults`), so an
+  envelope sender quoting ";" cannot add a result. A method given twice
+  (a message signed twice) is pass when one passed; a result that is
+  not a plain word is "unknown".
 - **Hidden text.** An HTML body is parsed (`golang.org/x/net/html`,
   scripting off) and walked into text: block elements end lines,
   list items are "- " lines, cells are spaced, `pre` keeps its white
   space. The head, scripts, styles, templates, objects, frames, SVG
-  and images are not text and are left out uncounted. Left out and
-  counted, by inline styles only (a `<style>` sheet's rules are not
-  applied): an element with `hidden`, `display:none`, an opacity of
-  0.05 or less, or no height or width with `overflow:hidden`, with all
+  and images are not text and are left out uncounted. An element's
+  properties are its `<style>` elements' rules (`styleSheet`) then its
+  style attribute, in the cascade's order: the rules by the whole
+  selector's specificity, then as written, the attribute over them,
+  and `!important` (spaced or not) above both, the attribute's last.
+  The rules applied are those of type, class and id selectors, comma
+  lists and combinators, matched by the selector's last part alone
+  ("body .x" applies to every `.x`), tags, ids and classes compared
+  without case; `@media` and every other at-rule, selectors with
+  attributes, pseudo-classes, pseudo-elements or escapes, and linked
+  sheets are not, nor the selectors past the first 1,000 or the checks
+  past 1,000,000 a body. Left out and counted: an element with
+  `hidden`, `display:none`, `mso-hide:all`, an opacity of 0.05 or less,
+  no height or width (or their maximum) with `overflow:hidden`,
+  `text-indent`, `left`, `top` or `margin-left` of -999px or less, or
+  `clip:rect` of no area or `clip-path:inset` of 50% or more, with all
   it holds; text whose inherited `visibility` is hidden or collapse
   (a child may set it visible again); text whose font size, inherited
   and relative units resolved against 16px, is 3px or less (so a
   container of size 0 around readable text, a common email layout,
   loses nothing); text whose colour is transparent or equals the
-  background behind it, both given inline (`color`, a font's `color`,
-  the body's `text`; `background`, `background-color`, `bgcolor`;
-  colours compared as `#rrggbb`, a background image matching nothing);
-  and comments other than Outlook's conditional ones. Unicode tag
-  characters (U+E0000 to U+E007F), which a model reads and a person
-  never sees, are dropped and counted in any body. The count is
-  characters with each run of white space one; a body with any ends
-  with "Kivali left out N characters of hidden text.". A `text/plain`
-  body loses nothing else.
+  background behind it (`color`, a font's `color`, the body's `text`;
+  `background`, `background-color`, `bgcolor`; colours compared as
+  `#rrggbb`, a background image, CSS or the `background` attribute,
+  matching nothing), the page white until an element gives a
+  background, so white text with none given is hidden; and comments
+  other than Outlook's conditional ones. What is not covered is listed
+  at `elementHidden`. Unicode format characters (Cf: zero-width spaces,
+  bidirectional controls, a byte order mark, tag characters U+E0000 to
+  U+E007F), which a model reads and a person never sees, are dropped
+  and counted in any body, but the zero-width joiner emoji are made of.
+  The count is characters with each run of white space one; a body
+  with any ends with "Kivali left out N characters of hidden text.". A
+  `text/plain` body loses nothing else.
 - **Links.** Each http or https URL, in a body's text or an anchor's
   `href`, is replaced by a marker, `[link N]`, numbered in the order
   first named, the same URL the same marker; an anchor whose text is
@@ -4209,13 +4257,18 @@ the agent.
   `[link]`, counted in a note. Text of the email's that reads like a
   marker ("[link 3]") is spaced apart ("[ link 3]") first.
 - **Clean text.** Every string of the sender's is valid UTF-8 with no
-  control characters but tabs and line ends; headers are one line.
+  control characters but tabs and line ends, a carriage return and
+  Unicode's line and paragraph separators (U+2028, U+2029) each a line
+  end, so every line the agent sees is one `delimitEmail` checks;
+  headers are one line.
 
 #### Attachments
 
 `get_attachment(message_id, attachment_id)` reads the message
 (`format=full`), refuses it as above when the access does not include
-it, and finds the part whose `partId` is `attachment_id`. Kivali lists
+it, and finds, among the parts `attachments` lists (never the text of
+the body, nor a part holding others), the one whose `partId` is
+`attachment_id`. Kivali lists
 attachments by part id because Gmail's own `attachmentId` changes from
 one read of a message to the next. A part over 25 MB by the message's
 own `body.size` is refused ("Attachment <id> of message <id> is <n>
@@ -4225,7 +4278,8 @@ part's `data`, or `messages/{id}/attachments/{attachmentId}` read up to
 its base64 size, decoded as it is written (`Caller.Save`, [The
 interface](#the-interface)) into
 `/files/integrations/google-workspace/untrusted-downloads/<message
-id>/`, at most 25 MB. Its name is the sender's file name's last path
+id>/`, at most 25 MB; saved again, it is answered at the path it was
+saved at, and the folder takes at most 20 files. Its name is the sender's file name's last path
 element, without control or format characters (a right-to-left
 override that disguises an extension, a zero-width space) or leading
 dots, else "attachment" with an extension for its type, then cleaned
@@ -4239,8 +4293,8 @@ attachment <id> of message <id> (<n> bytes)".
 
 Each read sets `Result.Outside` to the senders of what it returned or
 saved that are not the owner's (Provenance, above), each once in the
-order read: the From address, or its words when Kivali reads no
-address, or "an unknown sender". A search names the senders of every
+order read: the From address Kivali read, or "an unknown sender" when
+it read none, never the header's own words. A search names the senders of every
 message it lists, since a snippet is the message's text. Core keeps
 them in the audit row's `outside` ([The audit](#the-audit)), which the
 approval of a send will read; nothing else is stored.

@@ -19,6 +19,7 @@ import (
 	"golang.org/x/net/html/atom"
 	"golang.org/x/net/html/charset"
 	"golang.org/x/net/idna"
+	"golang.org/x/text/unicode/norm"
 )
 
 // An email's own text reaches the agent between these two lines, so
@@ -31,26 +32,32 @@ const (
 )
 
 // framingLetters are the two lines' letters, lower-cased: a line of an
-// email with the same letters reads as one of them.
+// email that starts with the same letters reads as one of them.
 var framingLetters = []string{lettersOf(emailContentStart), lettersOf(emailContentEnd)}
 
+// lettersOf is s's letters, lower-cased, after Unicode compatibility
+// folding (NFKC), so a full-width letter or a ligature reads as the
+// plain letters it shows. Letters of another script that look like
+// Latin ones (a Cyrillic U+0435 for an "e") are not mapped to Latin, so a
+// line spelled with them does not read as a framing line.
 func lettersOf(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsLetter(r) {
 			return unicode.ToLower(r)
 		}
 		return -1
-	}, s)
+	}, norm.NFKC.String(s))
 }
 
 // delimitEmail puts an email's own text between the two lines. A line
-// of it that reads as either one, whatever its spaces, case and
-// punctuation, is quoted with "> ", so an email cannot end its own text
-// and go on as Kivali.
+// of it that starts as either one reads, whatever its spaces, case,
+// punctuation and what follows, is quoted with "> ", so an email cannot
+// end its own text and go on as Kivali.
 func delimitEmail(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
-		if slices.Contains(framingLetters, lettersOf(l)) {
+		letters := lettersOf(l)
+		if slices.ContainsFunc(framingLetters, func(f string) bool { return strings.HasPrefix(letters, f) }) {
 			lines[i] = "> " + l
 		}
 	}
@@ -58,9 +65,13 @@ func delimitEmail(s string) string {
 }
 
 // cleanText is untrusted text as the agent is given it: valid UTF-8,
-// line ends as "\n", no control character but tabs and line ends, and
-// no Unicode tag character (U+E0000 to U+E007F), which no one sees and
-// a model reads. It answers how many tag characters it dropped.
+// line ends as "\n" (a carriage return and Unicode's line and paragraph
+// separators each one), no control character but tabs and line ends,
+// and no format character (Unicode's Cf: a zero-width space, a
+// right-to-left override, a tag character), which no one sees and a
+// model reads, but the zero-width joiner emoji are built with. Tag
+// characters (U+E0000 to U+E007F) are dropped whether or not Unicode
+// assigns them. It answers how many format characters it dropped.
 func cleanText(s string) (string, int) {
 	s = strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\r\n", "\n")
 	dropped := 0
@@ -68,12 +79,15 @@ func cleanText(s string) (string, int) {
 		switch {
 		case r == '\n' || r == '\t':
 			return r
-		case r == '\r':
+		case r == '\r' || r == '\u2028' || r == '\u2029':
 			return '\n'
 		case r >= 0xE0000 && r <= 0xE007F:
 			dropped++
 			return -1
 		case unicode.IsControl(r):
+			return -1
+		case r != '\u200D' && unicode.Is(unicode.Cf, r):
+			dropped++
 			return -1
 		}
 		return r
@@ -166,6 +180,12 @@ func senderOf(from string) string {
 		}
 		a = list[0]
 	}
+	return plainAddress(a)
+}
+
+// plainAddress is a parsed address lower-cased, when it is one Kivali
+// writes in its own words (addressChars); "" when it is not.
+func plainAddress(a *mail.Address) string {
 	addr := strings.ToLower(a.Address)
 	if len(addr) > 254 || !addressChars.MatchString(addr) {
 		return ""
@@ -173,13 +193,58 @@ func senderOf(from string) string {
 	return addr
 }
 
-// checks is Gmail's checks of a message's sender: the SPF, DKIM and
-// DMARC results of the Authentication-Results header Gmail wrote, ""
-// for a method it did not report. seen is false when there is no such
-// header.
+// domainOf is an address's domain, after its last "@"; "" for none.
+func domainOf(addr string) string {
+	at := strings.LastIndex(addr, "@")
+	if at < 0 {
+		return ""
+	}
+	return addr[at+1:]
+}
+
+// unreadAddress names an address Kivali cannot read in its own words.
+const unreadAddress = "an address Kivali could not read"
+
+// replyElsewhere is where a Reply-To header's value sends replies when
+// that is not the sender's domain: its first address at another
+// domain, or unreadAddress when Kivali cannot read one of its
+// addresses; "" when there is no Reply-To, or every address in it is
+// at the sender's domain.
+func replyElsewhere(replyTo, sender string) string {
+	if strings.TrimSpace(replyTo) == "" {
+		return ""
+	}
+	list, err := mail.ParseAddressList(replyTo)
+	if err != nil {
+		list, err = mail.ParseAddressList(decodeHeader(replyTo))
+	}
+	if err != nil || len(list) == 0 {
+		return unreadAddress
+	}
+	for _, a := range list {
+		addr := plainAddress(a)
+		switch {
+		case addr == "":
+			return unreadAddress
+		case domainOf(addr) != domainOf(sender):
+			return addr
+		}
+	}
+	return ""
+}
+
+// checks is Gmail's checks of a message's sender, from the
+// Authentication-Results header Gmail wrote: the SPF, DKIM and DMARC
+// results, "" for a method it did not report, and the domains of the
+// identities that passed: each passing DKIM signature's (header.d, or
+// header.i's after its "@"), the passing SPF check's envelope sender's
+// (smtp.mailfrom's after its "@", or all of it), and the From domain a
+// passing DMARC check names (header.from). seen is false when there is
+// no such header.
 type checks struct {
-	spf, dkim, dmarc string
-	seen             bool
+	spf, dkim, dmarc             string
+	dkimPass, spfPass, dmarcPass []string
+	seen                         bool
 }
 
 // gmailAuthServ is the authserv-id Gmail's own Authentication-Results
@@ -196,13 +261,14 @@ var resultWord = regexp.MustCompile(`^[a-z]{1,16}$`)
 // when its authserv-id is Gmail's: a sender can write one of its own
 // lower down, claiming anything. A method reported more than once (a
 // message signed twice) is pass when any one passed, else its first
-// result.
+// result. Its results are split where Gmail ends one (authResults), so
+// a quoted envelope sender holding ";" cannot add a result of its own.
 func readChecks(headers []gmailHeader) checks {
 	for _, h := range headers {
 		if !strings.EqualFold(h.Name, "Authentication-Results") {
 			continue
 		}
-		parts := strings.Split(h.Value, ";")
+		parts := authResults(h.Value)
 		if f := strings.Fields(parts[0]); len(f) == 0 || !strings.EqualFold(f[0], gmailAuthServ) {
 			return checks{}
 		}
@@ -214,7 +280,7 @@ func readChecks(headers []gmailHeader) checks {
 			return cur
 		}
 		for _, p := range parts[1:] {
-			f := strings.Fields(p)
+			f := quotedFields(p)
 			if len(f) == 0 {
 				continue
 			}
@@ -225,13 +291,28 @@ func readChecks(headers []gmailHeader) checks {
 			if !resultWord.MatchString(result) {
 				result = "unknown"
 			}
+			props := map[string]string{}
+			for _, prop := range f[1:] {
+				if k, v, ok := strings.Cut(prop, "="); ok {
+					props[strings.ToLower(k)] = v
+				}
+			}
 			switch method {
 			case "spf":
 				out.spf = pick(out.spf, result)
+				if d := identityDomain(props["smtp.mailfrom"]); result == "pass" && d != "" {
+					out.spfPass = append(out.spfPass, d)
+				}
 			case "dkim":
 				out.dkim = pick(out.dkim, result)
+				if d := identityDomain(cmp.Or(props["header.d"], props["header.i"])); result == "pass" && d != "" {
+					out.dkimPass = append(out.dkimPass, d)
+				}
 			case "dmarc":
 				out.dmarc = pick(out.dmarc, result)
+				if d := identityDomain(props["header.from"]); result == "pass" && d != "" {
+					out.dmarcPass = append(out.dmarcPass, d)
+				}
 			}
 		}
 		return out
@@ -239,12 +320,105 @@ func readChecks(headers []gmailHeader) checks {
 	return checks{}
 }
 
-// refute reports whether Gmail's checks deny that the message came from
-// its From address's domain: DMARC failed, or Gmail checked and neither
-// SPF nor DKIM passed. A message with no checks (one the owner sent) is
-// not refuted.
-func (k checks) refute() bool {
-	return k.seen && (k.dmarc == "fail" || (k.spf != "pass" && k.dkim != "pass"))
+// authResults is an Authentication-Results value split into its parts
+// at each ";" outside a quoted string, its comments (in parentheses,
+// nested, outside quoted strings) each made one space.
+func authResults(v string) []string {
+	var parts []string
+	var b strings.Builder
+	depth, quoted, escaped := 0, false, false
+	for _, r := range v {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && (quoted || depth > 0):
+			escaped = true
+		case depth > 0:
+			switch r {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 {
+					b.WriteByte(' ')
+				}
+			}
+			continue
+		case quoted:
+			quoted = r != '"'
+		case r == '"':
+			quoted = true
+		case r == '(':
+			depth = 1
+			continue
+		case r == ';':
+			parts = append(parts, b.String())
+			b.Reset()
+			continue
+		}
+		if depth == 0 {
+			b.WriteRune(r)
+		}
+	}
+	return append(parts, b.String())
+}
+
+// quotedFields is s split at white space outside quoted strings.
+func quotedFields(s string) []string {
+	var out []string
+	start, quoted, escaped := -1, false, false
+	for i, r := range s {
+		switch {
+		case escaped:
+			escaped = false
+		case quoted && r == '\\':
+			escaped = true
+		case r == '"':
+			quoted = !quoted
+		case !quoted && unicode.IsSpace(r):
+			if start >= 0 {
+				out = append(out, s[start:i])
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		out = append(out, s[start:])
+	}
+	return out
+}
+
+// domainName is a domain as Kivali compares one: letters, digits and
+// dashes, in dot-separated parts.
+var domainName = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)*$`)
+
+// identityDomain is the domain of an identity Gmail checked, as an
+// Authentication-Results property gives it ("@example.org",
+// "x@example.org", "example.org"): after its last "@", lower-cased,
+// without a final dot; "" for one that is not a plain domain.
+func identityDomain(v string) string {
+	d := strings.TrimSuffix(strings.ToLower(domainOf("@"+strings.Trim(v, "<>"))), ".")
+	if !domainName.MatchString(d) {
+		return ""
+	}
+	return d
+}
+
+// confirms reports whether Gmail's checks confirm a message came from
+// domain, its From address's: DMARC passed for it, or a DKIM signature
+// or the SPF check passed for it or a subdomain of it. Any other
+// identity that passed (a relay's, a sender's own domain) says nothing
+// of domain.
+func (k checks) confirms(domain string) bool {
+	if domain == "" {
+		return false
+	}
+	aligned := func(d string) bool { return d == domain || strings.HasSuffix(d, "."+domain) }
+	return slices.Contains(k.dmarcPass, domain) || slices.ContainsFunc(k.dkimPass, aligned) || slices.ContainsFunc(k.spfPass, aligned)
 }
 
 func (k checks) words() string {
@@ -259,12 +433,17 @@ func (k checks) words() string {
 // sender's address, whether that is the owner's domain, and Gmail's
 // checks of it.
 func provenance(sender string, own bool, k checks) string {
-	who := cmp.Or(sender, "an address Kivali could not read")
 	where := "from outside your domain"
 	if own {
 		where = "from your domain"
 	}
-	return "Sender: " + who + ", " + where + ". " + k.words()
+	return senderLine(sender, where, k)
+}
+
+// senderLine is a provenance line: the sender's address, where, in
+// Kivali's words, it is from, and Gmail's checks of it.
+func senderLine(sender, where string, k checks) string {
+	return "Sender: " + cmp.Or(sender, unreadAddress) + ", " + where + ". " + k.words()
 }
 
 // The links of an email's text are listed after it, at most maxLinks,
@@ -395,9 +574,11 @@ func plainText(s string, links *linkList) (string, int) {
 // out (hidden). It drops what a reader never sees: the head, scripts,
 // styles and other content that is not text, and images (not counted);
 // comments, other than Outlook's conditional ones, which hold markup;
-// and text styled out of sight by its inline styles (htmlConverter),
-// both counted in hidden. Links become markers, block elements line
-// ends, list items "- " lines.
+// and text styled out of sight by its <style> rules and inline styles
+// (htmlConverter), both counted in hidden. Links become markers, block
+// elements line ends, list items "- " lines. The page behind the text
+// is white until an element gives it a background, as a mail reader's
+// is.
 func htmlToText(src string, links *linkList) (string, int) {
 	doc, err := html.ParseWithOptions(strings.NewReader(src), html.ParseOptionEnableScripting(false))
 	if err != nil {
@@ -405,8 +586,8 @@ func htmlToText(src string, links *linkList) (string, int) {
 		// is not.
 		return plainText(src, links)
 	}
-	c := &htmlConverter{links: links}
-	c.walk(doc, textStyle{fontPx: -1})
+	c := &htmlConverter{links: links, sheet: sheetOf(doc)}
+	c.walk(doc, textStyle{fontPx: -1, background: "#ffffff"})
 	return trimBody(c.out.b.String()), c.hidden
 }
 
@@ -420,16 +601,18 @@ func trimBody(s string) string {
 type htmlConverter struct {
 	out    textOut
 	links  *linkList
+	sheet  *styleSheet
 	hidden int
 	// image is set when an image a reader sees was walked, so a link
 	// around one still gets its marker.
 	image bool
 }
 
-// textStyle is what the inline styles above a text leave it: its colour
-// and the background behind it, normalized (normColor; "" where none is
-// given inline), its font size in pixels (-1 where none is given), and
-// whether visibility hides it or it is preformatted.
+// textStyle is what the styles above a text leave it: its colour and
+// the background behind it, normalized (normColor; a colour "" where
+// none is given, the background the white page's where none is given),
+// its font size in pixels (-1 where none is given), and whether
+// visibility hides it or it is preformatted.
 type textStyle struct {
 	color, background string
 	fontPx            float64
@@ -491,7 +674,7 @@ func (c *htmlConverter) walk(n *html.Node, st textStyle) {
 	if skipped[n.DataAtom] {
 		return
 	}
-	css := inlineStyle(n)
+	css := c.sheet.style(n)
 	if elementHidden(n, css) {
 		c.hidden += hiddenChars(n)
 		return
@@ -604,34 +787,28 @@ func httpHref(n *html.Node) string {
 	return v
 }
 
-// inlineStyle is an element's style attribute as properties, names and
-// values lower-cased, "!important" dropped, the last of a name kept.
-func inlineStyle(n *html.Node) map[string]string {
-	v, ok := attr(n, "style")
-	if !ok {
-		return nil
-	}
-	m := map[string]string{}
-	for _, decl := range strings.Split(v, ";") {
-		k, val, ok := strings.Cut(decl, ":")
-		if !ok {
-			continue
-		}
-		val = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(strings.ToLower(val)), "!important"))
-		m[strings.TrimSpace(strings.ToLower(k))] = val
-	}
-	return m
-}
-
 // elementHidden reports whether an element and all it holds are out of
-// sight, whatever is inside: the hidden attribute, display:none, an
-// opacity of 0.05 or less, or no height (or width) with its overflow
-// hidden.
+// sight, whatever is inside, by its attributes and the properties that
+// apply to it (styleSheet.style): the hidden attribute; display:none;
+// Outlook's mso-hide:all; an opacity of 0.05 or less; no height (or
+// width, or their maximum) with its overflow hidden; moved 999px or
+// more off the page to the left or the top (text-indent, left, top or
+// margin-left of -999px or less, positioned or not); or clipped to
+// nothing (clip:rect with no area, clip-path:inset of 50% or more).
+//
+// Not covered, so text hidden these ways reaches the agent: a transform
+// (scale(0), a translate off the page), right, bottom or another
+// margin off the page, an element laid over another (z-index, a
+// negative margin onto it), a height or line-height of 0 without
+// overflow hidden, clip-path shapes other than inset, filter:opacity, a
+// colour near the background's but not equal to it, or one Kivali does
+// not read (hsl(), a variable), text on a background image of its own
+// colour, and the style rules styleSheet does not apply.
 func elementHidden(n *html.Node, css map[string]string) bool {
 	if _, ok := attr(n, "hidden"); ok {
 		return true
 	}
-	if css["display"] == "none" {
+	if css["display"] == "none" || css["mso-hide"] == "all" {
 		return true
 	}
 	if v, ok := css["opacity"]; ok {
@@ -651,7 +828,79 @@ func elementHidden(n *html.Node, css map[string]string) bool {
 			}
 		}
 	}
+	for _, k := range []string{"text-indent", "left", "top", "margin-left"} {
+		if px, ok := lengthPx(css[k]); ok && px <= -offPagePx {
+			return true
+		}
+	}
+	return clippedAway(css["clip"], css["clip-path"])
+}
+
+// offPagePx is how far, in pixels, an element moved to the left or the
+// top is off the page.
+const offPagePx = 999
+
+// lengthPx is a CSS length in pixels: px, or a number without a unit
+// as mail readers take it; pt; em and rem against 16px. ok is false for
+// a value it does not read (a percentage, auto).
+func lengthPx(v string) (float64, bool) {
+	f, ok := cssNumber(v)
+	if !ok {
+		return 0, false
+	}
+	unit := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(v), "+-.0123456789"))
+	switch unit {
+	case "", "px":
+		return f, true
+	case "pt":
+		return f * 4 / 3, true
+	case "em", "rem":
+		return f * 16, true
+	}
+	return 0, false
+}
+
+// clippedAway reports whether a clip or clip-path value leaves nothing
+// of an element: clip:rect(top, right, bottom, left) with its bottom
+// at or above its top or its right at or left of its left
+// (rect(0,0,0,0), rect(1px,1px,1px,1px)), or clip-path:inset() of one
+// percentage, 50% or more, cut from every side.
+func clippedAway(clip, clipPath string) bool {
+	if in, ok := cssCall(clip, "rect"); ok {
+		var side [4]float64
+		parts := strings.FieldsFunc(in, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+		if len(parts) == 4 {
+			read := 0
+			for i, p := range parts {
+				if f, ok := lengthPx(p); ok {
+					side[i] = f
+					read++
+				}
+			}
+			if read == 4 && (side[2] <= side[0] || side[1] <= side[3]) {
+				return true
+			}
+		}
+	}
+	if in, ok := cssCall(clipPath, "inset"); ok {
+		if parts := strings.Fields(in); len(parts) == 1 && strings.HasSuffix(parts[0], "%") {
+			if f, ok := cssNumber(parts[0]); ok && f >= 50 {
+				return true
+			}
+		}
+	}
 	return false
+}
+
+// cssCall is what a CSS function value of the name holds between its
+// parentheses: "0, 0, 0, 0" for "rect(0, 0, 0, 0)".
+func cssCall(v, name string) (string, bool) {
+	v = strings.TrimSpace(v)
+	rest, ok := strings.CutPrefix(v, name+"(")
+	if !ok || !strings.HasSuffix(rest, ")") {
+		return "", false
+	}
+	return strings.TrimSuffix(rest, ")"), true
 }
 
 // cssNumber is a CSS value's number, with its unit or percent sign
@@ -670,13 +919,16 @@ func cssNumber(v string) (float64, bool) {
 }
 
 // under is the style of the text inside n: n's own background, colour,
-// font size, visibility and white space where it gives them, inline or
-// by the old attributes (bgcolor, a font's color, the body's text), and
-// the style above it where it does not. CSS takes the place of an
-// attribute.
+// font size, visibility and white space where it gives them, by the
+// properties that apply to it or by the old attributes (bgcolor, a
+// background image, a font's color, the body's text), and the style
+// above it where it does not. CSS takes the place of an attribute.
 func (st textStyle) under(n *html.Node, css map[string]string) textStyle {
 	if v, ok := attr(n, "bgcolor"); ok {
 		st.background = backgroundOf(v, st.background)
+	}
+	if v, ok := attr(n, "background"); ok && strings.TrimSpace(v) != "" {
+		st.background = "image"
 	}
 	for _, k := range []string{"background", "background-color", "background-image"} {
 		if v, ok := css[k]; ok {

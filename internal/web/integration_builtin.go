@@ -158,9 +158,9 @@ func callerOf(slug string, access json.RawMessage) builtinintegrations.Caller {
 // integrations/<name>/untrusted-downloads/<folder>/
 // (files.WriteIntegrationDownload) and answers the path as the agent
 // reads it. Its errors are words for the agent: a link or a file the
-// agent left in the way, named by its /files/ path, or a file over the
-// limit; anything else is logged and answered without the host's
-// paths.
+// agent left in the way, or a folder already full, named by its /files/
+// path, or a file over the limit; anything else is logged and answered
+// without the host's paths.
 func (s *Server) builtinSave(slug, name string) builtinintegrations.SaveFunc {
 	return func(folder, file string, r io.Reader, limit int64) (string, error) {
 		storage := files.StorageRoot(filepath.Join(s.Store.Root(), "agents", slug))
@@ -169,6 +169,8 @@ func (s *Server) builtinSave(slug, name string) builtinintegrations.SaveFunc {
 		switch {
 		case err == nil:
 			return files.ModelRootPath + "/" + rel, nil
+		case errors.As(err, &pe) && errors.Is(err, files.ErrFolderFull):
+			return "", fmt.Errorf("%s/%s %v", files.ModelRootPath, pe.Path, pe.Err)
 		case errors.As(err, &pe) && (errors.Is(err, files.ErrSymlink) || errors.Is(err, files.ErrNotDir) || errors.Is(err, files.ErrRaced)):
 			return "", fmt.Errorf("%s/%s %v, and Kivali does not write past it", files.ModelRootPath, pe.Path, pe.Err)
 		case errors.Is(err, files.ErrTooLarge):
