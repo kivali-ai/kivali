@@ -255,6 +255,11 @@ func (v *integrationView) signInRequirement(c *connView, at map[string]time.Time
 		at[reqSignIn] = c.rec.CreatedAt
 	case si.Error != "":
 		row.Words = "The service no longer accepts the sign-in: " + sentenceEnd(si.Error) + " Agents cannot use " + v.displayName() + " until you sign in again."
+		if adv, ok := v.builtin.(builtinintegrations.SignInAdviser); ok {
+			if words := strings.TrimSpace(adv.SignInAdvice(si.Error)); words != "" {
+				row.Words += " " + sentenceEnd(words)
+			}
+		}
 		at[reqSignIn] = si.ErrorAt
 	default:
 		row.Words = "Its sign-in is not stored on this Kivali server, as after a restore from a backup. Sign in again."
