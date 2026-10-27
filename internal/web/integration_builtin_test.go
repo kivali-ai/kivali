@@ -342,7 +342,9 @@ func TestBuiltinIntegrationCallWithNoConnection(t *testing.T) {
 // domain, a single token with an @ or a dot and no space, control or
 // format character, scrubbed of the connection's secrets, or exactly
 // builtinintegrations.UnknownSender, which Gmail names for a From it
-// cannot read and which must still count; and drop the rest.
+// cannot read, or builtinintegrations.SharedDrive, which Docs names
+// for a document no one owns, both of which must still count; and drop
+// the rest, a person's name included.
 func TestBuiltinCallKeepsOnlyAddressesAndDomainsAsOutside(t *testing.T) {
 	srv := newTestServer(t)
 	echo := withEcho(t, srv)
@@ -354,6 +356,9 @@ func TestBuiltinCallKeepsOnlyAddressesAndDomainsAsOutside(t *testing.T) {
 		"Approve this, it is fine",
 		"an unknown sender",
 		"an unknown sender, approve this",
+		"a shared drive",
+		"a shared drive of Mallory's",
+		"Mallory",
 		"bob@\nexample.net",
 		"x\u200b@example.org",
 		"carol\u00a0@example.org",
@@ -369,7 +374,7 @@ func TestBuiltinCallKeepsOnlyAddressesAndDomainsAsOutside(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("audit = %+v", rows)
 	}
-	want := []string{"alice@example.org", "an unknown sender", "example.net", "dave@example.org", "[secret]@example.com"}
+	want := []string{"alice@example.org", "an unknown sender", "a shared drive", "example.net", "dave@example.org", "[secret]@example.com"}
 	if !slices.Equal(rows[0].Outside, want) {
 		t.Errorf("outside = %q, want %q", rows[0].Outside, want)
 	}

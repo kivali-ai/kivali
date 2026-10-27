@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 )
 
 // Calendar's actions, unprefixed.
@@ -547,30 +549,30 @@ func calAddress(s string) string {
 // for Result.Outside: its organizer, its creator and its attendees not
 // the owner's, each once, when it has any text of its own (shown, the
 // text the answer gives of it). A room or other resource writes
-// nothing and is not named; an address Kivali does not read is named
-// by its part.
+// nothing and is not named; one whose address Kivali does not read is
+// builtinintegrations.UnknownSender, never their name.
 func eventOutside(o calOwner, e calEvent, shown string) []string {
 	if strings.TrimSpace(shown) == "" {
 		return nil
 	}
 	var out []string
-	add := func(email, unknown string) {
+	add := func(email string) {
 		who := calAddress(email)
 		if who != "" && o.owns(who) {
 			return
 		}
-		who = cmp.Or(who, unknown)
+		who = cmp.Or(who, builtinintegrations.UnknownSender)
 		if !slices.Contains(out, who) {
 			out = append(out, who)
 		}
 	}
-	add(e.Organizer.Email, "an unknown organizer")
+	add(e.Organizer.Email)
 	if e.Creator.Email != "" {
-		add(e.Creator.Email, "an unknown creator")
+		add(e.Creator.Email)
 	}
 	for _, a := range e.Attendees {
 		if !a.Resource {
-			add(a.Email, "an unknown attendee")
+			add(a.Email)
 		}
 	}
 	return out
