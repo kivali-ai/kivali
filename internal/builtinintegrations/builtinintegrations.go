@@ -134,8 +134,9 @@ type Tool struct {
 // of a message, or owner of a document, by address, once. Core keeps
 // it in the call's audit row (store.IntegrationAuditRow.Outside), at
 // most MaxOutside of them, and only the entries that are one address
-// or domain: a single token, with no space, control or format
-// character, holding an @ or a dot. Any other entry is dropped.
+// or domain (a single token, with no space, control or format
+// character, holding an @ or a dot) or UnknownSender. Any other entry
+// is dropped.
 //
 // ShellJob, set by Call of a ShellJobIntegration, is work for the
 // agent's shell: core hands it to the agent's MCP server, which runs it
@@ -198,6 +199,12 @@ type Hold struct {
 type HoldField struct {
 	Label, Value string
 }
+
+// UnknownSender is the Result.Outside entry for content whose sender
+// Kivali could not read in its own words, such as an email whose From
+// header holds no address it reads. Core keeps it as it keeps an
+// address, so such content counts toward a held call's taint line.
+const UnknownSender = "an unknown sender"
 
 // MaxOutside bounds the addresses of Result.Outside an audit row
 // keeps, the first ones; each is cut at 254 bytes, an address's

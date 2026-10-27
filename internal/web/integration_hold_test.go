@@ -705,6 +705,20 @@ func TestHeldCallTaintLine(t *testing.T) {
 	}
 }
 
+// Why this test exists: an email whose From Kivali cannot read is named
+// builtinintegrations.UnknownSender, and is as much outside text as one
+// from a stranger's address. A held call after reading one must carry
+// a taint line counting it, not none.
+func TestHeldCallTaintCountsAnUnknownSender(t *testing.T) {
+	srv, echo, _ := holdServer(t)
+	echo.Outside = []string{builtinintegrations.UnknownSender}
+	srv.callAgentIntegration(context.Background(), "dana", "echo_echo", nil)
+	holdCall(srv, "dana", emailHold)
+	if got := onlyHold(t, srv).taint; got != "Before asking, this agent read 1 message or document from outside your domain, from an unknown sender." {
+		t.Errorf("taint = %q", got)
+	}
+}
+
 // Why this test exists: with nothing from outside in the audit, the
 // row must carry no taint line at all, so the owner learns to read one
 // as a real warning.

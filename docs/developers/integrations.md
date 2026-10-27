@@ -2323,9 +2323,10 @@ content written outside the owner's domain names who wrote it in the
 row's `outside` (from `Result.Outside`; left out when there are none):
 a message's sender, a document's owner. The row keeps the first 50
 entries that are each one address or domain, a single token holding
-an `@` or a `.`, with no space, control or format character, each
-scrubbed and cut at 254 bytes, and drops any other entry, such as a
-From header's words. A held call's taint line is worked out from it
+an `@` or a `.`, with no space, control or format character, or
+exactly "an unknown sender" (`builtinintegrations.UnknownSender`, a
+sender Kivali could not read), each scrubbed and cut at 254 bytes,
+and drops any other entry, such as a From header's words. A held call's taint line is worked out from it
 ([Held calls](#held-calls)). The owner's own calls
 are rows for `ceo`, and so is a roll back, with the action `rollback`
 and the versions as its reason ([Rolling back](#rolling-back)), which
@@ -2928,9 +2929,9 @@ row's last: "Before asking, this agent read 3 messages or documents
 from outside your domain, the latest from alice@example.org." With
 one, "... read 1 message or document from outside your domain, from
 alice@example.org."; with none, the line is empty. Every entry it
-counts or names is an address or a domain, the only entries a row's
-`outside` keeps ([The audit](#the-audit)), so no outside sender's
-words reach the card. Nothing else is stored for it.
+counts or names is an address, a domain or "an unknown sender", the
+only entries a row's `outside` keeps ([The audit](#the-audit)), so no
+outside sender's words reach the card. Nothing else is stored for it.
 
 Held calls live in core's memory alone. A restart of Kivali drops every
 one, unrun, with no row and no message: the agent was told that no
@@ -4909,12 +4910,12 @@ and have no `run`.
 Each read sets `Result.Outside` to the senders of what it returned or
 saved that are not the owner's (Provenance, above), each once in the
 order read: the From address Kivali read, or "an unknown sender" when
-it read none, never the header's own words. A search names the senders of every
-message it lists, since a snippet is the message's text. Core keeps
-the addresses among them in the audit row's `outside` ([The
-audit](#the-audit)), which a held call's taint line reads ([Held
-calls](#held-calls)), and drops the From header's words and "an
-unknown sender"; nothing else is stored.
+it read none (`builtinintegrations.UnknownSender`), never the header's
+own words. A search names the senders of every message it lists,
+since a snippet is the message's text. Core keeps them in the audit
+row's `outside` ([The audit](#the-audit)), "an unknown sender"
+included, which a held call's taint line reads ([Held
+calls](#held-calls)); nothing else is stored.
 
 Docs' reads name the owner of each document read or listed, or whose
 comments are listed, that is not the owner's domain, "a shared drive"
