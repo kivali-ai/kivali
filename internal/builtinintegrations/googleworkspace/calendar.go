@@ -201,12 +201,15 @@ const (
 var eventFramingLetters = []string{lettersOf(eventContentStart), lettersOf(eventContentEnd)}
 
 // delimitEvent puts an event's own text, or a list of calendars, between
-// the two lines. A line of it that reads as one of them, or as one of
-// an email's, is quoted with "> ", as delimitEmail quotes an email's.
+// the two lines. A line of it that starts as one of them, or as one of
+// an email's, reads, whatever its spaces, case, punctuation and what
+// follows, is quoted with "> ", as delimitEmail quotes an email's.
 func delimitEvent(s string) string {
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
-		if ls := lettersOf(l); slices.Contains(eventFramingLetters, ls) || slices.Contains(framingLetters, ls) {
+		letters := lettersOf(l)
+		starts := func(f string) bool { return strings.HasPrefix(letters, f) }
+		if slices.ContainsFunc(eventFramingLetters, starts) || slices.ContainsFunc(framingLetters, starts) {
 			lines[i] = "> " + l
 		}
 	}

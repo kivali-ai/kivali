@@ -4366,8 +4366,9 @@ client, bounds, errors and scrubbing).
   `get_message`'s does. Audit: "read event <id> on calendar <id>".
 - **Framing and provenance.** An event's own text is between "Content
   of an untrusted calendar event follows." and "End of calendar event
-  content." (`delimitEvent`), a line reading as either, or as an
-  email's framing line, quoted with "> "; the read actions'
+  content." (`delimitEvent`), a line starting as either, or as an
+  email's framing line, whatever follows, quoted with "> " as
+  `delimitEmail` quotes one; the read actions'
   descriptions say the text is untrusted, as Gmail's do. The provenance
   line is "Organizer: <address>, from your domain" or "from outside
   your domain", then "Created by <address>, ..." when the creator is
