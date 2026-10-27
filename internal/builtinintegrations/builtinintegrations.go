@@ -32,6 +32,7 @@ package builtinintegrations
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/url"
 
 	"github.com/kivali-ai/kivali/internal/integration"
@@ -75,10 +76,28 @@ type Integration interface {
 
 // Caller is the agent a call or a list is for, and its access: the
 // agent's filled access form (empty for an integration without one).
+//
+// Save, set by core for a call (Call and Complete) and nil for a list,
+// is how the call puts a file it fetched into the agent's files.
 type Caller struct {
 	Agent  string
 	Access map[string]any
+	Save   SaveFunc
 }
+
+// SaveFunc writes r, at most limit bytes (limit must be positive), into
+// the calling agent's files as a download from outside, under
+// /files/integrations/<integration>/untrusted-downloads/<folder>/, and
+// returns the path the agent reads it at. folder is one plain path
+// element the integration chooses, such as the id of the message the
+// file came with: letters, digits, dots, dashes and underscores, not
+// starting with a dot. The file is named after name as a web task's
+// download is (files.CleanDownloadName), with -2, -3 for a name already
+// there. Core writes it as it is, never opening or running it; r
+// holding more than limit fails the save and leaves no file. An error
+// is in words for the agent ("/files/integrations is a symbolic
+// link"), naming no path outside its files.
+type SaveFunc func(folder, name string, r io.Reader, limit int64) (path string, err error)
 
 // Connection is the connection's values, read by core at the moment of
 // the call: its id and every field by user_config key, secrets
@@ -107,6 +126,12 @@ type Tool struct {
 // reason; empty, it keeps the answer's words when the call failed, as
 // for a bundle.
 //
+// Outside, when set, names who outside the owner's domain wrote content
+// the call returned to the agent or saved into its files: each sender
+// of a message, or owner of a document, by address, once. Core keeps
+// it in the call's audit row (store.IntegrationAuditRow.Outside), at
+// most MaxOutside of them.
+//
 // ShellJob, set by Call of a ShellJobIntegration, is work for the
 // agent's shell: core hands it to the agent's MCP server, which runs it
 // and sends the call again with the result, and core then calls
@@ -117,8 +142,14 @@ type Result struct {
 	Content  []string
 	IsError  bool
 	Audit    string
+	Outside  []string
 	ShellJob *shelljob.Job
 }
+
+// MaxOutside bounds the addresses of Result.Outside an audit row
+// keeps, the first ones; each is cut at 254 bytes, an address's
+// longest.
+const MaxOutside = 50
 
 // ShellJobIntegration is an Integration that runs part of an action in
 // the agent's shell: its Call answers with Result.ShellJob, and Complete

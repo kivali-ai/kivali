@@ -515,7 +515,7 @@ integrations/<name>/
                                     setup_taken_over (the one connection)
   connections-retired/<id>.yaml     a connection set aside at boot, as it was stored (Migration, below)
   access/<slug>.yaml                slug, access, set_at, set_by, retired (set aside with a retired connection)
-  audit.jsonl                       one row per call: at, agent, action, allowed, reason, duration_ms
+  audit.jsonl                       one row per call: at, agent, action, allowed, reason, duration_ms, outside
   log.jsonl                         the integration's log: at, level, message (the runtime, below)
 ```
 
@@ -2315,7 +2315,12 @@ in the agent's shell ([The git built-in](#the-git-built-in)) appends
 two rows: one when core hands the job out, with the built-in's
 `Result.Audit` as its reason (`started: acme/widgets`), and one when
 the second request ends it, with how it ended; a second request that
-never comes leaves the first row alone. The owner's own calls
+never comes leaves the first row alone. A built-in's call that
+returned content written outside the owner's domain names who wrote
+it, by address, in the row's `outside` (from `Result.Outside`, the
+first 50, each scrubbed and cut at 254 bytes; left out when there are
+none): a message's sender, a document's owner. Core does nothing else
+with it yet. The owner's own calls
 are rows for `ceo`, and so is a roll back, with the action `rollback`
 and the versions as its reason ([Rolling back](#rolling-back)), which
 the page shows as "Roll back" and "From version 1.1.0 to version
@@ -2347,13 +2352,19 @@ type Integration interface {
 	Choices(ctx context.Context, conn Connection, name string) ([]string, error)
 }
 
-type Caller struct{ Agent string; Access map[string]any }
+type Caller struct {
+	Agent  string
+	Access map[string]any
+	Save   SaveFunc // a call's: puts a file it fetched into the agent's files; nil for a list
+}
+type SaveFunc func(folder, name string, r io.Reader, limit int64) (path string, err error)
 type Connection struct{ ID string; Fields map[string]string }
 type Tool struct{ Name, Description string; InputSchema json.RawMessage }
 type Result struct {
 	Content  []string
 	IsError  bool
 	Audit    string        // the audit row's reason; empty: the failure's words
+	Outside  []string      // who outside the owner's domain wrote what it returned, by address
 	ShellJob *shelljob.Job // work for the agent's shell (ShellJobIntegration)
 }
 
@@ -2442,7 +2453,22 @@ type SignInAdviser interface{ SignInAdvice(refusal string) string }
 - A `Refusal` from `Call` or `Complete` is audited as not allowed, with
   its `Reason`, and the agent reads its `Text`; any other error is the
   function's own failure, as above. `Result.Audit`, when set, is the
-  audit row's reason in place of the failure's words.
+  audit row's reason in place of the failure's words, and
+  `Result.Outside` the row's `outside` ([The audit](#the-audit)).
+- `Caller.Save`, which core sets for `Call` and `Complete`
+  (`Server.builtinSave`), puts a file the call fetched into the
+  calling agent's files, as a web task's download is put into its
+  view: `files.WriteIntegrationDownload` writes it under
+  `/files/integrations/<integration>/untrusted-downloads/<folder>/`,
+  named by `files.CleanDownloadName` with `-2`, `-3` for a name already
+  there, at most the call's `limit` bytes, and answers the path the
+  agent reads it at. `folder` is one plain path element the built-in
+  chooses (Google Workspace's is the message's id). The agent writes
+  its `/files/`, so each directory on the way is made when missing and
+  opened without following a link: a link or a file the agent left
+  there fails the save, in words naming its `/files/` path, and is
+  neither followed nor removed. Core never opens or runs what it
+  saved.
 - A `ShellJobIntegration` runs part of an action in the agent's shell:
   its `Call` answers with `Result.ShellJob` (and `Result.Audit`, the
   reason of the row core writes as it hands the job out), and

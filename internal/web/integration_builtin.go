@@ -19,7 +19,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -27,6 +29,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/integrationpod"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
@@ -150,6 +153,32 @@ func callerOf(slug string, access json.RawMessage) builtinintegrations.Caller {
 	return c
 }
 
+// builtinSave is Caller.Save for slug's call of the built-in name: it
+// writes into slug's /files/ under
+// integrations/<name>/untrusted-downloads/<folder>/
+// (files.WriteIntegrationDownload) and answers the path as the agent
+// reads it. Its errors are words for the agent: a link or a file the
+// agent left in the way, named by its /files/ path, or a file over the
+// limit; anything else is logged and answered without the host's
+// paths.
+func (s *Server) builtinSave(slug, name string) builtinintegrations.SaveFunc {
+	return func(folder, file string, r io.Reader, limit int64) (string, error) {
+		storage := files.StorageRoot(filepath.Join(s.Store.Root(), "agents", slug))
+		rel, err := files.WriteIntegrationDownload(storage, name, folder, file, r, limit)
+		var pe *files.PathError
+		switch {
+		case err == nil:
+			return files.ModelRootPath + "/" + rel, nil
+		case errors.As(err, &pe) && (errors.Is(err, files.ErrSymlink) || errors.Is(err, files.ErrNotDir) || errors.Is(err, files.ErrRaced)):
+			return "", fmt.Errorf("%s/%s %v, and Kivali does not write past it", files.ModelRootPath, pe.Path, pe.Err)
+		case errors.Is(err, files.ErrTooLarge):
+			return "", fmt.Errorf("the file is larger than %d bytes", limit)
+		}
+		log.Printf("integration %s: saving %q for %s: %v", name, file, slug, err)
+		return "", errors.New("the file could not be written into your files")
+	}
+}
+
 // runBuiltin runs fn for at most d on clk, as a pod's request waits: a
 // function still running then is told to stop through its context and
 // the answer is errIntegrationTimeout. A function that panics fails
@@ -268,6 +297,7 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 		return integrationError(fmt.Sprintf("Kivali could not read the %s integration's connection; try again later or tell the owner.", v.display))
 	}
 	caller := callerOf(slug, v.access)
+	caller.Save = s.builtinSave(slug, v.name)
 	run := func(ctx context.Context) (*builtinintegrations.Result, error) {
 		return v.builtin.Call(ctx, caller, conn, tool, args)
 	}
@@ -314,11 +344,32 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 	for i := range resp.Content {
 		resp.Content[i] = scrub.Replace(resp.Content[i])
 	}
-	if callErr == nil && res != nil && res.Audit != "" {
-		failed = res.Audit
+	var outside []string
+	if callErr == nil && res != nil {
+		if res.Audit != "" {
+			failed = res.Audit
+		}
+		outside = auditOutside(res.Outside, scrub)
 	}
-	s.auditAgentCall(v.name, start, slug, tool, true, scrub.Replace(failed)+jobNote)
+	s.auditAgentRow(v.name, start, slug, tool, true, scrub.Replace(failed)+jobNote, outside)
 	return resp
+}
+
+// auditOutside is a built-in's Result.Outside as its audit row keeps
+// it: the first builtinintegrations.MaxOutside non-empty addresses,
+// each scrubbed and cut at 254 bytes.
+func auditOutside(outside []string, scrub *strings.Replacer) []string {
+	var out []string
+	for _, a := range outside {
+		if a = strings.TrimSpace(a); a == "" {
+			continue
+		}
+		if len(out) == builtinintegrations.MaxOutside {
+			break
+		}
+		out = append(out, clipText(scrub.Replace(a), 254))
+	}
+	return out
 }
 
 // builtinShellJob is the first request's answer for a call whose
