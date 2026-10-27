@@ -4173,11 +4173,6 @@ everything.
 | `gmail_labels`, `calendars`, `docs_folders` | choices, listed live | Labels it may read, Calendars it may use, Folders it may read |
 | `send_to` | list | May send to: addresses, or `*@domain` |
 
-Google Workspace implements `AccessChecker`: saving an access refuses a
-`send_to` entry that is not an address (`local@domain`) or `*@domain`,
-and a label, calendar or folder entry that reads to no id. A stored
-list that is not a list matches nothing.
-
 Read is what sees inside the owner's account, write what changes
 something there that no other person is told about, and send anything
 that makes Google deliver something to another person, which always
@@ -4188,12 +4183,15 @@ waits for the owner's approval, as a held call: `send_email`,
 only whether the agent may ask; each send's `Hold.Switch` names it
 (`gmail_send`, `calendar_send` or `docs_send`), so an approval after
 the owner turned it off is refused and the call keeps waiting ([Held
-calls](#held-calls)). `CheckAccess` refuses, as the owner
-saves an access, a `send_to` entry that is neither an address nor
-`*@` and a domain with a dot, which would match no one: ""<entry>"
-under May send to is not an address, such as dana@example.com, or a
-domain, such as *@example.com". `readAccess` takes a switch as on only when it is
-`true`, and each list's entries as Google's ids.
+calls](#held-calls)). Google Workspace is an `AccessChecker`:
+`CheckAccess` refuses, as the owner saves an access, a `send_to` entry
+that is neither an address nor `*@` and a domain with a dot, which
+would match no one: ""<entry>" under May send to is not an address,
+such as dana@example.com, or a domain, such as *@example.com", and a
+label, calendar or folder entry that reads to no id. `readAccess` takes
+a switch as on only when it is `true`, and each list's entries as
+Google's ids; a stored list that is not a list matches nothing: no
+label, calendar or folder, and no one to send to.
 
 A live option is `<name> (<id>)`: the name the owner knows the label,
 calendar or folder by, then Google's id for it (`option`). The access
