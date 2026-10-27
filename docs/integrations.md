@@ -1,6 +1,6 @@
 # Integrations
 
-An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one comes from a bundle you approve or ships with Kivali, is connected with a token you paste, by signing in to the service or by its own setup, and is given to agents one at a time, each with its own access. This page covers having one built, approving one and its new versions, rolling back to an earlier version, connecting it, what it needs from you once connected, giving agents access, what an agent then sees, the record of their calls, its log, disabling, disconnecting or uninstalling it, and the [Git (Basic)](#git-basic) and [GitHub](#github) integrations that ship with Kivali.
+An integration is an external service your agents can act on, such as a CRM, a blog or a ticket tracker. Each one comes from a bundle you approve or ships with Kivali, is connected with a token you paste, by signing in to the service or by its own setup, and is given to agents one at a time, each with its own access. This page covers having one built, approving one and its new versions, rolling back to an earlier version, connecting it, what it needs from you once connected, giving agents access, what an agent then sees, the record of their calls, its log, disabling, disconnecting or uninstalling it, and the [Git (Basic)](#git-basic), [GitHub](#github) and [Google Workspace](#google-workspace) integrations that ship with Kivali.
 
 Integrations are under **Org**, **Integrations**, in two groups: **From a bundle**, the integrations you uploaded or your Kivali Developer published, with **Upload a bundle** under them; and **Built in**, the ones that ship with Kivali.
 
@@ -313,3 +313,48 @@ Each action is in **Recent calls**: one that opens, comments, closes or deletes 
 - Closing an issue or pull request the app did not open, and deleting a branch that holds a commit someone other than the app made.
 - SSH addresses, Git LFS files and submodules, as for [Git (Basic)](#not-supported). A clone stops after 15 minutes, a fetch or a push after 10.
 - Anything the app's permissions do not cover, such as changing the repository's settings, merging pull requests or approving reviews.
+
+## Google Workspace
+
+**Google Workspace** ships with Kivali. It connects your Gmail, Google Calendar and Google Docs, signed in with an OAuth client you make on Google's Auth Platform, in a Google Cloud project of yours. In this version, agents can list your Gmail labels. It runs inside Kivali and reaches only Google's APIs (`gmail.googleapis.com`, `www.googleapis.com` and `docs.googleapis.com`) and Google's sign-in (`accounts.google.com` and `oauth2.googleapis.com`).
+
+### Connect it
+
+On Google Workspace's page, **Connect** shows the steps on Google's side above the setup, each with a link to its page in Google Cloud console. Sign in to the console with the Google account agents will work in. It takes a few minutes, once:
+
+1. Create a project, or pick one you have, and turn on the Gmail, Google Calendar, Google Docs and Google Drive APIs in it.
+2. On Google's Auth Platform, choose **Get started**, name the app (Kivali, say) and give your email address where it asks. For the audience, choose **External** for a Gmail account, or **Internal** for a Google Workspace account, which keeps the app to your organization.
+3. Publish an External app: under **Audience**, choose **Publish app**. An app left in Testing has Google end its sign-in every seven days, and agents cannot use Google Workspace until you sign in again. Google does not review an app only you use, so the first time you sign in, Google says "Google hasn't verified this app": choose **Advanced**, then go on to the app. An Internal app has nothing to publish.
+4. Create a client. Choose **Desktop app** for a team on your computer, which you open at `127.0.0.1`: Google takes its sign-in at any port, so there is nothing to register. Choose **Web application** for a team you open at another address, such as a server's or the team's address for other devices, and add the **Redirect address** the page shows under **Authorized redirect URIs**. The page shows the address it is open at, so open it at the address you will sign in from.
+5. Download the client's JSON where Google shows the client's secret, paste the whole file into **Client JSON**, and choose **Continue**. Kivali reads the client id and secret from it and keeps nothing else of the file. A file that is not an OAuth client's, or that lacks the secret, is asked for again, with what is wrong.
+6. Choose **Continue to accounts.google.com**, sign in, and allow what Kivali asks for: reading, composing and labelling Gmail, Google Calendar's events and calendars, Google Docs, and reading Google Drive. Google lets you untick some; an action that needs one you left unticked is refused. Google sends you back, and Google Workspace is connected.
+
+Kivali keeps the client's id and secret and the sign-in's tokens as secrets: they are never shown, and Google Workspace's calls are given only a token that works at that moment, which Kivali renews. **Test connection** names the Google account the sign-in is for ("Signed in as dana@example.com").
+
+When Google no longer accepts the sign-in, the **Sign-in** requirement is not met, and **Needs you** lists it until you sign in again with its **Fix**. If that comes about a week after you signed in, the requirement says the app is likely still in Testing: publish it, then sign in again.
+
+**Disconnect** forgets the client id and secret, the sign-in and every agent's access, and asks Google to revoke the sign-in. The project and the client stay in Google Cloud console; delete them there when you no longer need them.
+
+### Access
+
+An agent's access has a part for each of Gmail, Google Calendar and Google Docs, each with three switches and a list, and one list for whom it may send to:
+
+- **Read** (**May read mail**, **May read calendars**, **May read documents**): the agent sees what is in your account. It changes nothing.
+- **Write** (**May draft and label**, **May change events**, **May write documents**): the agent changes something in your account that no other person is told about, such as a draft it writes or a label on a message.
+- **Send** (**May send mail**, **May invite and respond**, **May comment**): anything that makes Google deliver something to another person. Every send waits for your approval, and no switch turns that off: the switch decides only whether the agent may ask.
+- **Labels it may read**, **Calendars it may use** and **Folders it may read**: what the agent may use in each. **Load options** lists them from your account: Gmail's own labels (Inbox, Starred, Important, Sent, Drafts, Spam and Trash) and yours, your calendars, and the Drive folders you can open. Each is shown by its name with Google's id for it in parentheses, and the agent is held to the id. Leave a list empty for everything.
+- **May send to**: the addresses the agent may send mail and invitations to, such as `dana@example.com`, or `*@example.com` for everyone at a domain. Leave it empty for anyone.
+
+### What agents can do
+
+Google Workspace's page lists its actions under **Actions** by the switch that gives each. This version runs one of them; the page marks the others "Not available in this version of Kivali", and agents are not given them.
+
+With **May read mail**, an agent can list the Gmail labels its access includes: Gmail's own, then yours by name, each with its id.
+
+A call the agent's access does not allow is refused before anything reaches Google, and the agent is told to ask you. Each call is in **Recent calls**.
+
+### Not supported
+
+- Moving mail, events or documents to the trash, and sharing documents.
+- Google Sheets and Google Slides.
+- Gmail's settings, such as filters and forwarding: Kivali never asks for them.
