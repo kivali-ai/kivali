@@ -161,15 +161,21 @@ func (g *GoogleWorkspace) getUpTo(ctx context.Context, token string, a api, path
 	return g.send(ctx, token, http.MethodGet, a, path, nil, most, out)
 }
 
-// post POSTs body as JSON to path on a, a request that changes
-// something (a Drive file made, a document's batchUpdate), and decodes
-// the JSON answer into out (nil to read none).
-func (g *GoogleWorkspace) post(ctx context.Context, token string, a api, path string, body, out any) error {
-	b, err := json.Marshal(body)
-	if err != nil {
-		return err
+// change sends method to path on a with body as JSON (nil for none):
+// a request that changes something (a draft written, a label added, an
+// event made, a Drive file made, a document's batchUpdate) or a read
+// Google takes as a POST (Calendar's freeBusy). The JSON answer is
+// decoded into out (nil reads none, as for a DELETE). Its bounds and
+// Google's errors are get's; the client follows no redirect of it.
+func (g *GoogleWorkspace) change(ctx context.Context, token string, a api, method, path string, body, out any) error {
+	var b []byte
+	if body != nil {
+		var err error
+		if b, err = json.Marshal(body); err != nil {
+			return err
+		}
 	}
-	return g.send(ctx, token, http.MethodPost, a, path, b, maxAnswerBytes, out)
+	return g.send(ctx, token, method, a, path, b, maxAnswerBytes, out)
 }
 
 // send is one request, method to path on a with the access token and,

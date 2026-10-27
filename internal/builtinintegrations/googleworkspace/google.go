@@ -36,6 +36,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -240,8 +241,7 @@ type call struct {
 	args   args
 	save   builtinintegrations.SaveFunc
 	// agent is the calling agent's slug (Caller.Agent), which an event,
-	// a document or a draft Kivali makes is marked with
-	// (calendar_write.go, docs_write.go, gmail_write.go).
+	// a document or a draft Kivali makes is marked with (marker).
 	agent string
 
 	audit   string
@@ -249,6 +249,21 @@ type call struct {
 
 	me        *account
 	labelList []label
+}
+
+// agentSlugPattern is an agent's slug as a mark writes it.
+var agentSlugPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
+
+// marker is what marks a thing the calling agent makes as Kivali's: an
+// event's private property (kivaliMarker), a document's app property
+// (kivaliMark), a draft's header (markerHeader). It is the agent's
+// slug, or "kivali" for a call that names none or a slug a mark cannot
+// carry as it is.
+func (c *call) marker() string {
+	if agentSlugPattern.MatchString(c.agent) {
+		return c.agent
+	}
+	return "kivali"
 }
 
 // notSignedIn is the words of a call whose connection holds no access

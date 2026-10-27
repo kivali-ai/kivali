@@ -2,7 +2,6 @@ package googleworkspace
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -58,7 +57,7 @@ func reachesOthers(e calEvent, o calOwner) bool {
 // attendeesArg is the attendees argument as addressSet makes it, and
 // whether the call gives it.
 func attendeesArg(a args) ([]string, bool, error) {
-	list, given, err := textListArg(a, "attendees", maxAttendees, 254)
+	list, given, err := a.texts("attendees", maxAttendees, 254)
 	if err != nil || !given {
 		return nil, given, err
 	}
@@ -109,26 +108,6 @@ func (cc *calCall) ownedCalendar(ctx context.Context, required bool) (string, er
 			"calendar "+cal+" is not one of the owner's own")
 	}
 	return cal, nil
-}
-
-// optionalBool is the boolean argument key, and whether the call gives it.
-func optionalBool(a args, key string) (on, given bool, err error) {
-	v, ok := a[key]
-	if !ok || v == nil {
-		return false, false, nil
-	}
-	b, ok := v.(bool)
-	if !ok {
-		return false, false, badArgument(key + " is true or false.")
-	}
-	return b, true, nil
-}
-
-// argGiven reports whether the call gives the argument key, null being
-// none.
-func argGiven(a args, key string) bool {
-	v, ok := a[key]
-	return ok && v != nil
 }
 
 // moment is a start or an end as an agent gives one: a date, for an
@@ -189,7 +168,7 @@ func eventTimes(a args, cur *calEvent) (start, end map[string]any, changed bool,
 	if zone != "" && !timeZonePattern.MatchString(zone) {
 		return nil, nil, false, badArgument("time_zone is an IANA time zone, such as Europe/London.")
 	}
-	allDay, allDayGiven, err := optionalBool(a, "all_day")
+	allDay, allDayGiven, err := a.flag("all_day")
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -264,9 +243,8 @@ const (
 const writeQuery = "?sendUpdates=none"
 
 // createEvent creates an event on one of the owner's own calendars,
-// marked as Kivali's (kivaliMarker) with the agent's slug, telling no
-// one. A call that invites people is a send, which this version does
-// not run.
+// marked as Kivali's (kivaliMarker, marker), telling no one. A call
+// that invites people is a send, which this version does not run.
 func createEvent(ctx context.Context, c *call) (any, error) {
 	send, err := isSend(actionCreateEvent, c.args, nil, calOwner{})
 	if err != nil {
@@ -274,9 +252,6 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 	}
 	if send {
 		return nil, failure(sendNotAvailable)
-	}
-	if c.agent == "" {
-		return nil, errors.New("the call names no agent to mark the event with")
 	}
 	cc := &calCall{call: c}
 	cal, err := cc.ownedCalendar(ctx, false)
@@ -303,7 +278,7 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 		"summary":            title,
 		"start":              start,
 		"end":                end,
-		"extendedProperties": map[string]any{"private": map[string]string{kivaliMarker: c.agent}},
+		"extendedProperties": map[string]any{"private": map[string]string{kivaliMarker: c.marker()}},
 	}
 	if desc != "" {
 		body["description"] = desc
@@ -312,7 +287,7 @@ func createEvent(ctx context.Context, c *call) (any, error) {
 		body["location"] = loc
 	}
 	var made calEvent
-	if err := c.g.calendarRequest(ctx, c.token, http.MethodPost, eventsPath(cal)+writeQuery, body, &made); err != nil {
+	if err := c.g.change(ctx, c.token, googleAPI, http.MethodPost, eventsPath(cal)+writeQuery, body, &made); err != nil {
 		return nil, err
 	}
 	if !eventIDPattern.MatchString(made.ID) {
@@ -355,7 +330,7 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 	}
 	body := map[string]any{}
 	var changed []string
-	if argGiven(c.args, "title") {
+	if c.args.given("title") {
 		title, err := c.args.text("title", true, maxTitle)
 		if err != nil {
 			return nil, err
@@ -367,7 +342,7 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 		key, field string
 		most       int
 	}{{"description", "description", maxDescription}, {"location", "location", maxLocation}} {
-		if !argGiven(c.args, f.key) {
+		if !c.args.given(f.key) {
 			continue
 		}
 		s, err := c.args.text(f.key, false, f.most)
@@ -389,7 +364,7 @@ func updateEvent(ctx context.Context, c *call) (any, error) {
 		return nil, badArgument("Give at least one field to change: title, start, end, time_zone, description, location or all_day.")
 	}
 	var after calEvent
-	if err := c.g.calendarRequest(ctx, c.token, http.MethodPatch, eventPath(cal, id)+writeQuery, body, &after); err != nil {
+	if err := c.g.change(ctx, c.token, googleAPI, http.MethodPatch, eventPath(cal, id)+writeQuery, body, &after); err != nil {
 		return nil, err
 	}
 	what := strings.Join(changed, ", ")
@@ -431,7 +406,7 @@ func deleteEvent(ctx context.Context, c *call) (any, error) {
 	if send {
 		return nil, failure(sendNotAvailable)
 	}
-	if err := c.g.calendarRequest(ctx, c.token, http.MethodDelete, eventPath(cal, id)+writeQuery, nil, nil); err != nil {
+	if err := c.g.change(ctx, c.token, googleAPI, http.MethodDelete, eventPath(cal, id)+writeQuery, nil, nil); err != nil {
 		return nil, err
 	}
 	c.audit = "deleted event " + id + " on calendar " + cal + ", which " + oneLine(e.ExtendedProperties.Private[kivaliMarker], 64) + " created"

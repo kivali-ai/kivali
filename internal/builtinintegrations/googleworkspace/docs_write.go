@@ -1,7 +1,6 @@
 package googleworkspace
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -75,7 +74,7 @@ func (c *call) batchUpdate(ctx context.Context, id, revision string, requests []
 	if revision != "" {
 		body["writeControl"] = map[string]any{"targetRevisionId": revision}
 	}
-	return c.g.post(ctx, c.token, docsAPI, "/v1/documents/"+url.PathEscape(id)+":batchUpdate", body, out)
+	return c.g.change(ctx, c.token, docsAPI, http.MethodPost, "/v1/documents/"+url.PathEscape(id)+":batchUpdate", body, out)
 }
 
 // mdParagraph is one line of the Markdown a write takes: its text
@@ -359,13 +358,13 @@ func (c *call) newDocument(ctx context.Context, title, folder string) (id, refus
 	file := map[string]any{
 		"name":          title,
 		"mimeType":      documentType,
-		"appProperties": map[string]string{kivaliMark: cmp.Or(c.agent, "kivali")},
+		"appProperties": map[string]string{kivaliMark: c.marker()},
 	}
 	path := "/drive/v3/files?" + url.Values{"fields": {"id"}, "supportsAllDrives": {"true"}}.Encode()
 	var made driveFile
 	if folder != "" {
 		file["parents"] = []string{folder}
-		err = c.g.post(ctx, c.token, googleAPI, path, file, &made)
+		err = c.g.change(ctx, c.token, googleAPI, http.MethodPost, path, file, &made)
 		var ae *apiError
 		if !errors.As(err, &ae) || !ae.refuses(folder) {
 			id, err = madeID(made, err)
@@ -374,7 +373,7 @@ func (c *call) newDocument(ctx context.Context, title, folder string) (id, refus
 		refused = fmt.Sprintf("HTTP %d: %s", ae.Status, sentence(ae.Message))
 		delete(file, "parents")
 	}
-	err = c.g.post(ctx, c.token, googleAPI, path, file, &made)
+	err = c.g.change(ctx, c.token, googleAPI, http.MethodPost, path, file, &made)
 	id, err = madeID(made, err)
 	return id, refused, err
 }
@@ -456,7 +455,7 @@ func replaceText(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	matchCase, err := docsFlag(c.args, "match_case")
+	matchCase, _, err := c.args.flag("match_case")
 	if err != nil {
 		return nil, err
 	}

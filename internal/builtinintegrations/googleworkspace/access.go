@@ -273,6 +273,72 @@ func (a args) id(key string, ok *regexp.Regexp) (string, error) {
 	return s, nil
 }
 
+// given reports whether the call gives the argument key, null being
+// none.
+func (a args) given(key string) bool {
+	v, ok := a[key]
+	return ok && v != nil
+}
+
+// texts is the argument key as a list of text, and whether the call
+// gives it: not when it is missing or null. Entries are trimmed, and
+// blank ones dropped. A list that is not one of text, holds more than
+// most entries, or an entry of more than each characters is refused.
+func (a args) texts(key string, most, each int) (list []string, given bool, err error) {
+	if !a.given(key) {
+		return nil, false, nil
+	}
+	raw, isList := a[key].([]any)
+	switch {
+	case !isList:
+		return nil, false, badArgument(key + " is a list of text.")
+	case len(raw) > most:
+		return nil, false, badArgument(fmt.Sprintf("%s holds at most %d entries.", key, most))
+	}
+	list = []string{}
+	for _, x := range raw {
+		s, isText := x.(string)
+		if !isText {
+			return nil, false, badArgument(key + " is a list of text.")
+		}
+		if s = strings.TrimSpace(s); s == "" {
+			continue
+		}
+		if utf8.RuneCountInString(s) > each {
+			return nil, false, badArgument(fmt.Sprintf("Each entry of %s is at most %d characters.", key, each))
+		}
+		list = append(list, s)
+	}
+	return list, true, nil
+}
+
+// flag is the boolean argument key, and whether the call gives it: false
+// and not given when it is missing or null, and a refusal when it is
+// another type.
+func (a args) flag(key string) (on, given bool, err error) {
+	if !a.given(key) {
+		return false, false, nil
+	}
+	b, isBool := a[key].(bool)
+	if !isBool {
+		return false, false, badArgument(key + " is true or false.")
+	}
+	return b, true, nil
+}
+
+// maybeID is the argument key as one of Google's ids, as id reads one,
+// or "" when it is missing or empty.
+func (a args) maybeID(key string, ok *regexp.Regexp) (string, error) {
+	s, err := a.text(key, false, 256)
+	if err != nil || s == "" {
+		return "", err
+	}
+	if !ok.MatchString(s) {
+		return "", badArgument(key + " is not an id Google gives; use one as Kivali listed it.")
+	}
+	return s, nil
+}
+
 // CheckAccess holds an agent's access, as the owner saves it, to what
 // Kivali can read: every entry of send_to an address (local@domain) or
 // *@domain, and every entry of the label, calendar and folder lists one
