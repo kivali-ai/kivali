@@ -166,11 +166,13 @@ type Result struct {
 // waits for the owner and that the outcome comes to its chat, and puts
 // a Needs you row before the owner with Title, Fields and Recipients,
 // exactly as they are: a Hold whose words carry a secret of the
-// connection, or a Unicode format character (category Cf), is refused,
-// since the owner would not read what Run sends. Approved, core works
-// the agent's access and the connection out again exactly as for a
-// call and calls Run once, with the connection read at that moment, so
-// a sign-in's token is current; Run's Result is what the agent hears in
+// connection, or a Unicode format character (category Cf) other than
+// the zero-width joiner (U+200D) emoji sequences are made with, is
+// refused, since the owner would not read what Run sends. Approved,
+// core works the agent's access and the connection out again exactly
+// as for a call, holds the access to Switch, and calls Run once, with
+// the connection read at that moment, so a sign-in's token is current;
+// Run's Result is what the agent hears in
 // its chat, and its Audit, or failing that Title, is the audit row's
 // reason after "approved: " (never the answer, which may quote what the
 // call read). Denied, or not answered within a day, Run is never
@@ -187,6 +189,12 @@ type Hold struct {
 	// Recipients are the people the action reaches, as addresses; empty
 	// for none.
 	Recipients []string
+	// Switch, when set, is the key of a switch of the access form that
+	// must still be on when the owner approves: the one that lets the
+	// agent ask for this action, which may not be the one that lists
+	// it. An approval made once the agent's access has it off, or not
+	// at all, is refused, and the call keeps waiting.
+	Switch string
 	// Run performs exactly what Fields show, from what Call captured
 	// when it held the call (the message as built then, the event's
 	// body), never read again from the agent or from the service. It

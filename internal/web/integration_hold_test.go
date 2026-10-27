@@ -293,6 +293,28 @@ func TestHeldCallWithFormatCharactersIsRefused(t *testing.T) {
 	}
 }
 
+// Why this test exists: the zero-width joiner is the one format
+// character ordinary text carries, inside emoji sequences such as a
+// woman technologist or a family; it changes how they are drawn and
+// hides no text. Refusing it would refuse every email or comment with
+// such an emoji, so a hold carrying it must wait for the owner, while
+// a zero-width space beside it is still refused.
+func TestHeldCallWithAnEmojiSequenceIsHeld(t *testing.T) {
+	srv, _, _ := holdServer(t)
+	a := emailArgs(t)
+	a.Fields[2].Value = "Thanks \U0001F469\u200d\U0001F4BB and \U0001F468\u200d\U0001F469\u200d\U0001F467"
+	if resp := holdCall(srv, "dana", string(must(json.Marshal(a)))); resp.IsError || len(resp.Content) != 1 || resp.Content[0] != heldCallWaiting {
+		t.Fatalf("an emoji sequence: %+v", resp)
+	}
+	if h := onlyHold(t, srv); h.fields[2].Value != a.Fields[2].Value {
+		t.Errorf("the body the owner reads = %q", h.fields[2].Value)
+	}
+	a.Fields[2].Value = "Thanks \U0001F469\u200d\U0001F4BB\u200b"
+	if resp := holdCall(srv, "dana", string(must(json.Marshal(a)))); !resp.IsError {
+		t.Errorf("a zero-width space beside a joiner was held: %+v", resp)
+	}
+}
+
 // heldBadly is echo whose Call answers with hold, as the test sets it,
 // and whose Complete, a shell job's second request, holds a call too.
 type heldBadly struct {
@@ -605,6 +627,53 @@ func TestHeldCallApproveAfterAccessRemovedKeepsItWaiting(t *testing.T) {
 	}
 	if row := lastAudit(t, srv); !row.Allowed || row.Reason != "approved: echoed to alice@example.org" {
 		t.Errorf("audit = %+v", row)
+	}
+}
+
+// Why this test exists: a built-in may list an action under one switch
+// and let the agent ask for its send under another (Google Workspace's
+// update_event is listed under May change events, and inviting people
+// needs May invite and respond). The owner turning that send switch off
+// after the agent asked must stop the approval, though the action is
+// still listed: Run must not run, the owner must read why, the audit
+// must say the access no longer allows it, and the call must keep
+// waiting, to run once the switch is on again.
+func TestHeldCallApproveAfterItsSwitchIsOffKeepsItWaiting(t *testing.T) {
+	srv, echo, _ := holdServer(t)
+	putIntegrationAccess(t, srv, "echo", "dana", `{"loud":true}`)
+	a := emailArgs(t)
+	a.Switch = "loud"
+	holdCall(srv, "dana", string(must(json.Marshal(a))))
+	h := onlyHold(t, srv)
+	putIntegrationAccess(t, srv, "echo", "dana", `{"loud":false}`)
+	code, _, body := answerNeed(t, srv, "approve", integrationHoldNeedPrefix+h.id, "")
+	if code != http.StatusConflict {
+		t.Fatalf("approve with the switch off: %d %s", code, body)
+	}
+	var e apitypes.ErrorBody
+	_ = json.Unmarshal([]byte(body), &e)
+	if e.Error != "Dana's access to Echo no longer allows it, so it was not done. It is still waiting: approve it again once that changes, or deny it" || e.Who != whoYou {
+		t.Errorf("refusal = %+v", e)
+	}
+	if r := ran(echo); len(r) != 0 {
+		t.Fatalf("an approval with the switch off ran: %+v", r)
+	}
+	if row := lastAudit(t, srv); row.Allowed || row.Reason != "approved, not run: the agent's access no longer allows it" {
+		t.Errorf("audit = %+v", row)
+	}
+	if _, listed := needWithID(t, srv, integrationHoldNeedPrefix+h.id); !listed {
+		t.Fatal("the row left Home after a refused approval")
+	}
+	putIntegrationAccess(t, srv, "echo", "dana", `{}`)
+	if code, _, _ := answerNeed(t, srv, "approve", integrationHoldNeedPrefix+h.id, ""); code != http.StatusConflict {
+		t.Errorf("approve with the switch left out: %d", code)
+	}
+	putIntegrationAccess(t, srv, "echo", "dana", `{"loud":true}`)
+	if code, out, body := answerNeed(t, srv, "approve", integrationHoldNeedPrefix+h.id, ""); code != http.StatusOK || out.Result != "Approved and done. Dana is told in its chat" {
+		t.Fatalf("approve with the switch on again: %d %+v %s", code, out, body)
+	}
+	if r := ran(echo); len(r) != 1 {
+		t.Errorf("runs = %+v", r)
 	}
 }
 
