@@ -46,8 +46,8 @@ const (
 // The words of each step, one thing to do on the page it opens. Core
 // cuts a step's words at 200 characters, and each is shorter.
 const (
-	wordsAPIs     = "Sign in with the Google account agents will work in. Pick a project, or create one, then turn on the four APIs the page lists: Gmail, Google Calendar, Google Docs and Google Drive."
-	wordsScreen   = "If the page shows an app already, go on. Else choose Get started, name the app Kivali, give your email address, and choose External for a personal Gmail account or Internal for work."
+	wordsAPIs     = "Sign in with the Google account agents will work in. Create a project for this, in the page's project picker, then turn on the four APIs it lists: Gmail, Calendar, Docs and Drive."
+	wordsScreen   = "Choose Get started, name the app Kivali, give your email address, and for the audience choose External for a personal Gmail account or Internal for a work account."
 	wordsPublish  = "If the audience is External, choose Publish app, so Google keeps you signed in; Internal needs nothing here. When Google later says it has not verified the app, choose Advanced and go on."
 	wordsDesktop  = "Create a client: choose Desktop app as the type, name it Kivali, and choose Create."
 	wordsWeb      = "Create a client: choose Web application as the type, name it Kivali, add the address below under Authorized redirect URIs, and choose Create."

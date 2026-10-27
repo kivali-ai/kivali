@@ -4147,8 +4147,10 @@ one page at a time, then takes the client's JSON:
 1. Four **Form** steps with no fields ([Steps](#steps)), each with its
    page of the console as `Form.URL` and one thing to do there in its
    words, under 200 characters, in the console's own terms: a project
-   with the four APIs on (`/flows/enableapi?apiid=...`, which picks or
-   creates the project), the sign-in screen (`/auth/overview`: Get
+   with the four APIs on (`/flows/enableapi?apiid=...`, whose project
+   picker creates the project: a new one, since a project's one
+   sign-in app shares its audience and verification with everything
+   in the project), the sign-in screen (`/auth/overview`: Get
    started, External for a personal Gmail account, Internal for a work
    account), publishing an External app (`/auth/audience`: Testing
    ends every sign-in after seven days, and an unverified app shows
