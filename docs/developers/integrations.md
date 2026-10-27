@@ -38,7 +38,9 @@ second) and
 Kivali (each in a package of its own, listed in
 `internal/builtinintegrations/builtins`),
 `internal/store/builtin_integrations.go` writes them at boot,
-`internal/web/integration_builtin.go` calls them and
+`internal/web/integration_builtin.go` calls them,
+`internal/web/integration_hold.go` keeps the calls of theirs that wait
+for the owner's approval ([Held calls](#held-calls)) and
 `internal/web/integration_builtin_egress.go` keeps their connections'
 proxy credentials ([Built-in integrations](#built-in-integrations)).
 `internal/web/integration_setup.go` is the setup runner every
@@ -2374,7 +2376,7 @@ type Result struct {
 	Content  []string
 	IsError  bool
 	Audit    string        // the audit row's reason; empty: the failure's words
-	Outside  []string      // who outside the owner's domain wrote what it returned, by address
+	Outside  []string      // who outside the owner's domain wrote what it returned: addresses, UnknownSender, SharedDrive
 	ShellJob *shelljob.Job // work for the agent's shell (ShellJobIntegration)
 	Hold     *Hold         // a call that waits for the owner's approval; no Content
 }
@@ -2382,9 +2384,13 @@ type Hold struct {
 	Title      string      // the Needs-you row: "Send an email to alice@example.org"
 	Fields     []HoldField // what the owner reads, exactly as it will go
 	Recipients []string    // whom it reaches
+	Switch     string      // the access switch that must still be on at approval; "" for none
 	Run        func(ctx context.Context, conn Connection) (*Result, error) // does it, once approved
 }
 type HoldField struct{ Label, Value string }
+const UnknownSender = "an unknown sender" // an Outside entry for a writer with no address Kivali reads
+const SharedDrive = "a shared drive"     // an Outside entry for a document in a shared drive
+func KeepsOutside(entry string) bool      // whether an audit row keeps an Outside entry
 
 // Optional capabilities.
 type ShellJobIntegration interface {
@@ -2880,16 +2886,20 @@ the title and each label to one line of 300 bytes and each recipient
 to one of 320, and shows each value whole.
 
 Core holds the call in memory under 128 random bits in hex, the row's
-id, and answers the agent at once, with `is_error` false: "Waiting
-for the owner's approval. You will hear in your chat whether it was
-done. If you hear nothing within a day, it was not done." The agent's
-turn carries on. At most five of one agent's calls wait at once; a
-sixth is refused before it is held ("The owner has five of your
-requests waiting for approval. Wait for their answers in your chat
-before asking for another."), as is a hold with more than 64 fields
-or 256 KB, too much for the owner to read. A `Hold` from `Complete`,
-or one with no `Run` or no title, is the integration's failure,
-audited as not allowed.
+id, writes its audit row, allowed, `waiting for the owner's approval:
+<title>`, and answers the agent at once, with `is_error` false:
+"Waiting for the owner's approval. You will hear in your chat whether
+it was done. If you hear nothing within a day, it was not done." The
+agent's turn carries on. At most five of one agent's calls wait at
+once, whatever integration holds them; a sixth is refused before it
+is held ("The owner has five of your requests waiting for approval.
+Wait for their answers in your chat before asking for another.",
+audited as `the owner has five of the agent's requests waiting`), as
+is a hold with more than 64 fields or 256 KB, too much for the owner
+to read (`the call is too large for the owner to read`). A `Hold` from
+`Complete`, or one with no `Run` or no title, is the integration's
+failure, audited as not allowed (`the integration held a shell job's
+second request`, `the integration held a call with nothing to run`).
 
 Disabling, disconnecting or uninstalling the integration, or
 offboarding the agent, ends every call held then (below). A call
@@ -4054,25 +4064,27 @@ signed in with an OAuth client the owner makes on Google's Auth
 Platform. An integration's name takes hyphens, not underscores
 ([The check](#the-check)), and `integration.ToolPrefix` makes its
 actions `google_workspace_<action>`. The package implements
-`Integration`, `SetupIntegration` (`setup.go`) and `SignInAdviser`
-(`requirements.go`), in these files, so each service's actions change
-apart:
+`Integration`, `SetupIntegration` (`setup.go`), `SignInAdviser`
+(`requirements.go`) and `AccessChecker` (`access.go`), in these files,
+so each service's actions change apart:
 
 | File | Holds |
 | --- | --- |
-| `google.go` | the type, `Manifest`, `Tools`, `Call`, `Verify`, `Choices`, the joined action table, `answerText`, the clock (`now`), the mark of what an agent makes (`marker`) and a send's held call (`held`, `holdResult`) |
-| `api.go` | the client: the three pinned origins, `get` and `change`, Google's errors, their words for the agent and the owner |
-| `access.go` | the access form, `readAccess`, `CheckAccess`, the live options' encoding, the refusals by bucket, `send_to` (`checkRecipients`), `readArgs` and the readers of an argument |
+| `google.go` | the type, `Manifest`, `Tools`, `Call`, `Verify`, `Choices`, the joined action table, `answerText`, the clock (`now`), the mark of what an agent makes (`marker`), a send's held call (`held`, `holdResult`) and the words of its card (`shownLine`, `shownText`, `withUnshown`) |
+| `api.go` | the client: the three pinned origins, `get`, `getUpTo`, `change`, `send` and `sendIfMatch`, Google's errors, their words for the agent and the owner |
+| `access.go` | the access form, `readAccess`, `CheckAccess`, the live options' encoding, the refusals by bucket, `send_to` (`checkRecipients`, `checkReach`), `readArgs` and the readers of an argument |
 | `setup.go` | the setup flow, the client JSON's reading and the setup notes |
 | `requirements.go` | the Sign-in requirement's words for a refusal |
-| `gmail.go`, `calendar.go`, `docs.go` | each service's actions, and the options of its list |
-| `gmail_read.go` | Gmail's reading: search, a message, a thread, how a message is rendered |
-| `gmail_text.go` | the text an email becomes: the framing, the provenance line, HTML to text, the links |
+| `gmail.go` | Gmail's actions, the profile and the labels, the options of `gmail_labels` |
+| `gmail_read.go` | Gmail's reading: search, a message, a thread, who sent a message, how a message is rendered |
+| `gmail_text.go` | the text an email becomes: the framing, the provenance line and Gmail's checks, HTML to text, the links |
+| `gmail_style.go` | the CSS an email's HTML is read with, to tell what a reader sees |
 | `gmail_attach.go` | saving an attachment into the agent's files |
-| `gmail_write.go` | Gmail's writing: drafts, labels on messages, the message builder, the requests that change the account |
+| `gmail_write.go` | Gmail's writing: drafts, labels on messages, the message builder, replies |
 | `gmail_send.go` | Gmail's sends: an email and a draft held for the owner, a draft's message read for its card, `messages.send` |
+| `calendar.go` | Calendar's actions and reading: the calendar list and the options of `calendars`, the owner's own calendars, events, free and busy times |
 | `calendar_write.go` | Calendar's changes: creating, changing and deleting events, `isSend`, the sends among them and answering an invitation |
-| `docs.go` | also Docs' reading: search, a document's pages, comments, the folders a document is within |
+| `docs.go` | Docs' actions and reading: search, a document's pages, comments, the folders a document is within, the options of `docs_folders` |
 | `docs_text.go` | the text a document becomes: its framing, its structure walked into text, hidden runs, a page |
 | `docs_write.go` | Docs' writing: the owner-only rule, the requests that change Google, the Markdown a write takes |
 | `docs_send.go` | Docs' sends: a comment and a reply held for the owner, the mentions a comment makes |
@@ -4086,8 +4098,8 @@ apart:
   `prompt=consent` (Google gives a refresh token only for both),
   `credential_keys.access_token: GOOGLE_ACCESS_TOKEN`, and the scopes
   `gmail.modify` alone for Gmail (it reads, composes, sends and
-  changes the labels of mail, which `messages.modify` needs; the
-  owner has nothing to untick for Gmail),
+  changes the labels of mail, which `messages.modify` needs, and
+  covers `messages.send`),
   `calendar.events`, `calendar.readonly`, `documents`,
   `drive.readonly` and `drive.file` (each under
   `https://www.googleapis.com/auth/`), never Gmail's settings:
@@ -4109,11 +4121,11 @@ apart:
   hands over to a sign-in ([The credential path](#the-credential-path)):
   `client_id` and the current access token under `GOOGLE_ACCESS_TOKEN`,
   never the client secret or the refresh token. A connection with no
-  access token refuses every call of an action this version runs, once
-  the action, its switch and the access pass, with "Google Workspace's connection is
-  not signed in; ask the owner to set it up again.", audited as `the
-  connection holds no access token`, and nothing reaches Google; core
-  refuses a call itself while the sign-in needs the owner.
+  access token refuses every call, once the action, its switch and the
+  access pass, with "Google Workspace's connection is not signed in;
+  ask the owner to set it up again.", audited as `the connection holds
+  no access token`, and nothing reaches Google; core refuses a call
+  itself while the sign-in needs the owner.
 
 #### Setup
 
@@ -4234,8 +4246,9 @@ off, then a connection with no access token; arguments
 that are not an object are refused as for GitHub. A run sets the call's
 `Result.Audit` and `Result.Outside` (below) through its `call`. A send's
 run answers `held` instead of an answer, and `Call` answers it as
-`Result.Hold` (`holdResult`): its title, fields and recipients, and a
-`Run` that reads the access token core hands it at the owner's
+`Result.Hold` (`holdResult`): its title, fields, recipients and
+`Switch`, and a `Run` that reads the access token core hands it at the
+owner's
 approval and runs what the send captured with a `call` of its own,
 answering as `Call` does ([Held calls](#held-calls), [Sending
 mail](#sending-mail), [Calendar](#calendar),
@@ -4243,6 +4256,26 @@ mail](#sending-mail), [Calendar](#calendar),
 that fails with Google's words or its own is an error result whose
 `Audit` is what the run had set, then "; " and the words
 (`failedWith`), or, with none set, empty, so core keeps the words.
+
+Each send, as its card is titled, the switch its `Hold.Switch` names,
+and what its `Run` does once the owner approves, from what the call
+captured:
+
+| Action | Card title | `Switch` | `Run` |
+| --- | --- | --- | --- |
+| `send_email` | Send an email to <address>[ and N more] | `gmail_send` | `messages.send` of the message built when it was held |
+| `send_draft` | Send a draft to <address>[ and N more] | `gmail_send` | reads the draft in format `minimal` (gone: refused), `messages.send` of the bytes read when it was held, then deletes the draft unless its message changed |
+| `create_event` inviting others | Invite N people to "<title>" | `calendar_send` | `POST` of the event captured, `sendUpdates=all` |
+| `update_event` as a send | Change "<title>", telling N people | `calendar_send` | `PATCH` of the changes captured, `sendUpdates=all`, `If-Match` the etag read |
+| `delete_event` as a send | Delete "<title>", telling N people | `calendar_send` | `DELETE`, `sendUpdates=all`, `If-Match` the etag read |
+| `respond_to_invitation` | Answer yes, no or maybe to "<title>" | `calendar_send` | `PATCH` of the owner's attendee entry alone, `sendUpdates=all` |
+| `add_comment` | Comment on "<name>" | `docs_send` | `comments.create` of the text captured |
+| `reply_to_comment` | Reply to a comment on "<name>" | `docs_send` | `replies.create` of the text captured |
+
+A `Run` that finds what it acts on gone (404 or 410), or, for
+`update_event` and `delete_event`, changed since it was read (412),
+refuses, so nothing was done; Google not answering a `Run` may have
+done it, and the failure says what to look at before asking again.
 
 `list_labels` (`GET /gmail/v1/users/me/labels`) answers the labels the
 access includes, one per line as options read: Gmail's own Inbox,
@@ -4592,9 +4625,10 @@ not answering may have sent the email, so that failure tells the agent
 to search the owner's Sent mail before asking again.
 
 Every send of Calendar and Docs holds everyone it reaches to `send_to`
-the same way (`checkReach`). While `send_to` names anyone, it also
-refuses a send that reaches people whose address Google does not
-show, whom it cannot check: "This send also reaches people whose
+the same way: `create_event`, whose attendees are all addresses the
+agent gave, with `checkRecipients`, and the rest with `checkReach`,
+which, while `send_to` names anyone, also refuses a send that reaches
+people whose address Google does not show, whom it cannot check: "This send also reaches people whose
 address Google does not show, so Kivali cannot check them against the
 addresses the owner allows you to send to; ask the owner if your work
 needs it.", audited as `send_to cannot be checked: the send reaches
@@ -5164,9 +5198,9 @@ before asking again. No send sets `Result.Outside`.
 
 #### Outside and the audit
 
-Each read sets `Result.Outside` to the senders of what it returned or
-saved that are not the owner's (Provenance, above), each once in the
-order read: the From address Kivali read, or "an unknown sender" when
+Each of Gmail's reads sets `Result.Outside` to the senders of what it
+returned or saved that are not the owner's (Provenance, above), each
+once in the order read: the From address Kivali read, or "an unknown sender" when
 it read none (`builtinintegrations.UnknownSender`), never the header's
 own words. A search names the senders of every message it lists,
 since a snippet is the message's text. Core keeps them in the audit
@@ -5180,6 +5214,12 @@ comments are listed, that is not the owner's domain, "a shared drive"
 outside authors of the comments listed. An owner or an author is
 named by address, else "an unknown sender", never by name, so each
 entry is one a row's `outside` keeps.
+
+Calendar's reads name, for each event whose text they return, its
+organizer, its creator and its attendees that are not the owner's,
+rooms left out (**Outside**, [Calendar](#calendar)). `list_labels`,
+`list_calendars` and `find_free_time` return no one's text and name
+no one; neither does a write, nor a send, at hold or in its `Run`.
 
 #### Test connection and options
 
@@ -5226,7 +5266,10 @@ A read is `get` (`getUpTo` for a larger answer), and a change `change`:
 any method, with a JSON body or none, for Gmail's, Calendar's, Drive's
 and Docs' writes and Calendar's freeBusy. Both are `send`, with the
 same origins, headers, bounds and error words, and a change follows no
-redirect.
+redirect. A held call's `Run` calls `send` itself, with the bytes the
+call captured, and `update_event`'s and `delete_event`'s through
+`sendIfMatch`, which adds `If-Match` of the event's etag, so Google
+answers 412 for an event changed since.
 
 #### Requirements
 
@@ -5235,11 +5278,11 @@ on the connection's record (`sign_in.scope`), and a built-in is given
 only the client id and the access token, so no row reports a sign-in
 that lacks a scope: an action that needs it is refused by Google
 (`insufficientPermissions`), and the agent reads that the owner's
-sign-in does not allow it and asks the owner. A sign-in made before
-`drive.file` was among the scopes lacks it, so `create_document`
-fails that way until the owner signs out and signs in again with the
-`sign_in` row's Fix, whose `prompt=consent` has Google ask for every
-scope again. As a `SignInAdviser`, it adds
+sign-in does not allow it and asks the owner. A sign-in that lacks a
+scope the manifest lists, one the owner left unticked or one a later
+version adds, gets it when the owner signs out and signs in again with
+the `sign_in` row's Fix, whose `prompt=consent` has Google ask for
+every scope again. As a `SignInAdviser`, it adds
 to the `sign_in` row of a refusal naming `invalid_grant`, which Google
 answers once it ends a sign-in, the likely cause: "If this came about a
 week after you signed in, the app is likely still in Testing on
