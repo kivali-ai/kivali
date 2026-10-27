@@ -15,6 +15,7 @@ import (
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/echotest"
 	"github.com/kivali-ai/kivali/internal/clock"
+	"github.com/kivali-ai/kivali/internal/files"
 	"github.com/kivali-ai/kivali/internal/secrets"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/web/apitypes"
@@ -130,8 +131,10 @@ func (e *savingEcho) Call(_ context.Context, caller builtinintegrations.Caller, 
 // outside the owner's domain wrote what it returned. Core must give the
 // call a Save that writes into that agent's own /files/, under the
 // integration's untrusted downloads folder, answering the path the
-// agent reads it at, with the bytes as given; a file over the limit
-// must fail in words naming no host path; and the audit row must keep
+// agent reads it at, with the bytes as given; a file over the limit,
+// or one more into a folder already full, must fail in words naming no
+// host path, a full folder named as the agent reads it, so the agent
+// knows why the save failed; and the audit row must keep
 // the outside writers, blanks dropped and at most MaxOutside of them,
 // beside the call's own reason, so the approval card can later read
 // them back.
@@ -173,6 +176,22 @@ func TestBuiltinCallSavesAndNamesOutside(t *testing.T) {
 	resp, _ = dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: json.RawMessage(`{"folder":"m1","name":"big.bin","data":"12345678901234567"}`)})
 	if !resp.IsError || resp.Content[0] != "the file is larger than 16 bytes" {
 		t.Errorf("a file over the limit = %+v", resp)
+	}
+
+	// A folder already holding the most files a folder takes refuses
+	// another in words that name it as the agent reads it.
+	full := filepath.Join(srv.Store.Root(), "agents", "dana", "memory", "integrations", "echo", "untrusted-downloads", "m2")
+	if err := os.MkdirAll(full, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range files.MaxIntegrationFolderFiles {
+		if err := os.WriteFile(filepath.Join(full, fmt.Sprintf("f%d.txt", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resp, _ = dana.IntegrationCall(context.Background(), agentpod.IntegrationCallRequest{Name: "echo_echo", Arguments: json.RawMessage(`{"folder":"m2","name":"new.txt","data":"y"}`)})
+	if !resp.IsError || resp.Content[0] != "/files/integrations/echo/untrusted-downloads/m2 is full, holding the 20 files Kivali saves into one folder" {
+		t.Errorf("a full folder = %+v", resp)
 	}
 }
 

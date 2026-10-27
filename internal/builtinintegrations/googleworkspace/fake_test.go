@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -161,10 +162,15 @@ func (f *fakeGoogle) handler(origin string) http.Handler {
 			var msgs []gmailMessage
 			for _, m := range slices.Backward(f.mail) {
 				if m.ThreadID == id {
+					m, ok := inFormat(m, r.URL.Query())
+					if !ok {
+						http.Error(w, `{"error":{"code":400,"message":"the fake answers format full or metadata"}}`, http.StatusBadRequest)
+						return
+					}
 					msgs = append(msgs, m)
 				}
 			}
-			if len(msgs) == 0 || r.URL.Query().Get("format") != "full" {
+			if len(msgs) == 0 {
 				http.Error(w, `{"error":{"code":404,"message":"Requested entity was not found."}}`, http.StatusNotFound)
 				return
 			}
@@ -264,11 +270,22 @@ func (f *fakeGoogle) getMessage(w http.ResponseWriter, r *http.Request, rest str
 		writeJSON(w, map[string]any{"attachmentId": att, "size": len(raw), "data": data})
 		return
 	}
-	m := f.mail[i]
-	switch r.URL.Query().Get("format") {
+	m, ok := inFormat(f.mail[i], r.URL.Query())
+	if !ok {
+		http.Error(w, `{"error":{"code":400,"message":"the fake answers format full or metadata"}}`, http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, m)
+}
+
+// inFormat is m as Gmail answers it in the query's format: full, or
+// metadata (the headers metadataHeaders names, no parts and no body);
+// ok is false for another.
+func inFormat(m gmailMessage, q url.Values) (gmailMessage, bool) {
+	switch q.Get("format") {
 	case "full":
 	case "metadata":
-		want := r.URL.Query()["metadataHeaders"]
+		want := q["metadataHeaders"]
 		var hs []gmailHeader
 		for _, h := range m.Payload.Headers {
 			if slices.ContainsFunc(want, func(n string) bool { return strings.EqualFold(n, h.Name) }) {
@@ -277,8 +294,7 @@ func (f *fakeGoogle) getMessage(w http.ResponseWriter, r *http.Request, rest str
 		}
 		m.Payload = gmailPart{MimeType: m.Payload.MimeType, Headers: hs}
 	default:
-		http.Error(w, `{"error":{"code":400,"message":"the fake answers format full or metadata"}}`, http.StatusBadRequest)
-		return
+		return gmailMessage{}, false
 	}
-	writeJSON(w, m)
+	return m, true
 }

@@ -84,7 +84,9 @@ A built-in integration's call saves what it fetched for the agent,
 such as an email's attachment, the same way, into the agent's own
 workspace: `files.WriteIntegrationDownload` writes it under
 `/files/integrations/<integration>/untrusted-downloads/<folder>/`,
-names cleaned and duplicates suffixed as above. The agent writes that
+names cleaned and duplicates suffixed as above, a file already there
+with the same name and bytes answered in its place, and at most 20
+files a folder. The agent writes that
 part of its tree too, so every directory on the way is made when
 missing and opened without following a link (the `os.Root` and
 `os.SameFile` walk of `files.OpenDirNoFollow`): a link or a file the
