@@ -26,8 +26,9 @@ ARG GO_VERSION=1.27
 # claude-fable-5-1 lands in 2.1.257 (2.1.252 does not have it).
 # claude-opus-5-5 lands in 2.1.280 (2.1.278 does not have it).
 ARG CLAUDE_CODE_VERSION=2.1.280
-# Stamp injected into the binary. Makefile populates this from git
-# describe; standalone docker builds fall back to "dev".
+# Stamp injected into the binary: the Makefile's BUILD_VERSION (a
+# release's tag, or 0.0.0-dev plus the commit for a development build);
+# standalone docker builds fall back to "dev".
 ARG VERSION=dev
 
 # The Kivali web app. Vite writes its build to ../internal/web/ui/dist

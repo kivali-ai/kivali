@@ -30,9 +30,12 @@ export interface OrgProviderProps {
   children: ReactNode;
   /** Builds the /org/stream connection. Tests pass a fake. */
   createStream?: () => EventStream;
+  /** Reloads the page, when the stream's snapshot names a server build other than the one this page loaded from. Tests pass a spy. */
+  reload?: () => void;
 }
 
 const defaultStream = () => createEventStream('/org/stream');
+const defaultReload = () => window.location.reload();
 
 function asApiError(err: unknown): ApiError {
   return err instanceof ApiError ? err : new ApiError(0, 'Something went wrong in Kivali.', 'Reload the page. If it keeps happening, whoever runs this Kivali server can look into it.');
@@ -41,8 +44,12 @@ function asApiError(err: unknown): ApiError {
 /**
  * Loads /api/v1/me and /api/v1/snapshot for first paint, then follows /org/stream. One provider serves the
  * whole frame; screens read it with `useOrg()`.
+ *
+ * Every connection's first snapshot names the server build (`version`). The page loaded under one build; a
+ * snapshot from another means the server was updated under it, so the page reloads to run the new build's
+ * app instead of reading a changed API with the old one.
  */
-export function OrgProvider({ children, createStream = defaultStream }: OrgProviderProps) {
+export function OrgProvider({ children, createStream = defaultStream, reload = defaultReload }: OrgProviderProps) {
   const [me, setMe] = useState<Me | null>(null);
   const [org, setOrg] = useState<OrgState>(initialOrgState);
   const [connection, setConnection] = useState<ConnectionState>('idle');
@@ -53,6 +60,8 @@ export function OrgProvider({ children, createStream = defaultStream }: OrgProvi
   orgRef.current = org;
   const streamFactory = useRef(createStream);
   streamFactory.current = createStream;
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
 
   useEffect(() => {
     const abort = new AbortController();
@@ -67,6 +76,7 @@ export function OrgProvider({ children, createStream = defaultStream }: OrgProvi
         if (cancelled) return;
         setMe(meBody);
         setOrg((prev) => reduceSnapshot(prev, snapshot));
+        const loadedVersion = snapshot.version;
         stream = streamFactory.current();
         stream.on('snapshot', (data) => {
           let parsed: OrgSnapshot;
@@ -74,6 +84,13 @@ export function OrgProvider({ children, createStream = defaultStream }: OrgProvi
             parsed = JSON.parse(data) as OrgSnapshot;
           } catch {
             // A torn frame: the next snapshot replaces the whole state, so skipping one is safe.
+            return;
+          }
+          if (parsed.version !== loadedVersion) {
+            // Another server build: this page's app is the old one. The stream stops first, so nothing
+            // more is applied while the reload is under way.
+            stream?.stop();
+            reloadRef.current();
             return;
           }
           setOrg((prev) => reduceSnapshot(prev, parsed));

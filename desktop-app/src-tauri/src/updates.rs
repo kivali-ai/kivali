@@ -268,6 +268,10 @@ mod tests {
         assert!(is_dev_version("0.0.0-dev"));
         assert!(is_dev_version(" dev "));
         assert!(is_dev_version("1.3.0-dev.2"));
+        // A development build of the server names its commit, and a dirty
+        // tree's time, as build metadata (the Makefile's BUILD_VERSION).
+        assert!(is_dev_version("0.0.0-dev+g2b703bf3c1e4"));
+        assert!(is_dev_version("0.0.0-dev+g2b703bf3c1e4.dirty.20261027T153000Z"));
         assert!(!is_dev_version("1.2.2"));
         assert!(!is_dev_version("0.17.0-rc.2"));
         assert!(!is_dev_version(""));

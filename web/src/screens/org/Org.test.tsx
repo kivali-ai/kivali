@@ -2944,6 +2944,8 @@ describe('About', () => {
   it('writes the line from the version and the credential', () => {
     expect(versionLabel('v0.42.1')).toBe('Kivali 0.42.1');
     expect(versionLabel('dev')).toBe('Kivali dev');
+    // A development build names its commit; About shows all of it, which is what tells two dev builds apart.
+    expect(versionLabel('0.0.0-dev+g2b703bf3c1e4.dirty.20261027T153000Z')).toBe('Kivali 0.0.0-dev+g2b703bf3c1e4.dirty.20261027T153000Z');
     expect(versionLabel(undefined)).toBe('Kivali');
     const credential = { ready: true, provider: 'claude', present: true, who: '', billing: 'Amazon Bedrock', guidance: '' };
     expect(aboutLine('0.42.1', credential)).toBe('Kivali 0.42.1 · Amazon Bedrock');

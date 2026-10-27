@@ -151,7 +151,9 @@ anything, if the tag and tauri.conf.json's version differ.
 `make supervisor` and desktop-app's `make sidecar` both stamp the Go
 supervisor with tauri.conf.json's version, so the app, its sidecar and the
 supervisor binary report one number. The Go server image is stamped with
-the tag (`-X main.version=vX.Y.Z`). The tree sits at the last released
+the tag (`-X main.version=vX.Y.Z`; the Makefile's `BUILD_VERSION`, which
+is the `VERSION` given on the command line, and for a development build
+`0.0.0-dev` plus the commit). The tree sits at the last released
 version between releases; `release.sh` is what moves it, so do not edit
 one of these files by hand.
 

@@ -322,6 +322,13 @@ export interface OrgSnapshot {
    */
   goals: Goal[];
   readouts: Readouts;
+  /**
+   * Version is the server build serving the stream, as /api/v1/me
+   * reports it. It is fixed for the life of a process, so it never
+   * changes a snapshot on its own; a stream reconnecting after an
+   * update sees a new one, and the web app reloads itself to match.
+   */
+  version: string;
 }
 /**
  * SnapshotAgent is one agent's liveness: State, derived on the server

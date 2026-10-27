@@ -12,5 +12,6 @@
   "assignments_version": 17,
   "sign_in_waits": [],
   "goals": [],
-  "readouts": { "working": 2, "blocked": 0, "closed_week": 9, "spend_today": 4.25, "spend_7d": 61.5 }
+  "readouts": { "working": 2, "blocked": 0, "closed_week": 9, "spend_today": 4.25, "spend_7d": 61.5 },
+  "version": "v0.15.0"
 }

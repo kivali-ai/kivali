@@ -54,7 +54,10 @@ server. It owns every durable byte and is the only writer to `/data`
   `make api-types`).
 - **Server-Sent Events**: `/org/stream` (a snapshot-first feed of
   every agent's liveness, Home's counts and the queue;
-  `internal/web/org_stream.go`), `/agents/{slug}/stream` (one agent's
+  `internal/web/org_stream.go`; each snapshot names the server build,
+  and the web app reloads itself when a connection's snapshot names
+  another build than the page loaded under, so a page open across an
+  update runs the new app), `/agents/{slug}/stream` (one agent's
   live chat events; `internal/web/chat_hub.go`) and
   `/agents/{slug}/subagents/{id}/stream` (one background task's
   transcript).
