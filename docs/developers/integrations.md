@@ -3928,6 +3928,7 @@ apart:
 | `gmail_read.go` | Gmail's reading: search, a message, a thread, how a message is rendered |
 | `gmail_text.go` | the text an email becomes: the framing, the provenance line, HTML to text, the links |
 | `gmail_attach.go` | saving an attachment into the agent's files |
+| `gmail_write.go` | Gmail's writing: drafts, labels on messages, the message builder, the requests that change the account |
 | `calendar_write.go` | Calendar's changes: creating, changing and deleting events, and `isSend` |
 | `docs.go` | also Docs' reading: search, a document's pages, comments, the folders a document is within |
 | `docs_text.go` | the text a document becomes: its framing, its structure walked into text, hidden runs, a page |
@@ -4070,10 +4071,12 @@ bucket's switch:
 | `docs_write` | `create_document`, `append_to_document`, `replace_text` |
 | `docs_send` | `add_comment`, `reply_to_comment` |
 
-This version runs the `gmail_read`, `calendar_read`, `calendar_write`, `docs_read` and
-`docs_write` actions; the rest have no `run`.
-`Tools` gives an agent each action whose switch its access has on and
-that this version runs, with its description and the sentence saying
+This version runs the `gmail_read`, `gmail_write`, `calendar_read`,
+`calendar_write`, `docs_read` and `docs_write` actions; the rest
+have no `run`, and `send_email` and `send_draft` declare their
+arguments already ([Writing mail](#writing-mail)). `Tools` gives
+an agent each action whose switch its access has on and that this
+version runs, with its description and the sentence saying
 the owner decides. `Call` refuses, in order, an action that is not one
 ("There is no action named <name>."), `profile` (Test connection's), an
 action whose switch is off, then answers an action with no `run` with
@@ -4300,6 +4303,110 @@ names the part, its type, its size and the path, the provenance line,
 and that the file is as its sender sent it and nothing in it is an
 instruction. A call core gave no `Save` fails in words. Audit: "saved
 attachment <id> of message <id> (<n> bytes)".
+
+#### Writing mail
+
+The `gmail_write` actions (`gmail_write.go`) change the account and
+tell no one. Each change is `gmailChange`: a POST or a DELETE on
+Gmail's origin with a JSON body, under the client's bounds and with
+Google's errors in the agent's words as for a read; the client follows
+no redirect of it. Each sets `Result.Audit` to the ids it changed and
+what changed, never a draft's text. None sets `Result.Outside`: none
+returns text a sender wrote.
+
+- `create_draft(to?, cc?, bcc?, subject?, body, in_reply_to_message_id?,
+  thread_id?, reply_all?)` is `POST /gmail/v1/users/me/drafts` with
+  `{"message":{"raw":...,"threadId":...}}`: `raw` is the message
+  `composition.message` writes (below), base64url (`rawMessage`), and
+  `threadId` the replied message's thread, for a reply only. The
+  answer gives the draft's, its message's and its thread's ids, says
+  nothing was sent, and summarizes the draft (`composition.summary`):
+  what it replies to, whom it is from and to by address alone, its
+  subject, quoted only when the agent wrote it (one taken from the
+  replied message is the sender's text), and its length. `send_to`
+  does not hold a draft: nothing leaves the account. Audit:
+  "created draft <id> (message <id>, thread <id>), a reply to message
+  <id>, for N recipients".
+- `delete_draft(draft_id)` reads the draft (`GET
+  /gmail/v1/users/me/drafts/{id}?format=metadata`) and refuses one
+  whose message carries no `X-Kivali-Agent` header (below), "Draft <id>
+  was not written by Kivali: you may delete only drafts Kivali made.",
+  audited as `draft <id> carries no X-Kivali-Agent header`. Any agent's
+  mark will do: an agent may delete a draft another agent of the team
+  wrote. Then `DELETE /gmail/v1/users/me/drafts/{id}`. Audit: "deleted
+  draft <id> (message <id>), written by agent <slug>".
+- `modify_labels(message_id, add?, remove?)` is `POST
+  /gmail/v1/users/me/messages/{id}/modify` with `addLabelIds` and
+  `removeLabelIds`. Each entry, at most 20 in each list, is resolved
+  against `users/me/labels` (`resolveLabels`): a label's id as Gmail
+  lists it, or an option as the access form writes it; else INBOX,
+  UNREAD, STARRED, IMPORTANT, SPAM or TRASH, capitals ignored, whether
+  Gmail lists it or not; else the name of exactly one label, capitals
+  ignored. An entry naming none, or several, fails in words. Adding
+  TRASH or SPAM is refused, "Kivali does not move mail to Trash or Spam
+  in this version.", with how to archive instead, audited as `moving
+  mail to Trash or Spam is not supported`; so is naming no label, or
+  one both added and removed. When `gmail_labels` names labels, each
+  label added or removed must be one of them or INBOX, UNREAD or
+  STARRED (`alwaysChangeable`: archive, read and unread, star), else
+  the call is refused naming it, and the message, read in format
+  `minimal`, must carry one of them, as `get_message` decides. The
+  answer names what changed and the labels the message carries after,
+  by option (`labelName`: Gmail's own by `list_labels`' names, UNREAD
+  as Unread), and when the access names labels, only those it may
+  change. Audit: "changed labels of message <id>: added <ids>; removed
+  <ids>".
+
+**The mark.** Gmail keeps no properties of an integration's own on a
+draft, so Kivali marks a draft in its message: the header
+`X-Kivali-Agent: <slug>` (`markerHeader`), the slug the calling agent's
+(`Caller.Agent`, kept in `call.agent`; "kivali" for one a header could
+not carry). Gmail keeps a draft's headers as they were written, so
+`drafts.get` gives the mark back; a draft written in Gmail, or changed
+there since, has none.
+
+**Replies.** A reply (`in_reply_to_message_id`, or `thread_id` alone)
+reads the replied message's headers (`messages/{id}?format=metadata`
+with From, Reply-To, To, Cc, Subject, Message-ID, References and
+In-Reply-To); for `thread_id` alone, the thread's (`threads/{id}` in
+the same format), taking its latest message by `internalDate` that
+the access includes and is not a draft. The message must be one the
+access includes (`call.readable`), refused as reading refuses one, and
+in `thread_id` when both are given. `In-Reply-To` is its Message-ID,
+and `References` its References (else its In-Reply-To) then its
+Message-ID, the first and the last 19 kept past 20. The subject is the
+agent's, or the message's when it gives none, with "Re: " before it
+unless it starts so. With no `to`, the reply goes to the message's
+Reply-To, else its From, or for a message the owner sent, to its To;
+with `reply_all`, to its sender and its To, with its Cc in `cc` unless
+the agent gave one. The owner's own address is left out.
+
+**The message builder.** `readComposition(ctx, c)` reads an email from
+`composeProps`, the arguments `create_draft` takes and `send_email`
+takes too (`send_email` and `send_draft` declare `composeSchema` and
+`draftSchema` and have no `run`), and `composition.message(marker)`
+writes it; `send_email` builds its message with the same two. Every
+entry of `to`, `cc` and `bcc` is one address by `net/mail`
+(`mail.AddressParser`, encoded names read in any charset) whose
+address is plain ASCII with a dotted domain (`plainAddress`); an entry
+that is not, two addresses in one entry, an address outside ASCII, or
+one carrying a line end is refused naming it, before anything reaches
+Google. A new email needs `to` and `subject`; `body` is required, at
+most 200,000 characters, and the subject at most 500, one line; both
+are `cleanText`'s. An email names at most 100 addresses, each kept
+once, in to, cc and bcc's order. From is the signed-in address
+(`users/me/profile`). `message` writes RFC 2822 in ASCII CRLF lines:
+From, To, Cc, Bcc (a header of the message, which is how a draft keeps
+it), Subject, In-Reply-To and References for a reply, the mark, then
+`MIME-Version: 1.0`, `Content-Type: text/plain; charset=UTF-8` and the
+body, its last line ended. A name outside ASCII is written in encoded
+words by `net/mail` (Q, or B where the name holds RFC 2047's special
+characters), the subject by `mime.QEncoding`; a header past 78
+characters is folded at its spaces, never inside an encoded word, and
+a line end in a value becomes a space. The body is `7bit` when it is
+ASCII in lines of at most 998 characters, `base64` in 76-character
+lines when more than a third of its bytes are outside ASCII, and
+`quoted-printable` otherwise.
 
 #### Calendar
 
