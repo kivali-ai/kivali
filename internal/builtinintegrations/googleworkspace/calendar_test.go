@@ -173,6 +173,18 @@ func TestCalendarUnreadableAnswer(t *testing.T) {
 	}
 }
 
+// Why this test exists: an event is decoded into its shape after get
+// reads it, and an event that is JSON but not in that shape is an
+// answer Kivali does not read, as one that is not JSON is: the agent
+// must be told so, never to try again, which would answer the same.
+func TestCalendarEventOutOfShape(t *testing.T) {
+	f, g := newFakeCalendar(t)
+	f.add(t, "team@group.calendar.google.com", `{"id":"bad1","summary":"Odd","start":"9am","end":{"dateTime":"2026-10-27T10:00:00Z"}}`)
+	if words := calFailed(t, g, calReads(), "get_event", `{"calendar_id":"team@group.calendar.google.com","event_id":"bad1"}`); words != "Google's answer was not one Kivali reads." {
+		t.Errorf("an event out of shape: %q", words)
+	}
+}
+
 // Why this test exists: a stored calendar list that does not read as a
 // list (hand-edited, or written by an older build) reads as an empty
 // list that is not nil, which includes no calendar. Every action must
