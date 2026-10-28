@@ -1,7 +1,7 @@
 {
   "name": "kivali-desktop",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.3.1",
   "license": "Apache-2.0",
   "type": "module",
   "description": "Kivali Desktop's bundled pages (setup, Settings, each team's Kivali page) and the Tauri CLI. See docs/developers/desktop-app.md.",
