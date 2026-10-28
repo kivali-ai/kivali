@@ -1039,13 +1039,14 @@ https: it is the page the manifest's own device endpoint answered with
 (`verification_uri`), which a vendor may put on a host none of its
 endpoints is on (Google's is `www.google.com`).
 
-- **Form.** The page draws the step's words, then its page on the
-  service (`Form.URL`, on a declared host, as a link that opens in a
-  new tab so the page stays with the flow; the link reads "Open" and
-  the page's name, `Form.Page`, with the host beside it, or the host
-  alone when the step names no page: a flow that walks one page of a
-  console after another names each, so each step's link reads as the
-  new page it opens) and what to copy there
+- **Form.** The page draws the step's page on the service first
+  (`Form.URL`, on a declared host, as a link that opens in a new tab so
+  the page stays with the flow; the link reads "Open" and the page's
+  name, `Form.Page`, with the host beside it, or the host alone when the
+  step names no page: a flow that walks one page of a console after
+  another names each, so each step's link reads as the new page it
+  opens), then the step's words, which read as what to do on that page,
+  and what to copy there
   (`Form.Copy`, each with a Copy button), then its fields under the
   integration's name ("GitHub asks for"), a secret one as a password
   field, a setup-only one said to be never kept, and Continue. A Form
@@ -1071,8 +1072,9 @@ endpoints is on (Google's is `www.google.com`).
   cookie: `/connect/start` sends the browser and calls the driver again
   at once with `Answer.Went`, and the page opens it in a new tab so it
   stays to follow the flow.
-- **Wait.** The page shows the words, a code to copy (`Wait.Code`, as
-  given) and the service's page. While someone watches the flow (a stream open on
+- **Wait.** The page shows the service's page first (`Wait.URL`, linked
+  as a Form's is), then the words and a code to copy (`Wait.Code`, as
+  given). While someone watches the flow (a stream open on
   it, or a read of its state in the last `setupWatchWindow`, ten
   seconds), core calls the driver with `Answer.Checked` every
   `setupWaitEvery` (three seconds) on the server's clock; nothing is
