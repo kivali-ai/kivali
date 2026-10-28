@@ -47,12 +47,12 @@ const (
 // cuts a step's words at 200 characters, and each is shorter.
 const (
 	wordsAPIs     = "Sign in with the Google account agents will work in. Create a project for this in the project picker at the top, choose Next, then Enable the four APIs: Gmail, Calendar, Docs and Drive."
-	wordsScreen   = "Choose Get started, name the app Kivali, give your email address, and for the audience choose External for a personal Gmail account or Internal for a work account."
+	wordsScreen   = "Choose Get started, name the app Kivali, give your email address, choose External for a personal Gmail account or Internal for a work account, then agree and Create."
 	wordsAudience = "If the user type is External, under Test users choose Add users and add the Google account agents will work in. Google ends its sign-in every seven days; Kivali then asks you to sign in again."
 	wordsDesktop  = "Choose Create client, then Desktop app as the type, name it Kivali, and choose Create."
 	wordsWeb      = "Choose Create client, then Web application as the type, name it Kivali, add the address below under Authorized redirect URIs, and choose Create."
 	wordsWebMany  = "Choose Create client, then Web application as the type, name it Kivali, add each address below under Authorized redirect URIs, and choose Create."
-	wordsDownload = "Google shows the client it made. Choose Download JSON, open the file, and paste everything in it here."
+	wordsDownload = "Google shows the client it made. Choose Download JSON, open the file, and paste everything in it here. The client's row in the Clients list has a download icon too."
 )
 
 // formWords say what the Form asks for: the client's JSON.
