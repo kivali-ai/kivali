@@ -16,8 +16,9 @@ import (
 // description, and nothing else: no nesting, no numbers, no
 // combinators, no constraints the form would not show. A boolean may
 // also take "x-kivali-danger": true, which the form shows as a
-// dangerous choice. A manifest without kivali.access grants all or
-// nothing.
+// dangerous choice, and any property "x-kivali-section": a heading
+// the form draws it under, with the fields after it that name the
+// same one. A manifest without kivali.access grants all or nothing.
 
 // FieldKind is what kind of value an access field takes.
 type FieldKind string
@@ -59,6 +60,10 @@ type Field struct {
 	// Danger is true for a switch the schema marks "x-kivali-danger":
 	// turning it on is a choice the owner makes with care.
 	Danger bool
+	// Section is the heading the form draws the field under, from
+	// the schema's "x-kivali-section"; "" is none. Fields in a row
+	// with the same section share one heading.
+	Section string
 }
 
 // propType is a property's JSON type.
@@ -78,6 +83,8 @@ type property struct {
 	enum []string
 	// danger is a boolean's x-kivali-danger.
 	danger bool
+	// section is the property's x-kivali-section, trimmed.
+	section string
 }
 
 // schema is a parsed access schema.
@@ -108,9 +115,12 @@ const schemaPath = "kivali.access.schema"
 // dangerKeyword marks a boolean property as a dangerous choice.
 const dangerKeyword = "x-kivali-danger"
 
+// sectionKeyword names the heading a property is drawn under.
+const sectionKeyword = "x-kivali-section"
+
 var (
 	schemaKeywords   = []string{"$schema", "additionalProperties", "description", "properties", "required", "title", "type"}
-	propertyKeywords = []string{"description", "enum", "items", "title", "type", dangerKeyword}
+	propertyKeywords = []string{"description", "enum", "items", "title", "type", dangerKeyword, sectionKeyword}
 	itemsKeywords    = []string{"enum", "type"}
 )
 
@@ -174,7 +184,7 @@ func parseProperty(key string, raw json.RawMessage) (property, Findings) {
 	}
 	for _, k := range keys {
 		if !slices.Contains(propertyKeywords, k) {
-			f.errorf("%s: %s is not supported; a field takes type, title, description, enum, items and %s", at, k, dangerKeyword)
+			f.errorf("%s: %s is not supported; a field takes type, title, description, enum, items, %s and %s", at, k, dangerKeyword, sectionKeyword)
 		}
 	}
 	if t, ok := kw["title"]; ok {
@@ -186,6 +196,12 @@ func parseProperty(key string, raw json.RawMessage) (property, Findings) {
 		if err := json.Unmarshal(d, &p.description); err != nil {
 			f.errorf("%s: description must be text", at)
 		}
+	}
+	if s, ok := kw[sectionKeyword]; ok {
+		if err := json.Unmarshal(s, &p.section); err != nil || strings.TrimSpace(p.section) == "" {
+			f.errorf("%s: %s must be a heading, as text", at, sectionKeyword)
+		}
+		p.section = strings.TrimSpace(p.section)
 	}
 	var typ string
 	if err := json.Unmarshal(kw["type"], &typ); err != nil {
@@ -289,6 +305,7 @@ func AccessForm(m *Manifest) *Form {
 			Required:    slices.Contains(s.required, p.key),
 			Options:     []string{},
 			Choices:     listed,
+			Section:     p.section,
 		}
 		switch {
 		case p.typ == propBoolean:

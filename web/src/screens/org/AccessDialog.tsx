@@ -55,6 +55,23 @@ export function accessBody(form: AccessForm | undefined, values: Values): Record
   return out;
 }
 
+/** One heading of the form and the fields in a row under it; a run whose section is empty is drawn without one. */
+export interface Section {
+  section: string;
+  fields: AccessField[];
+}
+
+/** The form's fields in runs that share a heading, in the form's order. */
+export function sections(fields: readonly AccessField[]): Section[] {
+  const out: Section[] = [];
+  for (const f of fields) {
+    const last = out[out.length - 1];
+    if (last && last.section === f.section) last.fields.push(f);
+    else out.push({ section: f.section, fields: [f] });
+  }
+  return out;
+}
+
 /** A field's label: optional fields say so, as every form in Kivali does. A switch is never optional. */
 function fieldLabel(f: AccessField): string {
   return f.required || f.kind === 'switch' ? f.title : f.title + ' (optional)';
@@ -277,6 +294,19 @@ export function AccessDialog({
     }
   };
 
+  const input = (f: AccessField) => (
+    <AccessFieldInput
+      key={f.key}
+      field={f}
+      value={values[f.key]}
+      onChange={(v) => setValues((m) => ({ ...m, [f.key]: v }))}
+      integration={displayName}
+      load={loads[f.key]}
+      onLoad={() => void load(f.key)}
+      running={running}
+    />
+  );
+
   return (
     <Dialog
       open
@@ -303,18 +333,16 @@ export function AccessDialog({
               {error.who === 'you' ? 'Change the form, then try again.' : error.who}
             </Banner>
           )}
-          {fields.map((f) => (
-            <AccessFieldInput
-              key={f.key}
-              field={f}
-              value={values[f.key]}
-              onChange={(v) => setValues((m) => ({ ...m, [f.key]: v }))}
-              integration={displayName}
-              load={loads[f.key]}
-              onLoad={() => void load(f.key)}
-              running={running}
-            />
-          ))}
+          {sections(fields).map((s, i) =>
+            s.section ? (
+              <fieldset key={i} className="app-int-section">
+                <legend className="app-int-section-title">{s.section}</legend>
+                {s.fields.map(input)}
+              </fieldset>
+            ) : (
+              s.fields.map(input)
+            ),
+          )}
         </div>
       )}
     </Dialog>

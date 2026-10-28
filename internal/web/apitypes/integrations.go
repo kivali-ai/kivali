@@ -500,6 +500,10 @@ type AccessField struct {
 	// with care (the manifest's x-kivali-danger): the form draws it in
 	// a warning tone with its description in view.
 	Danger bool `json:"danger"`
+	// Section is the heading the form draws this field under (the
+	// manifest's x-kivali-section); "" for none. Fields in a row with
+	// the same section share one heading.
+	Section string `json:"section"`
 }
 
 // AccessRow is one agent's access.

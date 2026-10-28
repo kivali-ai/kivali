@@ -173,6 +173,12 @@ func TestValidateRules(t *testing.T) {
 		{"access danger not a bool", func(m map[string]any) {
 			obj(m, "kivali", "access", "schema", "properties", "write")["x-kivali-danger"] = "yes"
 		}, nil, LevelError, "properties.write: x-kivali-danger must be true or false"},
+		{"access section not text", func(m map[string]any) {
+			obj(m, "kivali", "access", "schema", "properties", "write")["x-kivali-section"] = 3
+		}, nil, LevelError, "properties.write: x-kivali-section must be a heading, as text"},
+		{"access section blank", func(m map[string]any) {
+			obj(m, "kivali", "access", "schema", "properties", "blogs")["x-kivali-section"] = " "
+		}, nil, LevelError, "properties.blogs: x-kivali-section must be a heading, as text"},
 		{"access enum of numbers", func(m map[string]any) {
 			obj(m, "kivali", "access", "schema", "properties", "region")["enum"] = []any{1, 2}
 		}, nil, LevelError, "properties.region.enum must be a non-empty list of text"},

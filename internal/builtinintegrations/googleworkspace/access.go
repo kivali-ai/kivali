@@ -42,27 +42,37 @@ const (
 )
 
 // accessField is one field of the access form: a switch (boolean) or a
-// list (array of text).
+// list (array of text), drawn under the heading its section names.
+// Each description is one line the owner reads beside the field; what
+// each switch gives in full is the integration's page and the docs.
 type accessField struct {
-	key, title, description string
-	list                    bool
+	key, title, description, section string
+	list                             bool
 }
+
+// The form's headings, one per service and one for whom sends reach.
+const (
+	sectionGmail    = "Gmail"
+	sectionCalendar = "Calendar"
+	sectionDocs     = "Documents"
+	sectionSending  = "Sending"
+)
 
 // accessFields is the access form, in the order it is drawn.
 var accessFields = []accessField{
-	{key: keyGmailRead, title: "May read mail", description: "Lets the agent see what is in your Gmail, within the labels below. It changes nothing."},
-	{key: keyGmailWrite, title: "May draft and label", description: "Lets the agent change your Gmail where no one else is told: drafts it writes, and labels on messages. It sends nothing."},
-	{key: keyGmailSend, title: "May send mail (each send waits for your approval)", description: "Lets the agent ask to send mail: an email it writes, or a draft. Nothing is sent until you approve it, exactly as you saw it."},
-	{key: keyGmailLabels, title: "Labels it may read", description: "The labels the agent may read mail in. Leave it empty for every label.", list: true},
-	{key: keyCalendarRead, title: "May read calendars", description: "Lets the agent see the calendars below and their events. It changes nothing."},
-	{key: keyCalendarWrite, title: "May change events", description: "Lets the agent create events on your own calendars, and change and delete the events there that you organized and that invite no one but you, telling no one. It deletes only events Kivali created. Inviting people, changing who an event invites, changing or deleting an event that invites others, and any change on a calendar shared with others, who see it, each wait for your approval and need May invite and respond."},
-	{key: keyCalendarSend, title: "May invite and respond (each waits for your approval)", description: "Lets the agent ask to invite people to events, to change and delete events that invite others, to create, change and delete events on calendars shared with others, and to answer invitations. Nothing reaches anyone until you approve it, exactly as you saw it."},
-	{key: keyCalendars, title: "Calendars it may use", description: "The calendars the agent may use. Leave it empty for every calendar.", list: true},
-	{key: keyDocsRead, title: "May read documents", description: "Lets the agent find and read Google Docs and their comments, within the folders below. It changes nothing."},
-	{key: keyDocsWrite, title: "May write documents", description: "Lets the agent create documents, and change documents you own or it created, telling no one. Changing a document shared with others, or creating one in a folder shared with others, who see it, waits for your approval and needs May comment."},
-	{key: keyDocsSend, title: "May comment (each comment waits for your approval)", description: "Lets the agent ask to comment on documents Kivali made and to reply to comments on them, and to change documents shared with others and create documents in folders shared with others, within the folders below. Nothing is posted or changed until you approve it, exactly as you saw it."},
-	{key: keyDocsFolders, title: "Folders it may read", description: "The Drive folders the agent may read and change documents in, the folders inside them included. Leave it empty for every document you can open.", list: true},
-	{key: keySendTo, title: "May send to", description: "Who the agent's sends may reach: everyone an email goes to, everyone Google tells of an invitation, a change to an event or an answer, everyone Google tells of a comment, and everyone a calendar or a document is shared with, for a change to it. An address such as dana@example.com, or *@example.com for everyone at a domain. Leave it empty for anyone. While it names anyone, a change to a calendar or a document shared with everyone at a domain, or with anyone, is refused. Every send still waits for your approval.", list: true},
+	{key: keyGmailRead, section: sectionGmail, title: "May read mail", description: "Reads mail in the labels below. Changes nothing."},
+	{key: keyGmailWrite, section: sectionGmail, title: "May draft and label", description: "Writes drafts and changes labels. Sends nothing."},
+	{key: keyGmailSend, section: sectionGmail, title: "May send mail", description: "Asks to send mail. You approve each send before it goes."},
+	{key: keyGmailLabels, section: sectionGmail, title: "Labels it may read", description: "Empty means every label except Spam and Trash.", list: true},
+	{key: keyCalendarRead, section: sectionCalendar, title: "May read calendars", description: "Reads the calendars below. Changes nothing."},
+	{key: keyCalendarWrite, section: sectionCalendar, title: "May change events", description: "Makes and changes your own events that invite no one else."},
+	{key: keyCalendarSend, section: sectionCalendar, title: "May invite and respond", description: "Asks to invite people, change shared events and answer invitations. You approve each one."},
+	{key: keyCalendars, section: sectionCalendar, title: "Calendars it may use", description: "Empty means every calendar.", list: true},
+	{key: keyDocsRead, section: sectionDocs, title: "May read documents", description: "Reads documents in the folders below. Changes nothing."},
+	{key: keyDocsWrite, section: sectionDocs, title: "May write documents", description: "Makes documents and changes the ones you own."},
+	{key: keyDocsSend, section: sectionDocs, title: "May comment", description: "Asks to comment, and to change shared documents. You approve each one."},
+	{key: keyDocsFolders, section: sectionDocs, title: "Folders it may read", description: "Empty means every document you can open.", list: true},
+	{key: keySendTo, section: sectionSending, title: "May send to", description: "Addresses its sends may reach, or *@example.com for everyone there. Empty means anyone.", list: true},
 }
 
 // accessSchema is the access form as the manifest's JSON Schema, the
@@ -74,7 +84,7 @@ var accessSchema = func() string {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		prop := map[string]any{"type": "boolean", "title": f.title, "description": f.description}
+		prop := map[string]any{"type": "boolean", "title": f.title, "description": f.description, "x-kivali-section": f.section}
 		if f.list {
 			prop["type"], prop["items"] = "array", map[string]string{"type": "string"}
 		}

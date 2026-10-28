@@ -488,6 +488,7 @@ func accessFormWire(m *integration.Manifest) *apitypes.AccessForm {
 			Options:     nonNilStrings(slices.Clone(f.Options)),
 			Choices:     f.Choices,
 			Danger:      f.Danger,
+			Section:     f.Section,
 		})
 	}
 	return out

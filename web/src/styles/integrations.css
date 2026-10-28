@@ -172,10 +172,19 @@
 }
 
 /* ---- Connection and access forms ---- */
+/*
+ * The access form inside its dialog. The dialog is centred at whatever height its content takes, so a form
+ * taller than the window (Google Workspace's thirteen fields) scrolls here, within the window less what the
+ * dialog's own title, buttons, padding and margin take: seven steps of --space-8 covers them, on both platforms.
+ */
 .app-int-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  max-height: calc(100vh - var(--space-8) * 7);
+  max-height: calc(100dvh - var(--space-8) * 7);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .app-int-status {
@@ -400,4 +409,23 @@
   flex-direction: column;
   gap: calc(var(--space-1) / 2);
   min-width: 0;
+}
+
+/* A heading of the access form, with the fields the integration puts under it. */
+.app-int-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.app-int-section-title {
+  padding: 0;
+  margin-bottom: var(--space-1);
+  font: var(--text-heading);
+  letter-spacing: var(--type-heading-tracking);
+  color: var(--ink);
 }

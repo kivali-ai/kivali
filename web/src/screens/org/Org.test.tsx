@@ -1729,6 +1729,20 @@ describe('Integration page', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  // Guards the form's headings (integration_page.json's write and delete under Posts): fields in a row that name one
+  // section sit under one heading, as a group it names, and a field with none is outside any. A section dropped on
+  // the way to the dialog would draw Google Workspace's thirteen fields as one run.
+  it('draws the access form’s fields under the headings the integration names', async () => {
+    await renderOrg(PATH);
+    await click(within(screen.getByRole('region', { name: 'Access' })).getByRole('button', { name: 'Give access' }));
+    const dialog = within(screen.getByRole('dialog'));
+    const posts = within(dialog.getByRole('group', { name: 'Posts' }));
+    expect(posts.getByRole('checkbox', { name: 'May publish and edit' })).toBeInTheDocument();
+    expect(posts.getByRole('checkbox', { name: 'May delete posts' })).toBeInTheDocument();
+    expect(posts.queryByRole('textbox', { name: 'Note (optional)' })).toBeNull();
+    expect(dialog.getByRole('textbox', { name: 'Note (optional)' })).toBeInTheDocument();
+  });
+
   // Guards a switch the integration marks dangerous (integration_page.json's delete, as Git's force-push is): it is
   // drawn in the warning tone with its description beside a warning icon, not as a muted hint, while an ordinary
   // switch keeps the plain look; and it still sends true or false like any switch. A danger flag dropped on the way to

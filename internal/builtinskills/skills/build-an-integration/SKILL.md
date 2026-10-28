@@ -204,6 +204,7 @@ Each property has `type`, `title` and `description`, and is one of:
 | `boolean` with `"x-kivali-danger": true` | a switch shown as a risky choice, its description in view: for one the owner should turn on with care |
 | `array` with `items: {"type": "string"}` | a list, free text |
 | `array` with `items.enum` | choices of the enum |
+| any, with `"x-kivali-section": "Heading"` | the same, drawn under that heading; fields in a row that name one heading share it |
 
 Nothing else: no numbers, no nested objects, no `oneOf` and the like,
 no constraints such as `minItems` or `pattern`.
