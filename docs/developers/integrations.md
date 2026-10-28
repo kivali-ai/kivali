@@ -4152,10 +4152,11 @@ one page at a time, then takes the client's JSON:
    sign-in app shares its audience and verification with everything
    in the project), the sign-in screen (`/auth/overview`: Get
    started, External for a personal Gmail account, Internal for a work
-   account), publishing an External app (`/auth/audience`: Testing
-   ends every sign-in after seven days, and an unverified app shows
-   "Google hasn't verified this app" once, with Advanced to go on),
-   and the client (`/auth/clients/create`). The client step's type is
+   account), the test user (`/auth/audience`: Add users under Test
+   users; the app stays in Testing, since publishing asks for a
+   homepage and policy pages and Google ends a Testing app's sign-in
+   every seven days, which the Sign-in requirement's Fix mends), and
+   the client (`/auth/clients`, whose Create client makes it). The client step's type is
    picked from `Answer.Addresses` (`clientStep`, `loopbackOnly`):
    every address at `127.0.0.1`, `localhost` or `::1`, or none known,
    says **Desktop app**, which registers nothing since Google takes a
@@ -5394,9 +5395,8 @@ the `sign_in` row's Fix, whose `prompt=consent` has Google ask for
 every scope again. As a `SignInAdviser`, it adds
 to the `sign_in` row of a refusal naming `invalid_grant`, which Google
 answers once it ends a sign-in, the likely cause: "If this came about a
-week after you signed in, the app is likely still in Testing on
-Google's Auth Platform, where Google ends every sign-in after seven
-days: publish it under Audience, then sign in again." Google answers
+week after you signed in, it is Google ending the sign-in of an app in
+Testing after seven days, as it does every week: sign in again." Google answers
 `invalid_grant` for a revoked sign-in too, so the words are added to
 every `invalid_grant` and are conditional in their own wording; any other refusal gets nothing added.
 

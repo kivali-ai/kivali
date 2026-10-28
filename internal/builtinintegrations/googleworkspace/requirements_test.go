@@ -14,7 +14,7 @@ import (
 func TestSignInAdviceNamesTesting(t *testing.T) {
 	g := New()
 	advice := g.SignInAdvice("the vendor refused the sign-in (invalid_grant): Token has been expired or revoked.")
-	if advice != testingAdvice || !strings.Contains(advice, "Testing") || !strings.Contains(advice, "seven days") || !strings.Contains(advice, "publish") {
+	if advice != testingAdvice || !strings.Contains(advice, "Testing") || !strings.Contains(advice, "seven days") || !strings.Contains(advice, "sign in again") {
 		t.Errorf("invalid_grant: %q", advice)
 	}
 	if got := g.SignInAdvice("the vendor refused the sign-in (invalid_client): The OAuth client was deleted."); got != "" {
