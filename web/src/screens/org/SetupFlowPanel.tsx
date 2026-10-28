@@ -74,11 +74,11 @@ export interface SetupFlowPanelProps {
 /**
  * A setup flow, drawn from its state as the server streams it: the button that starts it; while it runs, its progress
  * (a real progress bar where there is a count); a Form of the fields the integration declared, secrets as password
- * fields, with the service's page to open (the link names the page when the step names it, else its host) and what to
- * copy there, or with no fields a step taken on the service by
- * hand, Continue alone going on; a Go that sends the browser to the service, by /connect/start, which Kivali Desktop
- * opens in the system browser; a Wait with its words, a code to copy and the service's page; done; or failed with why
- * and Try again.
+ * fields, with the service's page to open above them (the link names the page when the step names it, else its host,
+ * and comes first so the words read as what to do on that page) and what to copy there, or with no fields a step taken
+ * on the service by hand, Continue alone going on; a Go that sends the browser to the service, by /connect/start, which
+ * Kivali Desktop opens in the system browser; a Wait with the service's page, its words and a code to copy; done; or
+ * failed with why and Try again.
  * Cancel ends a flow under way. The panel follows the flow's stream, or asks every few seconds while the tab is
  * visible where there is no stream.
  */
@@ -268,11 +268,6 @@ export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setu
           void answer();
         }}
       >
-        {step.words && (
-          <Text as="p" variant="body">
-            {step.words}
-          </Text>
-        )}
         {step.url && (
           <Text as="p" variant="body">
             {/* eslint-disable-next-line react/forbid-elements -- external */}
@@ -284,6 +279,11 @@ export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setu
                 {' on ' + step.host}
               </Text>
             )}
+          </Text>
+        )}
+        {step.words && (
+          <Text as="p" variant="body">
+            {step.words}
           </Text>
         )}
         {step.copy.map((v, i) => (
@@ -347,19 +347,6 @@ export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setu
   } else if (flow.state === 'wait' && step) {
     body = (
       <div className="app-int-device">
-        <Text as="p" variant="body">
-          {step.words}
-        </Text>
-        {step.code && (
-          <div className="app-int-device-code">
-            <Text variant="display" className="app-int-code" aria-label="Code">
-              {step.code}
-            </Text>
-            <Button type="button" size="sm" variant="ghost" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={() => copy(step.code ?? '')}>
-              {copied ? 'Copied' : 'Copy code'}
-            </Button>
-          </div>
-        )}
         {step.url && (
           <Text as="p" variant="body">
             {/* eslint-disable-next-line react/forbid-elements -- external */}
@@ -372,6 +359,19 @@ export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setu
               </Text>
             )}
           </Text>
+        )}
+        <Text as="p" variant="body">
+          {step.words}
+        </Text>
+        {step.code && (
+          <div className="app-int-device-code">
+            <Text variant="display" className="app-int-code" aria-label="Code">
+              {step.code}
+            </Text>
+            <Button type="button" size="sm" variant="ghost" icon={<Icon name={copied ? 'check' : 'copy'} />} onClick={() => copy(step.code ?? '')}>
+              {copied ? 'Copied' : 'Copy code'}
+            </Button>
+          </div>
         )}
         <Text as="p" variant="caption" tone="muted">
           {(step.code ? codeLifeWords(flow.expires_at, now) + ' ' : '') + 'Waiting.'}

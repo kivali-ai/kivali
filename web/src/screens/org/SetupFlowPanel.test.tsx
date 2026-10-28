@@ -93,7 +93,8 @@ describe('SetupFlowPanel', () => {
   // does not ask, and Continue, which answers with no fields so the flow goes on. The link names the page the step
   // named, with the host beside it: a flow that walks one console page after another is on the one host throughout,
   // and a link naming the host alone read the same at every step while its address changed, so the owner could not
-  // tell there was a new page to open.
+  // tell there was a new page to open. The link comes above the words: read top to bottom, the words say what to do
+  // on a page the owner has not yet been shown.
   it('draws a form with no fields as a step taken on the service', async () => {
     const byHand = state(1, {
       state: 'form',
@@ -115,6 +116,8 @@ describe('SetupFlowPanel', () => {
     expect(link).toHaveAttribute('href', 'https://console.example/projectcreate');
     expect(link).toHaveAttribute('target', '_blank');
     expect(screen.getByText('on console.example')).toBeInTheDocument();
+    const words = screen.getByText('Create a project, or pick one you have.');
+    expect(link.compareDocumentPosition(words) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByLabelText('To copy')).toHaveValue('https://team.example/connect/callback');
     expect(screen.queryByText('GitHub asks for')).toBeNull();
     vi.mocked(apiPost).mockResolvedValue(structuredClone(running) as never);
