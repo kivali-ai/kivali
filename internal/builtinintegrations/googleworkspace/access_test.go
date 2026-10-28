@@ -72,19 +72,19 @@ func TestReadAccess(t *testing.T) {
 // would have the owner turn on sends expecting to see each one first.
 // The read switches and the lists promise no approval; of the write
 // switches, only those whose writes become sends on what others can see
-// (calendar_write, docs_write) say those wait.
+// (calendar_write, docs_write) may say those wait.
 func TestFormSaysWhichSendsWait(t *testing.T) {
 	waits := map[string]string{
-		keyGmailSend:    "May send mail (each send waits for your approval)",
-		keyCalendarSend: "May invite and respond (each waits for your approval)",
-		keyDocsSend:     "May comment (each comment waits for your approval)",
+		keyGmailSend:    "May send mail",
+		keyCalendarSend: "May invite and respond",
+		keyDocsSend:     "May comment",
 	}
 	for _, f := range accessFields {
 		approves := strings.Contains(strings.ToLower(f.title+" "+f.description), "approv")
 		title, wait := waits[f.key]
 		switch {
-		case wait && f.title != title:
-			t.Errorf("%s is titled %q, want %q", f.key, f.title, title)
+		case wait && (f.title != title || !approves):
+			t.Errorf("%s is titled %q, want %q, and must say each send waits for approval: %q", f.key, f.title, title, f.description)
 		case !wait && approves && f.key != keySendTo && f.key != keyCalendarWrite && f.key != keyDocsWrite:
 			t.Errorf("%s promises an approval: %q, %q", f.key, f.title, f.description)
 		}

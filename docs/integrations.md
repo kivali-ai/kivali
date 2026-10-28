@@ -182,7 +182,7 @@ Some actions of an integration that ships with Kivali reach other people, such a
 
 You see an **Integration action** row in **Needs you**, from the agent, titled with what it would do, such as "Send an email to alice@example.org". Expand it to read the integration and the action, whom it reaches, and every field exactly as it will go, such as the subject and the whole body, as plain text. When the agent's calls of that integration returned mail, events or documents written outside your domain in the day before it asked, a marked line above the fields says how many such writers they returned and names the latest, such as "Before asking, this agent read 3 messages, events or documents from outside your domain, the latest from alice@example.org." Text from outside can try to steer an agent, so read the fields closely then. What you read is what runs: Kivali refuses, before it reaches you, a request that carries the integration's secret or characters that show as nothing on screen, such as zero-width spaces or direction marks. The joiner inside emoji such as a family is allowed.
 
-**Approve** runs it at once, with the connection as it is then, and **Deny** keeps it from happening; either can carry a note, which the agent reads. If something changed since the agent asked, such as its access being removed, the switch that lets it ask (such as **May send mail (each send waits for your approval)**) being turned off, or the integration's sign-in lapsing, **Approve** says why it cannot run and the row stays until you approve again or deny it. If the integration finds as it runs that it cannot be done, such as an event that changed after you saw it, nothing is done, the row ends, and you are told why. The agent hears in its chat what happened: approved, with what the integration answered, or denied, with your note.
+**Approve** runs it at once, with the connection as it is then, and **Deny** keeps it from happening; either can carry a note, which the agent reads. If something changed since the agent asked, such as its access being removed, the switch that lets it ask (such as **May send mail**) being turned off, or the integration's sign-in lapsing, **Approve** says why it cannot run and the row stays until you approve again or deny it. If the integration finds as it runs that it cannot be done, such as an event that changed after you saw it, nothing is done, the row ends, and you are told why. The agent hears in its chat what happened: approved, with what the integration answered, or denied, with your note.
 
 A row nobody answers within a day ends with nothing done, and so does every waiting row of an integration you disable or disconnect, or of an agent you offboard. An agent can have five rows waiting at a time; a sixth request is refused, and the agent is told to wait for your answers. Waiting rows live only while Kivali runs: a restart drops them with nothing done.
 
@@ -353,16 +353,16 @@ An action whose API you did not turn on in the project is refused by Google, and
 
 ### Access
 
-An agent's access has three switches and a list for each of Gmail, Google Calendar and Google Docs, and one list for whom its sends may reach:
+An agent's access has three switches and a list for each of Gmail, Google Calendar and Google Docs, each under its own heading, and under **Sending** one list for whom its sends may reach. Each field has one line on what it allows; this section has the rest.
 
 | | Gmail | Google Calendar | Google Docs |
 | --- | --- | --- | --- |
 | Read | **May read mail** | **May read calendars** | **May read documents** |
 | Write | **May draft and label** | **May change events** | **May write documents** |
-| Send | **May send mail (each send waits for your approval)** | **May invite and respond (each waits for your approval)** | **May comment (each comment waits for your approval)** |
+| Send | **May send mail** | **May invite and respond** | **May comment** |
 | What it may use | **Labels it may read** | **Calendars it may use** | **Folders it may read** |
 
-- A switch left off gives none of its actions. A send switch only decides whether the agent may ask: every send waits for your approval, always ([Sends that wait for you](#sends-that-wait-for-you)). Inviting people, changing or deleting an event that invites others, and any change on a calendar shared with others, also need **May change events**, which gives the actions that create, change and delete events. A change to a document shared with others, or a document made in a folder shared with others, needs **May comment (each comment waits for your approval)** as well as **May write documents**.
+- A switch left off gives none of its actions. A send switch only decides whether the agent may ask: every send waits for your approval, always ([Sends that wait for you](#sends-that-wait-for-you)). Inviting people, changing or deleting an event that invites others, and any change on a calendar shared with others, also need **May change events**, which gives the actions that create, change and delete events. A change to a document shared with others, or a document made in a folder shared with others, needs **May comment** as well as **May write documents**.
 - **Labels it may read**, **Calendars it may use** and **Folders it may read** hold the agent in that service, writing and sending included: it reads and replies to mail only in those labels (and, when the list names any, changes labels only on messages in them), uses only those calendars, and reads, changes and comments on documents only in those folders and the folders inside them. A list left empty is everything, except that an empty label list leaves out Spam and Trash: name them to let the agent read them. **Load options** lists what your account has: Gmail's own labels (Inbox, Starred, Important, Sent, Drafts, Spam and Trash) and yours, the calendars in your Google Calendar list, and the Drive folders you can open. Each is shown by its name, with Google's id for it in parentheses, and the agent is held to the id.
 - **May send to** is whom the agent's sends may reach: addresses such as `dana@example.com`, or `*@example.com` for everyone at that domain (not the domains under it). Leave it empty for anyone. Saving the access refuses an entry that is neither. A send is refused before it reaches you when anyone it reaches is outside the list: everyone an email goes to; everyone Google tells of an invitation, a change to an event or an answer to one; everyone Google tells of a comment; and everyone a calendar or a document is shared with, for a change to it. While the list names anyone, a send that also reaches people whose address Google does not show is refused too, since Kivali cannot check them, and so is a change to a calendar or a document shared with everyone at a domain or with anyone, even a domain the list names with `*@`, since Kivali cannot list whom such sharing reaches. The list does not hold a draft: nothing leaves your account until it is sent.
 
@@ -389,7 +389,7 @@ With **May draft and label**, an agent can:
 
 When **Labels it may read** names labels, an agent changes labels only on messages in them, and may add or remove only those labels, and archive, mark read or unread, and star.
 
-With **May send mail (each send waits for your approval)**, an agent can ask to:
+With **May send mail**, an agent can ask to:
 
 - Send an email it writes, new or a reply, addressed as a draft is. It goes to the addresses alone: a name the agent gives with an address is left out.
 - Send a draft from your Drafts, one an agent wrote or one you wrote. Once sent, it leaves your Drafts. A draft Kivali cannot show you whole is refused: one with attachments, with more than one plain or formatted version, or with another kind of part such as an inline image, and one holding invisible characters such as zero-width spaces. Send those from Gmail, or take the invisible characters out there first.
@@ -433,7 +433,7 @@ Google emails no one about these. Changing or deleting an event that invites any
 
 A calendar you share is seen by everyone you share it with, so before each create, change or delete Kivali reads who the calendar is shared with, and on a calendar shared with anyone but you, the change is a send too. Someone who sees only when you are free or busy does not count: they see none of what an event says. A calendar shared with no one else stays a write.
 
-With **May invite and respond (each waits for your approval)** as well as **May change events**, an agent can ask to:
+With **May invite and respond** as well as **May change events**, an agent can ask to:
 
 - Create an event that invites people.
 - Change who an event invites, or change an event that invites anyone but you or that someone else organized.
@@ -466,7 +466,7 @@ An agent changes only documents you own, and documents Kivali made that no one e
 
 A change to a document shared with others is seen by everyone it is shared with, and a document made in a folder takes the folder's sharing. So before each of these writes Kivali reads who the document, or for a new document its folder, is shared with: a person, a group, everyone at a domain, or anyone with the link. Shared with anyone but you, including the other members of a shared drive, the write is a send; shared with no one else, it stays a write.
 
-With **May comment (each comment waits for your approval)**, an agent can ask to:
+With **May comment**, an agent can ask to:
 
 - Comment on a document Kivali made, quoting the document's text the comment is about when it gives one.
 - Reply to a comment on a document Kivali made.
@@ -503,7 +503,7 @@ A row ends with **Also reaches**, "People whose address Google does not show", w
 
 When the agent's Google Workspace calls in the day before it asked returned mail, events or documents written outside your domain, a marked line at the top of the row says so, with how many such writers its calls returned and the latest, such as "Before asking, this agent read 3 messages, events or documents from outside your domain, the latest from alice@example.org." A message counts by its sender, an event by its organizer, creator and attendees, a document by its owner (one in a shared drive counts as from outside), and a comment by its author; someone whose address Google does not show reads as "an unknown sender". Text from outside can try to steer an agent, so read the row closely then.
 
-**Approve** sends it at once, with the sign-in as it is then. If the agent's access no longer has the switch that lets it ask, such as **May send mail (each send waits for your approval)**, or the sign-in needs you, **Approve** says why and the row stays until you approve again or deny it. If Google finds then that it cannot be done, such as an event that changed after you saw it, or a draft, a document or a comment deleted meanwhile, nothing is done, and you and the agent are told why. If Google does not answer, it may still have been done, and the agent is told what to look at before asking again. **Deny** sends nothing; your note, with either answer, goes to the agent.
+**Approve** sends it at once, with the sign-in as it is then. If the agent's access no longer has the switch that lets it ask, such as **May send mail**, or the sign-in needs you, **Approve** says why and the row stays until you approve again or deny it. If Google finds then that it cannot be done, such as an event that changed after you saw it, or a draft, a document or a comment deleted meanwhile, nothing is done, and you and the agent are told why. If Google does not answer, it may still have been done, and the agent is told what to look at before asking again. **Deny** sends nothing; your note, with either answer, goes to the agent.
 
 An agent can have five requests waiting at a time; a sixth is refused, and the agent is told to wait for your answers. A row nobody answers within a day ends with nothing sent, and so does every waiting row when you disable or disconnect Google Workspace, and every row of an agent you offboard. Waiting rows live only while Kivali runs: a restart drops them with nothing sent, and the agent, told that no word within a day means it was not done, hears nothing more.
 

@@ -83,7 +83,8 @@
         "required": true,
         "options": [],
         "choices": false,
-        "danger": false
+        "danger": false,
+        "section": ""
       },
       {
         "key": "push",
@@ -93,7 +94,8 @@
         "required": false,
         "options": [],
         "choices": false,
-        "danger": false
+        "danger": false,
+        "section": ""
       }
     ]
   },

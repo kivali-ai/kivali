@@ -71,7 +71,8 @@
         "required": true,
         "options": [],
         "choices": true,
-        "danger": false
+        "danger": false,
+        "section": ""
       },
       {
         "key": "write",
@@ -81,7 +82,8 @@
         "required": false,
         "options": [],
         "choices": false,
-        "danger": false
+        "danger": false,
+        "section": "Posts"
       },
       {
         "key": "delete",
@@ -91,7 +93,8 @@
         "required": false,
         "options": [],
         "choices": false,
-        "danger": true
+        "danger": true,
+        "section": "Posts"
       },
       {
         "key": "region",
@@ -104,7 +107,8 @@
           "us"
         ],
         "choices": false,
-        "danger": false
+        "danger": false,
+        "section": ""
       },
       {
         "key": "tags",
@@ -114,7 +118,8 @@
         "required": false,
         "options": [],
         "choices": false,
-        "danger": false
+        "danger": false,
+        "section": ""
       },
       {
         "key": "note",
@@ -124,7 +129,8 @@
         "required": false,
         "options": [],
         "choices": false,
-        "danger": false
+        "danger": false,
+        "section": ""
       }
     ]
   },

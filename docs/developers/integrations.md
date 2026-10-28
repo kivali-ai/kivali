@@ -457,12 +457,18 @@ flat form can show. The top level takes `type: object`, `properties`,
 | `array` of `items: {type: string}` | `list`, free text |
 | `array` with `items.enum` | `choices`, with the enum as options |
 | `boolean` with `"x-kivali-danger": true` | `switch` with `danger` (`AccessField.Danger`) |
+| any, with `"x-kivali-section": "<heading>"` | the same, under that heading (`AccessField.Section`) |
 
 `x-kivali-danger` marks a switch whose "on" the owner should choose
 with care (Git (Basic)'s force-push): the access dialog draws it in the warning
 tone, its description beside a warning icon instead of a muted hint.
 It must be `true` or `false`, and it is an error on any property but a
 `boolean`.
+
+`x-kivali-section` names the heading the access dialog draws a field
+under; fields in a row that name the same heading share it (Google
+Workspace's Gmail, Calendar, Documents and Sending). It must be text
+that is not blank.
 
 Anything else is an error naming the property: nested objects,
 numbers, combinators (`oneOf` and the like), constraints the form
@@ -4202,7 +4208,7 @@ everything.
 | --- | --- | --- |
 | `gmail_read`, `calendar_read`, `docs_read` | switch | May read mail, May read calendars, May read documents |
 | `gmail_write`, `calendar_write`, `docs_write` | switch | May draft and label, May change events, May write documents |
-| `gmail_send`, `calendar_send`, `docs_send` | switch | May send mail (each send waits for your approval), May invite and respond (each waits for your approval), May comment (each comment waits for your approval) |
+| `gmail_send`, `calendar_send`, `docs_send` | switch | May send mail, May invite and respond, May comment |
 | `gmail_labels`, `calendars`, `docs_folders` | choices, listed live | Labels it may read, Calendars it may use, Folders it may read |
 | `send_to` | list | May send to: addresses, or `*@domain` |
 

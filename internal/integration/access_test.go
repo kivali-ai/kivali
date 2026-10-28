@@ -77,6 +77,33 @@ func TestAccessFormDanger(t *testing.T) {
 	}
 }
 
+// Why this test exists: x-kivali-section is how a manifest groups a
+// long form under headings (Google Workspace's Gmail, Calendar,
+// Documents). Lost on the way to the form, the dialog would draw one
+// run of fields; a blank heading, or one that is not text, is an
+// error rather than an empty heading drawn above a field.
+func TestAccessFormSection(t *testing.T) {
+	m := &Manifest{Kivali: Kivali{Access: &Access{
+		Schema: json.RawMessage(`{"type":"object","properties":{` +
+			`"read":{"type":"boolean","title":"May read mail","x-kivali-section":" Gmail "},` +
+			`"labels":{"type":"array","items":{"type":"string"},"x-kivali-section":"Gmail"},` +
+			`"note":{"type":"string","title":"Note"}}}`),
+	}}}
+	if _, f := parseSchema(m.Kivali.Access.Schema); f.HasErrors() {
+		t.Fatalf("findings: %v", f.Texts())
+	}
+	form := AccessForm(m)
+	if len(form.Fields) != 3 || form.Fields[0].Section != "Gmail" || form.Fields[1].Section != "Gmail" || form.Fields[2].Section != "" {
+		t.Errorf("fields = %+v", form.Fields)
+	}
+	for _, bad := range []string{`""`, `"  "`, `true`, `["Gmail"]`} {
+		_, f := parseSchema(json.RawMessage(`{"type":"object","properties":{"read":{"type":"boolean","x-kivali-section":` + bad + `}}}`))
+		if !f.HasErrors() {
+			t.Errorf("x-kivali-section %s accepted", bad)
+		}
+	}
+}
+
 // Access that is all or nothing has no form, so the page shows none
 // and the summary says so.
 func TestNoAccessForm(t *testing.T) {

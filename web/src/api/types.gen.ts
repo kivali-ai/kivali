@@ -2491,6 +2491,12 @@ export interface AccessField {
    * a warning tone with its description in view.
    */
   danger: boolean;
+  /**
+   * Section is the heading the form draws this field under (the
+   * manifest's x-kivali-section); "" for none. Fields in a row with
+   * the same section share one heading.
+   */
+  section: string;
 }
 /**
  * AccessRow is one agent's access.
