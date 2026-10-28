@@ -111,6 +111,7 @@ type SetupForm struct {
 	Words  string   `json:"words"`
 	Fields []string `json:"fields"`
 	URL    string   `json:"url,omitempty"`
+	Page   string   `json:"page,omitempty"`
 	Copy   []string `json:"copy,omitempty"`
 }
 
@@ -129,6 +130,7 @@ type SetupGo struct {
 type SetupWait struct {
 	Words string `json:"words"`
 	URL   string `json:"url,omitempty"`
+	Page  string `json:"page,omitempty"`
 	Code  string `json:"code,omitempty"`
 }
 
@@ -184,7 +186,7 @@ func ParseSetupResult(raw json.RawMessage) (builtinintegrations.Step, error) {
 	}
 	out := builtinintegrations.Step{Done: st.Done, Keep: st.Keep, State: st.State}
 	if st.Form != nil {
-		out.Form = &builtinintegrations.Form{Words: st.Form.Words, Fields: st.Form.Fields, URL: st.Form.URL, Copy: st.Form.Copy}
+		out.Form = &builtinintegrations.Form{Words: st.Form.Words, Fields: st.Form.Fields, URL: st.Form.URL, Page: st.Form.Page, Copy: st.Form.Copy}
 	}
 	if st.Go != nil {
 		g := &builtinintegrations.Go{Words: st.Go.Words, URL: st.Go.URL, NoReturn: st.Go.NoReturn, Stateless: st.Go.Stateless}
@@ -194,7 +196,7 @@ func ParseSetupResult(raw json.RawMessage) (builtinintegrations.Step, error) {
 		out.Go = g
 	}
 	if st.Wait != nil {
-		out.Wait = &builtinintegrations.Wait{Words: st.Wait.Words, URL: st.Wait.URL, Code: st.Wait.Code}
+		out.Wait = &builtinintegrations.Wait{Words: st.Wait.Words, URL: st.Wait.URL, Page: st.Wait.Page, Code: st.Wait.Code}
 	}
 	return out, nil
 }

@@ -142,7 +142,7 @@ The answer is one step, and optionally what to keep and to carry:
 
 | `step` holds | Shape |
 | --- | --- |
-| exactly one of | `"form": {"words", "fields": [keys], "url", "copy": [values]}` (`fields` may be empty, for a step the owner takes on the service; `url` and `copy` optional); `"go": {"words", "url", "post", "no_return", "stateless"}` (`post` an object of strings, or lists of strings for a key posted more than once; the rest optional); `"wait": {"words", "url", "code"}` (`url` and `code` optional); `"done": true` |
+| exactly one of | `"form": {"words", "fields": [keys], "url", "page", "copy": [values]}` (`fields` may be empty, for a step the owner takes on the service; `url`, `page` and `copy` optional); `"go": {"words", "url", "post", "no_return", "stateless"}` (`post` an object of strings, or lists of strings for a key posted more than once; the rest optional); `"wait": {"words", "url", "page", "code"}` (`url`, `page` and `code` optional); `"done": true` |
 | optionally | `"keep": {key: value}` and `"state": {key: value}`, strings |
 
 An error is a JSON-RPC error, and its message is what the owner reads
@@ -175,7 +175,11 @@ an API, registering an address.
 - A step the owner takes by hand is one thing to do, in words under
   200 characters that name what to choose on the page, with the page
   linked: `{"words": "Create a project, or pick one you have.",
-  "fields": [], "url": "https://console.example/projects/new"}`. Walk
+  "fields": [], "url": "https://console.example/projects/new", "page":
+  "New project"}`. `page` names the page as the console's own heading
+  reads, in a few words: the link reads "Open New project", with the
+  host beside it; without it the link names the host alone, which reads
+  the same at every step of a walk through one console. Walk
   the owner through a console one page at a time rather than listing
   every step in `setup_notes`; keep the notes to what the setup is
   for and how long it takes. What the owner copies to the page, such

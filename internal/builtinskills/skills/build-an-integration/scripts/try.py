@@ -831,9 +831,9 @@ def secret_return_key(k):
 # these, or a value of another type, and Kivali cannot read the step.
 STEP_KEYS = {"form", "go", "wait", "done", "keep", "state"}
 KIND_KEYS = {
-    "form": {"words": "text", "fields": "texts", "url": "text", "copy": "texts"},
+    "form": {"words": "text", "fields": "texts", "url": "text", "page": "text", "copy": "texts"},
     "go": {"words": "text", "url": "text", "post": "post", "no_return": "switch", "stateless": "switch"},
-    "wait": {"words": "text", "url": "text", "code": "text"},
+    "wait": {"words": "text", "url": "text", "page": "text", "code": "text"},
 }
 
 

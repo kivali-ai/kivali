@@ -358,6 +358,11 @@ type Form struct {
 	// one of setup.hosts, opened in a new tab so the flow stays; empty
 	// for none.
 	URL string
+	// Page names that page, as the link that opens it reads ("Open
+	// Clients"): the heading the owner finds there, in a few words, so a
+	// flow that visits one service page after another reads as a
+	// different page each time. Empty names the page by its host.
+	Page string
 	// Copy is what the owner copies to that page, such as an address to
 	// register, each shown with a Copy button. Shown as given and never
 	// scrubbed: Setup chose to show it, so it is never a value Setup
@@ -400,6 +405,9 @@ type Wait struct {
 	// URL is a page for the owner to open meanwhile, on one of
 	// setup.hosts; empty for none.
 	URL string
+	// Page names that page, as the link that opens it reads, in a few
+	// words; empty names the page by its host.
+	Page string
 	// Code is a code the owner enters on that page, shown large with a
 	// Copy button; empty for none. It is shown as given, cut to 64
 	// characters and never scrubbed: Setup chose to show it, so it is

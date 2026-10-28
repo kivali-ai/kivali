@@ -10,6 +10,7 @@
     "no_return": false,
     "url": "https://github.com/settings/apps/new",
     "host": "github.com",
+    "page": "New GitHub App",
     "copy": [
       "https://team.example/connect/callback"
     ]

@@ -1041,7 +1041,11 @@ endpoints is on (Google's is `www.google.com`).
 
 - **Form.** The page draws the step's words, then its page on the
   service (`Form.URL`, on a declared host, as a link that opens in a
-  new tab so the page stays with the flow) and what to copy there
+  new tab so the page stays with the flow; the link reads "Open" and
+  the page's name, `Form.Page`, with the host beside it, or the host
+  alone when the step names no page: a flow that walks one page of a
+  console after another names each, so each step's link reads as the
+  new page it opens) and what to copy there
   (`Form.Copy`, each with a Copy button), then its fields under the
   integration's name ("GitHub asks for"), a secret one as a password
   field, a setup-only one said to be never kept, and Continue. A Form
@@ -1151,7 +1155,8 @@ hidden into `State`), and a standard flow's own secrets (the client secret, a de
 OAuth state and verifier, the code and the tokens) are replaced by
 `[secret]`, whole, in the flow's error words, progress words and
 steps, in the audit and in what core logs of the flow. Then the error
-words, the progress words and a step's words are cut to 200 runes. A
+words, the progress words and a step's words are cut to 200 runes, and
+a step's page name (`Form.Page`, `Wait.Page`) to 60. A
 Wait's code (`Wait.Code`) is cut to 64 runes, and each of a Form's
 values to copy (`Form.Copy`) to 1024, and neither is scrubbed: the
 driver chose to show them, for the owner to enter on the service's
@@ -1290,10 +1295,11 @@ and a proxy credential per connection stay built-in only.
   `flow` is `setup` or a Fix's name; `answer` is the
   [Answer](#the-interface), every object present (`{}` when empty) and
   `return` the query with each key's values as a list. The result is
-  `{"step": {...}}` with exactly one of `"form": {"words", "fields", "url", "copy"}`
-  (`fields` may be empty; `url` and `copy`, a list of strings, are optional),
+  `{"step": {...}}` with exactly one of `"form": {"words", "fields", "url", "page", "copy"}`
+  (`fields` may be empty; `url`, `page`, the name of that page for its
+  link, and `copy`, a list of strings, are optional),
   `"go": {"words", "url", "post", "no_return", "stateless"}` (`post` an
-  object of strings or lists of strings), `"wait": {"words", "url", "code"}`
+  object of strings or lists of strings), `"wait": {"words", "url", "page", "code"}`
   or `"done": true`, and optionally `"keep"` and `"state"`, objects of
   strings. A key none of these shapes has, or a value of another type,
   fails the flow ("<Integration>'s setup answered with a step Kivali

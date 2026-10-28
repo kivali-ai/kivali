@@ -524,17 +524,18 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 		p.Words = clipRunes(scrub.Replace(p.Words), signInWordsRunes)
 		out.Progress = &p
 	}
-	// A step's words are scrubbed whole, then cut: a bundle's step is
-	// someone else's text, and the page shows only so much. A Wait's
-	// code and a Form's values to copy are cut and not scrubbed: the
-	// driver chose to show them, for the owner to enter on the
-	// service's page.
+	// A step's words and its page's name are scrubbed whole, then cut: a
+	// bundle's step is someone else's text, and the page shows only so
+	// much. A Wait's code and a Form's values to copy are cut and not
+	// scrubbed: the driver chose to show them, for the owner to enter on
+	// the service's page.
 	words := func(w string) string { return clipRunes(scrub.Replace(w), signInWordsRunes) }
+	page := func(p string) string { return clipRunes(scrub.Replace(p), setupPageRunes) }
 	switch st := run.step; {
 	case run.state == apitypes.SetupFlowStateForm && st.Form != nil:
 		step := &apitypes.SetupFlowStep{
 			Kind: apitypes.SetupFlowStepKindForm, Words: words(st.Form.Words), Fields: []apitypes.SetupField{}, Copy: []string{},
-			URL: optString(scrub.Replace(st.Form.URL)), Host: optString(setupURLHost(st.Form.URL)),
+			URL: optString(scrub.Replace(st.Form.URL)), Host: optString(setupURLHost(st.Form.URL)), Page: optString(page(st.Form.Page)),
 		}
 		for _, v := range st.Form.Copy {
 			step.Copy = append(step.Copy, clipRunes(v, setupCopyRunes))
@@ -555,7 +556,7 @@ func (run *setupRun) wireLocked() apitypes.SetupFlow {
 	case run.state == apitypes.SetupFlowStateWait && st.Wait != nil:
 		out.Step = &apitypes.SetupFlowStep{
 			Kind: apitypes.SetupFlowStepKindWait, Words: words(st.Wait.Words), Fields: []apitypes.SetupField{}, Copy: []string{},
-			URL: optString(scrub.Replace(st.Wait.URL)), Host: optString(setupURLHost(st.Wait.URL)),
+			URL: optString(scrub.Replace(st.Wait.URL)), Host: optString(setupURLHost(st.Wait.URL)), Page: optString(page(st.Wait.Page)),
 			Code: optString(clipRunes(st.Wait.Code, setupCodeRunes)),
 		}
 	}
@@ -996,12 +997,14 @@ func (spec setupSpec) check(display string, step builtinintegrations.Step) error
 // Bounds of a step, which for a bundle is someone else's code: the
 // longest address a Form, a Go or a Wait may name, the most a step may
 // keep and carry in its State together, and the most a Go may post;
-// the longest Wait code the page shows; and the most values a Form may
-// give to copy, and the longest the page shows of each.
+// the longest Wait code the page shows; the longest name of a step's
+// page the link shows; and the most values a Form may give to copy, and
+// the longest the page shows of each.
 const (
 	setupURLMax    = 4096
 	setupCarryMax  = 64 << 10
 	setupCodeRunes = 64
+	setupPageRunes = 60
 	setupCopyMax   = 10
 	setupCopyRunes = 1024
 )
