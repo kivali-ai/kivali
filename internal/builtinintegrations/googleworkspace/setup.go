@@ -46,9 +46,9 @@ const (
 // The words of each step, one thing to do on the page it opens. Core
 // cuts a step's words at 200 characters, and each is shorter.
 const (
-	wordsAPIs     = "Sign in with the Google account agents will work in. Create a project for this, in the page's project picker, then turn on the four APIs it lists: Gmail, Calendar, Docs and Drive."
+	wordsAPIs     = "Sign in with the Google account agents will work in. Create a project for this in the project picker at the top, choose Next, then Enable the four APIs: Gmail, Calendar, Docs and Drive."
 	wordsScreen   = "Choose Get started, name the app Kivali, give your email address, and for the audience choose External for a personal Gmail account or Internal for a work account."
-	wordsAudience = "If the audience is External, under Test users choose Add users and add the Google account agents will work in. Google ends its sign-in every seven days; Kivali then asks you to sign in again."
+	wordsAudience = "If the user type is External, under Test users choose Add users and add the Google account agents will work in. Google ends its sign-in every seven days; Kivali then asks you to sign in again."
 	wordsDesktop  = "Choose Create client, then Desktop app as the type, name it Kivali, and choose Create."
 	wordsWeb      = "Choose Create client, then Web application as the type, name it Kivali, add the address below under Authorized redirect URIs, and choose Create."
 	wordsWebMany  = "Choose Create client, then Web application as the type, name it Kivali, add each address below under Authorized redirect URIs, and choose Create."
@@ -61,15 +61,23 @@ const formWords = wordsDownload
 // Where the flow is, carried in each step's State: under "at", the
 // page the owner is on, then the Form; under "web", "1" when the team
 // is opened off loopback, so the client must be a Web application's.
+// Every value stays under six characters: core replaces a State value
+// of six or more with "[secret]" wherever the owner reads the flow,
+// its words and its pages' addresses included, so a marker such as
+// "client" would turn /auth/clients into /auth/[secret]s.
 const (
 	keyAt      = "at"
 	keyNeedWeb = "web"
 	atAPIs     = "apis"
-	atScreen   = "screen"
-	atAudience = "audience"
-	atClient   = "client"
+	atScreen   = "brand"
+	atAudience = "aud"
+	atClient   = "cli"
 	atForm     = "form"
 )
+
+// stateValueMax is the longest a State value may be and still be shown
+// as it is: core scrubs values of this many characters or more.
+const stateValueMax = 6
 
 // Setup is Google Workspace's setup flow. Installing (FlowSetup) walks
 // the owner through Google Cloud console one page at a time, each a
