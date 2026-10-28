@@ -74,7 +74,8 @@ export interface SetupFlowPanelProps {
 /**
  * A setup flow, drawn from its state as the server streams it: the button that starts it; while it runs, its progress
  * (a real progress bar where there is a count); a Form of the fields the integration declared, secrets as password
- * fields, with the service's page to open and what to copy there, or with no fields a step taken on the service by
+ * fields, with the service's page to open (the link names the page when the step names it, else its host) and what to
+ * copy there, or with no fields a step taken on the service by
  * hand, Continue alone going on; a Go that sends the browser to the service, by /connect/start, which Kivali Desktop
  * opens in the system browser; a Wait with its words, a code to copy and the service's page; done; or failed with why
  * and Try again.
@@ -276,8 +277,13 @@ export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setu
           <Text as="p" variant="body">
             {/* eslint-disable-next-line react/forbid-elements -- external */}
             <a href={step.url} target="_blank" rel="noopener">
-              {'Open ' + (step.host ?? step.url)}
+              {'Open ' + (step.page ?? step.host ?? step.url)}
             </a>
+            {step.page && step.host && (
+              <Text variant="caption" tone="muted">
+                {' on ' + step.host}
+              </Text>
+            )}
           </Text>
         )}
         {step.copy.map((v, i) => (
@@ -358,8 +364,13 @@ export function SetupFlowPanel({ api, integration, label, flow: flowName = 'setu
           <Text as="p" variant="body">
             {/* eslint-disable-next-line react/forbid-elements -- external */}
             <a href={step.url} target="_blank" rel="noopener">
-              {step.host ?? step.url}
+              {step.page ?? step.host ?? step.url}
             </a>
+            {step.page && step.host && (
+              <Text variant="caption" tone="muted">
+                {' on ' + step.host}
+              </Text>
+            )}
           </Text>
         )}
         <Text as="p" variant="caption" tone="muted">

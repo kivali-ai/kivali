@@ -40,15 +40,22 @@ func step(t *testing.T, last builtinintegrations.Answer) builtinintegrations.Ste
 // walk takes the hand steps through to the Form for the client's JSON,
 // with the team signing in at addresses, checking each step on the
 // way: a Form with no fields that opens the expected page of Google
-// Cloud console, keeping nothing.
+// Cloud console, named so its link reads as that page (every page is
+// on the one host, so a link naming the host alone would read the same
+// at every step), keeping nothing.
 func walk(t *testing.T, addresses []string) builtinintegrations.Step {
 	t.Helper()
 	last := builtinintegrations.Answer{Leg: 1, Addresses: addresses}
+	names := map[string]bool{}
 	for i, page := range []string{pageAPIs, pageScreen, pageAudience, pageClient} {
 		st := step(t, last)
 		if st.Form == nil || len(st.Form.Fields) != 0 || st.Form.URL != page || st.Form.Words == "" || st.Keep != nil || st.Done {
 			t.Fatalf("step %d = %+v", i+1, st)
 		}
+		if st.Form.Page == "" || names[st.Form.Page] {
+			t.Fatalf("step %d names its page %q; each step names its own page", i+1, st.Form.Page)
+		}
+		names[st.Form.Page] = true
 		last = builtinintegrations.Answer{State: st.State, Form: map[string]string{}, Leg: i + 2, Addresses: addresses}
 	}
 	form := step(t, last)

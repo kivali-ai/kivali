@@ -416,6 +416,10 @@ type SetupFlowStep struct {
 	// Host is the host the step sends you to: a go step's, or a form or
 	// a wait step's page's.
 	Host *string `json:"host,omitempty"`
+	// Page is, for a form or a wait step with a page, the page's name,
+	// for the link that opens it ("Open Clients", with the host beside);
+	// absent, the link names the host.
+	Page *string `json:"page,omitempty"`
 	// Code is, for a wait step, a code to enter on its page.
 	Code *string `json:"code,omitempty"`
 	// Copy is, for a form step, what to copy to its page, such as an

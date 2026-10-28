@@ -613,10 +613,10 @@ func goldenSetupFlowForm() SetupFlow {
 // address to copy there.
 func goldenSetupFlowFormByHand() SetupFlow {
 	f := goldenSetupFlow(SetupFlowStateForm)
-	page, host := "https://github.com/settings/apps/new", "github.com"
+	page, host, name := "https://github.com/settings/apps/new", "github.com", "New GitHub App"
 	f.Step = &SetupFlowStep{
 		Kind: SetupFlowStepKindForm, Words: "Register the address below as the app’s callback URL, then choose Create.",
-		Fields: []SetupField{}, URL: &page, Host: &host, Copy: []string{"https://team.example/connect/callback"},
+		Fields: []SetupField{}, URL: &page, Host: &host, Page: &name, Copy: []string{"https://team.example/connect/callback"},
 	}
 	return f
 }

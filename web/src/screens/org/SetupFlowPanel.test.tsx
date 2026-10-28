@@ -90,7 +90,10 @@ afterEach(() => {
 describe('SetupFlowPanel', () => {
   // Guards a step the owner takes on the service by hand (a form with no fields): the page must show its words, the
   // service's page as a link that opens in a new tab, each value to copy with Copy, no "asks for" line for fields it
-  // does not ask, and Continue, which answers with no fields so the flow goes on.
+  // does not ask, and Continue, which answers with no fields so the flow goes on. The link names the page the step
+  // named, with the host beside it: a flow that walks one console page after another is on the one host throughout,
+  // and a link naming the host alone read the same at every step while its address changed, so the owner could not
+  // tell there was a new page to open.
   it('draws a form with no fields as a step taken on the service', async () => {
     const byHand = state(1, {
       state: 'form',
@@ -100,6 +103,7 @@ describe('SetupFlowPanel', () => {
         fields: [],
         url: 'https://console.example/projectcreate',
         host: 'console.example',
+        page: 'New project',
         copy: ['https://team.example/connect/callback'],
         no_return: false,
       },
@@ -107,9 +111,10 @@ describe('SetupFlowPanel', () => {
     vi.mocked(apiGet).mockImplementation(((path: string) => (path === API + '/setup' ? Promise.resolve(structuredClone(byHand)) : Promise.reject(new Error(path)))) as never);
     await renderPanel();
     expect(screen.getByText('Create a project, or pick one you have.')).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: 'Open console.example' });
+    const link = screen.getByRole('link', { name: 'Open New project' });
     expect(link).toHaveAttribute('href', 'https://console.example/projectcreate');
     expect(link).toHaveAttribute('target', '_blank');
+    expect(screen.getByText('on console.example')).toBeInTheDocument();
     expect(screen.getByLabelText('To copy')).toHaveValue('https://team.example/connect/callback');
     expect(screen.queryByText('GitHub asks for')).toBeNull();
     vi.mocked(apiPost).mockResolvedValue(structuredClone(running) as never);

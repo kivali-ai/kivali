@@ -2382,6 +2382,12 @@ export interface SetupFlowStep {
    */
   host?: string;
   /**
+   * Page is, for a form or a wait step with a page, the page's name,
+   * for the link that opens it ("Open Clients", with the host beside);
+   * absent, the link names the host.
+   */
+  page?: string;
+  /**
    * Code is, for a wait step, a code to enter on its page.
    */
   code?: string;

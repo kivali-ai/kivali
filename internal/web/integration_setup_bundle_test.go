@@ -402,7 +402,8 @@ func TestBundleSetupRefusedSteps(t *testing.T) {
 // cut, and a Wait's code cut to 64 and shown as given: the step chose to
 // show it, for the owner to enter on the service's page, and a code
 // that happens to equal a value Kivali scrubs elsewhere (one the owner
-// typed, as here) must not read as [secret] there.
+// typed, as here) must not read as [secret] there. The page's name is
+// the link's text, someone else's too: scrubbed, and cut to 60 runes.
 func TestBundleSetupStepWordsAreBounded(t *testing.T) {
 	srv, pod, _, _, _ := bundleSetupServer(t, func(n int, p integrationpod.SetupParams, _ podProgress) (any, *integrationpod.RPCError, bool) {
 		if n == 1 {
@@ -410,6 +411,7 @@ func TestBundleSetupStepWordsAreBounded(t *testing.T) {
 		}
 		return stepOf(map[string]any{"wait": map[string]any{
 			"words": p.Answer.Form["key"] + strings.Repeat(" more", 300),
+			"page":  p.Answer.Form["key"] + strings.Repeat(" page", 100),
 			"code":  p.Answer.Form["key"] + strings.Repeat("C", 100),
 		}}), nil, true
 	}, true)
@@ -419,9 +421,12 @@ func TestBundleSetupStepWordsAreBounded(t *testing.T) {
 	pod.next(t)
 	pod.next(t)
 	f := waitFlow(t, srv, "crm", apitypes.SetupFlowStateWait)
-	words, code := f.Step.Words, textOf(f.Step.Code)
+	words, page, code := f.Step.Words, textOf(f.Step.Page), textOf(f.Step.Code)
 	if len([]rune(words)) != signInWordsRunes || !strings.HasPrefix(words, integrationSecretPlaceholder+" more") {
 		t.Errorf("words = %d runes: %.40q", len([]rune(words)), words)
+	}
+	if len([]rune(page)) != setupPageRunes || !strings.HasPrefix(page, integrationSecretPlaceholder+" page") {
+		t.Errorf("page = %d runes: %.40q", len([]rune(page)), page)
 	}
 	if len([]rune(code)) != setupCodeRunes || !strings.HasPrefix(code, "pak-1234567CCC") {
 		t.Errorf("code = %q", code)

@@ -43,6 +43,16 @@ const (
 	pageClient = consoleBase + "/auth/clients"
 )
 
+// The name of each page, as the link that opens it reads ("Open
+// Clients"): the console's own heading for it, so each step's link
+// reads as the new page it is.
+const (
+	nameAPIs     = "Enable APIs"
+	nameScreen   = "Google Auth Platform"
+	nameAudience = "Audience"
+	nameClient   = "Clients"
+)
+
 // The words of each step, one thing to do on the page it opens. Core
 // cuts a step's words at 200 characters, and each is shorter.
 const (
@@ -103,11 +113,11 @@ func (g *GoogleWorkspace) Setup(_ context.Context, _ builtinintegrations.Connect
 	}
 	switch last.State[keyAt] {
 	case "":
-		return byHand(wordsAPIs, pageAPIs, atAPIs, nil), nil
+		return byHand(wordsAPIs, pageAPIs, nameAPIs, atAPIs, nil), nil
 	case atAPIs:
-		return byHand(wordsScreen, pageScreen, atScreen, nil), nil
+		return byHand(wordsScreen, pageScreen, nameScreen, atScreen, nil), nil
 	case atScreen:
-		return byHand(wordsAudience, pageAudience, atAudience, nil), nil
+		return byHand(wordsAudience, pageAudience, nameAudience, atAudience, nil), nil
 	case atAudience:
 		return clientStep(last.Addresses), nil
 	case atClient:
@@ -128,11 +138,11 @@ func (g *GoogleWorkspace) Setup(_ context.Context, _ builtinintegrations.Connect
 	return builtinintegrations.Step{}, fmt.Errorf("the setup is at %q, which Google Workspace does not know", last.State[keyAt])
 }
 
-// byHand is a step the owner takes on page by hand: words, the page,
-// what to copy there, and Continue alone.
-func byHand(words, page, at string, copy []string) builtinintegrations.Step {
+// byHand is a step the owner takes on page by hand: words, the page
+// and its name, what to copy there, and Continue alone.
+func byHand(words, page, name, at string, copy []string) builtinintegrations.Step {
 	return builtinintegrations.Step{
-		Form:  &builtinintegrations.Form{Words: words, URL: page, Copy: copy},
+		Form:  &builtinintegrations.Form{Words: words, URL: page, Page: name, Copy: copy},
 		State: map[string]string{keyAt: at},
 	}
 }
@@ -146,13 +156,13 @@ func byHand(words, page, at string, copy []string) builtinintegrations.Step {
 // of a Desktop app is refused where it would fail at sign-in.
 func clientStep(addresses []string) builtinintegrations.Step {
 	if loopbackOnly(addresses) {
-		return byHand(wordsDesktop, pageClient, atClient, nil)
+		return byHand(wordsDesktop, pageClient, nameClient, atClient, nil)
 	}
 	words := wordsWeb
 	if len(addresses) > 1 {
 		words = wordsWebMany
 	}
-	st := byHand(words, pageClient, atClient, slices.Clone(addresses))
+	st := byHand(words, pageClient, nameClient, atClient, slices.Clone(addresses))
 	st.State[keyNeedWeb] = "1"
 	return st
 }
