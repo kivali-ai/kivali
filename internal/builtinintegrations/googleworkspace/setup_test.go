@@ -80,7 +80,7 @@ func TestSetupWalksTheConsoleThenKeepsTheClient(t *testing.T) {
 		t.Fatalf("first step = %+v", first)
 	}
 	form := walk(t, loopback)
-	client := step(t, builtinintegrations.Answer{State: map[string]string{keyAt: atPublish}, Form: map[string]string{}, Leg: 4, Addresses: loopback})
+	client := step(t, builtinintegrations.Answer{State: map[string]string{keyAt: atAudience}, Form: map[string]string{}, Leg: 4, Addresses: loopback})
 	if client.Form == nil || client.Form.Words != wordsDesktop || len(client.Form.Copy) != 0 || client.State[keyNeedWeb] != "" {
 		t.Errorf("client step at loopback = %+v", client)
 	}
@@ -111,12 +111,12 @@ func TestSetupWalksTheConsoleThenKeepsTheClient(t *testing.T) {
 // client must be asked again rather than kept, since the sign-in
 // after it would fail in Google's words.
 func TestSetupNeedsAWebClientOffLoopback(t *testing.T) {
-	client := step(t, builtinintegrations.Answer{State: map[string]string{keyAt: atPublish}, Form: map[string]string{}, Leg: 4, Addresses: elsewhere})
+	client := step(t, builtinintegrations.Answer{State: map[string]string{keyAt: atAudience}, Form: map[string]string{}, Leg: 4, Addresses: elsewhere})
 	if client.Form == nil || client.Form.Words != wordsWebMany || strings.Join(client.Form.Copy, " ") != strings.Join(elsewhere, " ") ||
 		client.Form.URL != pageClient || client.State[keyNeedWeb] != "1" {
 		t.Fatalf("client step elsewhere = %+v", client)
 	}
-	one := step(t, builtinintegrations.Answer{State: map[string]string{keyAt: atPublish}, Form: map[string]string{}, Leg: 4, Addresses: elsewhere[:1]})
+	one := step(t, builtinintegrations.Answer{State: map[string]string{keyAt: atAudience}, Form: map[string]string{}, Leg: 4, Addresses: elsewhere[:1]})
 	if one.Form == nil || one.Form.Words != wordsWeb || len(one.Form.Copy) != 1 {
 		t.Errorf("client step at one address = %+v", one)
 	}
@@ -133,7 +133,7 @@ func TestSetupNeedsAWebClientOffLoopback(t *testing.T) {
 	}
 	// No addresses known: a Desktop app, which works wherever a team on
 	// this computer is opened.
-	if none := step(t, builtinintegrations.Answer{State: map[string]string{keyAt: atPublish}, Form: map[string]string{}, Leg: 4}); none.Form == nil || none.Form.Words != wordsDesktop {
+	if none := step(t, builtinintegrations.Answer{State: map[string]string{keyAt: atAudience}, Form: map[string]string{}, Leg: 4}); none.Form == nil || none.Form.Words != wordsDesktop {
 		t.Errorf("client step with no addresses = %+v", none)
 	}
 }
@@ -171,7 +171,7 @@ func TestSetupAsksAgainForWhatDoesNotRead(t *testing.T) {
 			t.Errorf("the words quote the paste: %q", again.Form.Words)
 		}
 	}
-	for _, w := range []string{wordsAPIs, wordsScreen, wordsPublish, wordsDesktop, wordsWeb, wordsWebMany, formWords,
+	for _, w := range []string{wordsAPIs, wordsScreen, wordsAudience, wordsDesktop, wordsWeb, wordsWebMany, formWords,
 		clientJSONEmpty, clientJSONNotJSON, clientJSONServiceAccount, clientJSONNoClient, clientJSONNoID, clientJSONNoSecret, clientJSONNeedsWeb} {
 		if n := utf8.RuneCountInString(w); n > 200 {
 			t.Errorf("%d characters, more than core shows: %q", n, w)

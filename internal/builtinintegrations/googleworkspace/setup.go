@@ -37,10 +37,10 @@ const (
 	// pageScreen is Google Auth Platform's overview, where the sign-in
 	// screen is set up.
 	pageScreen = consoleBase + "/auth/overview"
-	// pageAudience is where an External app is published.
+	// pageAudience is where an External app's test users are added.
 	pageAudience = consoleBase + "/auth/audience"
-	// pageClient creates the OAuth client.
-	pageClient = consoleBase + "/auth/clients/create"
+	// pageClient lists the OAuth clients, with Create client.
+	pageClient = consoleBase + "/auth/clients"
 )
 
 // The words of each step, one thing to do on the page it opens. Core
@@ -48,10 +48,10 @@ const (
 const (
 	wordsAPIs     = "Sign in with the Google account agents will work in. Create a project for this, in the page's project picker, then turn on the four APIs it lists: Gmail, Calendar, Docs and Drive."
 	wordsScreen   = "Choose Get started, name the app Kivali, give your email address, and for the audience choose External for a personal Gmail account or Internal for a work account."
-	wordsPublish  = "If the audience is External, choose Publish app, so Google keeps you signed in; Internal needs nothing here. When Google later says it has not verified the app, choose Advanced and go on."
-	wordsDesktop  = "Create a client: choose Desktop app as the type, name it Kivali, and choose Create."
-	wordsWeb      = "Create a client: choose Web application as the type, name it Kivali, add the address below under Authorized redirect URIs, and choose Create."
-	wordsWebMany  = "Create a client: choose Web application as the type, name it Kivali, add each address below under Authorized redirect URIs, and choose Create."
+	wordsAudience = "If the audience is External, under Test users choose Add users and add the Google account agents will work in. Google ends its sign-in every seven days; Kivali then asks you to sign in again."
+	wordsDesktop  = "Choose Create client, then Desktop app as the type, name it Kivali, and choose Create."
+	wordsWeb      = "Choose Create client, then Web application as the type, name it Kivali, add the address below under Authorized redirect URIs, and choose Create."
+	wordsWebMany  = "Choose Create client, then Web application as the type, name it Kivali, add each address below under Authorized redirect URIs, and choose Create."
 	wordsDownload = "Google shows the client it made. Choose Download JSON, open the file, and paste everything in it here."
 )
 
@@ -66,7 +66,7 @@ const (
 	keyNeedWeb = "web"
 	atAPIs     = "apis"
 	atScreen   = "screen"
-	atPublish  = "publish"
+	atAudience = "audience"
 	atClient   = "client"
 	atForm     = "form"
 )
@@ -74,8 +74,10 @@ const (
 // Setup is Google Workspace's setup flow. Installing (FlowSetup) walks
 // the owner through Google Cloud console one page at a time, each a
 // Form with no fields that opens the page and says what to do there:
-// a project with the four APIs on, the sign-in screen, publishing the
-// app, and the client, whose type Kivali picks from where the team is
+// a project with the four APIs on, the sign-in screen, the test user
+// (the app stays in Testing: publishing it asks for a homepage and
+// policy pages, and Google ends a Testing app's sign-in every seven
+// days, which the Sign-in requirement's Fix mends), and the client, whose type Kivali picks from where the team is
 // opened (Answer.Addresses): a Desktop app for a team opened at
 // loopback alone, which Google signs in at any loopback port, else a
 // Web application with every address to register. Then one Form for
@@ -97,8 +99,8 @@ func (g *GoogleWorkspace) Setup(_ context.Context, _ builtinintegrations.Connect
 	case atAPIs:
 		return byHand(wordsScreen, pageScreen, atScreen, nil), nil
 	case atScreen:
-		return byHand(wordsPublish, pageAudience, atPublish, nil), nil
-	case atPublish:
+		return byHand(wordsAudience, pageAudience, atAudience, nil), nil
+	case atAudience:
 		return clientStep(last.Addresses), nil
 	case atClient:
 		return clientForm(formWords, last.State[keyNeedWeb]), nil
