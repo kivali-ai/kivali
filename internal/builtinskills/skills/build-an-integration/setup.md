@@ -319,7 +319,10 @@ setup kept.
   then forgets the connection it made ([A flow left
   partway](#a-flow-left-partway)). A Fix that fails keeps what it kept.
 - Every secret kept value, every secret or setup-only value the owner
-  entered, every state value, each callback's state, and the values a
+  entered, every state value (so keep a marker of where the flow is
+  under six characters, such as `"at": "key"`: a longer one, such as
+  `client`, is scrubbed out of the words and page addresses that
+  contain it), each callback's state, and the values a
   return brings back under `code`, `state` or a key holding `token`,
   `secret`, `password` or `key`, each one six characters or longer, are
   replaced with `[secret]` wherever the owner reads the flow: its words,

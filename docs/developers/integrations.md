@@ -4165,7 +4165,11 @@ one page at a time, then takes the client's JSON:
    included, as `Form.Copy` to add under Authorized redirect URIs,
    since Google signs a Web client in only at an address it was given,
    and carries `web: 1` in `State`. Each step's `State` marks where
-   the flow is (`at`), nothing more.
+   the flow is (`at`), nothing more, in values under six characters:
+   core scrubs a State value of six or more from the words and the
+   addresses the owner reads ([Scrubbing and the
+   audit](#scrubbing-and-the-audit)), so a marker such as `client`
+   would turn `/auth/clients` into `/auth/[secret]s`.
 2. One **Form** for `client_json`, whose words say to download the
    client's JSON and paste it whole.
 3. The answer is read (`readClientJSON`): trimmed, at most 64 KiB, a

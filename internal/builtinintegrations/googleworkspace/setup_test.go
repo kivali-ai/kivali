@@ -179,6 +179,28 @@ func TestSetupAsksAgainForWhatDoesNotRead(t *testing.T) {
 	}
 }
 
+// Why this test exists: core replaces every State value of six
+// characters or more with "[secret]" wherever the owner reads the
+// flow, its words and its pages' addresses included. A marker such as
+// "client" turned the clients page into /auth/[secret]s and "If the
+// audience is External" into "If the [secret] is External" on a live
+// run, so every value any step carries must stay under that length.
+func TestSetupStateValuesAreNeverScrubbed(t *testing.T) {
+	last := builtinintegrations.Answer{Leg: 1, Addresses: elsewhere}
+	for i := 0; i < 6; i++ {
+		st := step(t, last)
+		for k, v := range st.State {
+			if utf8.RuneCountInString(v) >= stateValueMax {
+				t.Errorf("step %d carries %s=%q, which core would scrub from the words and addresses", i+1, k, v)
+			}
+		}
+		if st.Form != nil && len(st.Form.Fields) > 0 {
+			break
+		}
+		last = builtinintegrations.Answer{State: st.State, Form: map[string]string{}, Leg: i + 2, Addresses: elsewhere}
+	}
+}
+
 // Why this test exists: Google Workspace's requirements name no Fix of
 // its own, so a flow name other than setup reaching Setup is a mistake
 // that must fail, not run the install over the connection; and a
