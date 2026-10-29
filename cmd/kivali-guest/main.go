@@ -67,7 +67,7 @@ func main() {
 	// (guestapi.ClockSync).
 	clock := guestapi.NewClockSync(log.Printf)
 	if step, err := clock.Once(); err == nil && step != 0 {
-		say("clock stepped %s to the hardware clock", step.Round(time.Second))
+		say("clock stepped %s to the host's clock", step.Round(time.Second))
 	}
 	ticker := time.NewTicker(guestapi.ClockSyncEvery)
 	defer ticker.Stop()

@@ -911,7 +911,7 @@ lock, but refuses while an upgrade journal is open. The serve log says
 shell calls it once, when setup's **Open** shows the new team, and
 once for each integration setup step it sends to the system browser.
 The token's expiry is set on this computer's clock and checked on the
-VM's, which the guest agent keeps on the hardware clock
+VM's, which the guest agent keeps on this computer's
 ([vm/README.md](../../vm/README.md), "The guest agent and the
 supervisor"); a VM whose clock stood still would refuse every token.
 
