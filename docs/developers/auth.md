@@ -296,8 +296,8 @@ an ordinary sign-in would leave.
   clock is from the server's. The token is never logged.
 - **Clocks.** The supervisor mints on the computer's clock and the
   server checks on the VM's. The two agree because the guest agent
-  keeps the VM's system clock on its hardware clock, which the
-  hypervisor keeps on the computer's ([vm/README.md](../../vm/README.md),
+  keeps the VM's system clock on the computer's, as the hypervisor
+  shows it to the guest ([vm/README.md](../../vm/README.md),
   "The guest agent and the supervisor"); without that, a VM that stood
   still while the computer slept would refuse every token as too far
   ahead until it restarted.

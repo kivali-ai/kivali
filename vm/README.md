@@ -619,8 +619,11 @@ On x86_64 the same kernel also carries Hyper-V, as its config shows:
 `HYPERV_UTILS=m`, `HYPERV_BALLOON=m`, `SERIAL_8250_CONSOLE=y` with
 `SERIAL_8250_PNP=y` (the `ttyS0` console) and `EFI_STUB=y`, so the
 unified kernel image needs no zboot unpacking. `SCSI_SCAN_ASYNC=y` is
-why the initramfs waits for the disks. The clock there is the CMOS RTC
-(`RTC_DRV_CMOS=y`), and keyboard drivers are present.
+why the initramfs waits for the disks. The hardware clock there is the
+CMOS RTC (`RTC_DRV_CMOS=y`), which Hyper-V sets to the computer's local
+time, not UTC, so the kernel boots that many hours off until `hv_utils`
+sets the clock from Hyper-V's time sync ("The guest agent and the
+supervisor"). Keyboard drivers are present.
 
 **mkfs runs with `-E nodiscard,lazy_itable_init=0,lazy_journal_init=0`,
 and the data disk is never mounted with `-o discard`; the only discard
@@ -723,23 +726,26 @@ protocol, the supervisor and its CLI are in [supervisor.md](../docs/developers/s
 computer sleeps no time passes in the VM, and the kernel reads the
 hardware clock only at boot, so after the computer wakes the guest runs
 behind the host by however long it slept (ten hours after a night). The
-hardware clock the hypervisor shows the guest (`rtc-pl031` on
-Virtualization.framework, Hyper-V's RTC) follows the host's clock all
-along. The agent compares the two at start and every 10 s
-(`guestapi.ClockSync`, `/sys/class/rtc/rtc0/since_epoch` against
-`CLOCK_REALTIME`) and, when they differ by more than 2 s (the hardware
-clock reads to the second), steps the system clock to the hardware
-clock, logging the step ("clock: stepped the system clock +10h0m17s,
-from … to the hardware clock's …"). A guest with no readable hardware
-clock keeps its system clock and says so once. What depends on the
-guest's clock agreeing with the host's then holds: the handoff tokens
-the supervisor mints, which the server refuses when their expiry
-stands too far from its own clock
+hypervisor shows the guest a clock that follows the host's all along:
+on Virtualization.framework the hardware clock (`rtc-pl031`,
+`/sys/class/rtc/rtc0/since_epoch`), which holds UTC; on Hyper-V its
+time sync, which the kernel's `hv_utils` (`CONFIG_HYPERV_UTILS`, loaded
+by the boot script's modalias pass) shows as the PTP clock named
+`hyperv` (`/dev/ptp0`). Hyper-V's hardware clock holds the computer's
+local time, so it is never read there; with no `hyperv` PTP clock (the
+VM's time synchronization service off) the agent leaves the system
+clock as it is. The agent compares the host's clock with
+`CLOCK_REALTIME` at start and every 10 s (`guestapi.ClockSync`) and,
+when they differ by more than 2 s (a hardware clock reads to the
+second), steps the system clock to the host's, logging the step
+("clock: stepped the system clock +10h0m17s, from … to the host's …").
+A guest that cannot read the host's clock keeps its system clock and
+says why once. What depends on the guest's clock agreeing with the
+host's then holds: the handoff tokens the supervisor mints, which the
+server refuses when their expiry stands too far from its own clock
 ([auth.md](../docs/developers/auth.md), "Desktop handoff"), the JSON Web
-Tokens an integration signs for a service, and TLS. On Hyper-V the
-kernel's `hv_utils` time sync (`CONFIG_HYPERV_UTILS`, loaded by the
-boot script's modalias pass) also steps the clock when the VM resumes;
-the agent's check is the same on both.
+Tokens an integration signs for a service, and TLS. On Hyper-V
+`hv_utils` also steps the clock itself at boot and when the VM resumes.
 
 The agent accepts only connections from the host's vsock CID (2).
 `rootfs/etc/modprobe.d/kivali.conf` blacklists `vsock_loopback` and

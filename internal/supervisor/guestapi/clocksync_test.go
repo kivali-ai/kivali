@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// fakeClocks is a guest whose system clock and hardware clock the test
+// fakeClocks is a guest whose system clock and host clock the test
 // moves by hand. mu guards every field: Run reads them from its own
 // goroutine.
 type fakeClocks struct {
@@ -23,7 +23,7 @@ type fakeClocks struct {
 
 func (f *fakeClocks) sync() *ClockSync {
 	return &ClockSync{
-		ReadRTC: func() (time.Time, error) {
+		ReadHost: func() (time.Time, error) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			return f.rtc, f.rtcErr
@@ -51,7 +51,7 @@ func (f *fakeClocks) sync() *ClockSync {
 	}
 }
 
-// setRTC moves the hardware clock under the lock.
+// setRTC moves the host clock under the lock.
 func (f *fakeClocks) setRTC(t time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -110,7 +110,7 @@ func TestClockSyncSaysOnceWhenItCannotRead(t *testing.T) {
 			t.Fatal("no error from an unreadable hardware clock")
 		}
 	}
-	if len(f.set) != 0 || len(f.log) != 1 || !strings.Contains(f.log[0], "cannot read the hardware clock") {
+	if len(f.set) != 0 || len(f.log) != 1 || !strings.Contains(f.log[0], "cannot read the host's clock") {
 		t.Fatalf("set %v, log %q", f.set, f.log)
 	}
 	// Readable again, then not: said again.
