@@ -8,9 +8,8 @@
 <h3 align="center">The agentic OS with personality.</h3>
 
 <p align="center">
-  Kivali is an open-source agentic operating system. Hire a team of AI agents<br>
-  that keep their identity, learn your work, remember what they learned,<br>
-  and bring you the decisions that are yours to make.
+  Kivali is an open-source agentic operating system. Hire a team of long-lived AI agents<br>
+  that keep their identity, adapt your work, and remember what they learned.
 </p>
 
 <p align="center">
