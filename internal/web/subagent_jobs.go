@@ -13,16 +13,21 @@
 // meta.json to the PVC as it goes, so a finished job's record survives,
 // but a job in flight when core restarts is gone with its goroutine:
 // the pod's completion POST lands on a turn that no longer exists. At
-// boot FailOrphanedSubagents rewrites every such meta.json (queued,
-// running, waiting for a person or awaiting approval) as errored, with
-// subagentRestartError as the reason, so nothing reads as live that
-// core no longer holds, and tells each agent that dispatched one. Jobs
-// are not re-attached.
+// boot ResumeOrphanedSubagents registers again each task the agent
+// dispatched itself that was queued or running, and runs it on from its
+// CLI session (resumeAfterRestart), up to subagentRestartResumes
+// restarts per task. Every other such meta.json (a worker, a task
+// waiting for a person or awaiting approval, one with files, one past
+// its resumes) is rewritten as errored, with subagentRestartError as
+// the reason, so nothing reads as live that core no longer holds, and
+// each agent that dispatched one is told. A restore resumes nothing
+// (FailOrphanedSubagents).
 
 package web
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"regexp"
 	"slices"
@@ -31,6 +36,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kivali-ai/kivali/internal/agentpod"
 	"github.com/kivali-ai/kivali/internal/clock"
 	"github.com/kivali-ai/kivali/internal/store"
 	"github.com/kivali-ai/kivali/internal/structured"
@@ -42,43 +48,125 @@ import (
 // never finishes.
 const subagentRestartError = "Kivali restarted before the task finished"
 
+// subagentRestartResumes is how many restarts of core one task is
+// resumed after. A task still in flight at the restart after that ends
+// errored: work that keeps being cut short may be what brings core
+// down, as a starved node that fails core's health check does.
+const subagentRestartResumes = 2
+
+// restartResumePodWait bounds how long a task resumed after a restart
+// waits for its agent's pod, which the boot's provisioning pass brings
+// up within five minutes or gives up on.
+const restartResumePodWait = 6 * time.Minute
+
+// subagentResumeNoPodError is the reason a task resumed after a restart
+// ends with when its agent's pod was not back within
+// restartResumePodWait.
+const subagentResumeNoPodError = "Kivali restarted before the task finished, and the agent was not back in time to resume it"
+
+// restartResumeLine is the one user message a task's run gets when it
+// is resumed after a restart; restartResumeWebLine is added for a web
+// task, and the last line names how a finished task answers.
+const (
+	restartResumeLine           = "Kivali restarted while you were working, and your run stopped partway. Continue your task from where you left off. What you wrote under /files/ is still there, so check it before you redo anything. A tool call made around the restart may have failed; make it again if you still need it."
+	restartResumeWebLine        = " The browser closed with the restart and your tabs are gone: your next web command starts a new browser in the same session."
+	restartResumeTextDoneLine   = " If you had already finished, give your final answer again."
+	restartResumeStructuredLine = " If you had already finished, call submit_result with your answer."
+)
+
 // FailOrphanedSubagents rewrites every background task's meta.json that
 // still says queued, running, waiting for a person or awaiting approval
-// as errored, with subagentRestartError, and without the wait reason and
-// browser state a live task carries: core holds no such job after a
-// restart, so nothing should read as live. Called at boot, and by a
-// restore, before anything dispatches.
-//
-// Each active agent that dispatched one of those tasks itself is then
-// told, in one subagent_result message through DeliverToParent, the
-// door finishJob delivers through: an agent that ended its turn to wait
-// for the results would otherwise wait for good. A worker's record
-// (one with a caller) is rewritten but not reported: its answer was
-// owed to the sub-lead that dispatched it, whose run ended with it. An
-// archived agent, or one whose record is gone, is told nothing.
-//
-// Returns how many records it rewrote and the agents it told. Nothing
-// here wakes them: the caller does, once their pods are up
-// (Server.RecoverInterruptedWork).
+// as errored, and tells the agents that dispatched them, resuming
+// nothing. A restore calls it: a backup's live records are a past run's.
+// Returns how many records it rewrote and the agents it told.
 func (s *SubagentService) FailOrphanedSubagents() (int, []string) {
+	n, told, _ := s.recoverOrphanedSubagents(false)
+	return n, told
+}
+
+// ResumeOrphanedSubagents is what a boot does with the background tasks
+// the last run left in flight: each one recoverOrphanedSubagents finds
+// resumable runs again (resumeAfterRestart), and the rest are rewritten
+// as errored and reported. Returns how many records it rewrote as
+// errored, the agents it told, and how many tasks it resumed.
+func (s *SubagentService) ResumeOrphanedSubagents() (int, []string, int) {
+	return s.recoverOrphanedSubagents(true)
+}
+
+// recoverOrphanedSubagents goes through every background task's
+// meta.json that still says queued, running, waiting for a person or
+// awaiting approval: core holds no such job after a restart, so nothing
+// should read as live that is not. Called at boot, and by a restore,
+// before anything dispatches.
+//
+// With resume, a task the agent dispatched itself that was queued or
+// running is registered again and run on (resumableAfterRestart says
+// which): its record reads queued, with its restarts counted. Every
+// other record is rewritten as errored, with subagentRestartError, and
+// without the wait reason and browser state a live task carries.
+//
+// Each active agent that dispatched one of the errored tasks itself is
+// then told, in one subagent_result message through DeliverToParent,
+// the door finishJob delivers through: an agent that ended its turn to
+// wait for the results would otherwise wait for good. A resumed task
+// tells nobody now: its result arrives as any task's does. A worker's
+// record (one with a caller) is rewritten but not reported: its answer
+// was owed to the sub-lead that dispatched it, whose run ended with it.
+// An archived agent, or one whose record is gone, is told nothing.
+//
+// Returns how many records it rewrote as errored, the agents it told,
+// and how many tasks it resumed. Nothing here wakes the agents told:
+// the caller does, once their pods are up (Server.RecoverInterruptedWork).
+func (s *SubagentService) recoverOrphanedSubagents(resume bool) (int, []string, int) {
 	if s == nil || s.Store == nil {
-		return 0, nil
+		return 0, nil, 0
 	}
 	tasks, err := s.Store.SubagentMetaFiles()
 	if err != nil {
 		log.Printf("subagents: scan for unfinished tasks: %v", err)
-		return 0, nil
+		return 0, nil, 0
 	}
 	n := 0
 	lost := map[string][]lostSubagent{}
+	var resumes []restartResume
+	active := map[string]bool{}
 	for _, task := range tasks {
 		parent, id := task[0], task[1]
+		// Read before the record's lock is taken. An archived agent's
+		// records sit under _archived/<slug>, and GetAgent would find
+		// its archived record there.
+		canResume := false
+		if resume {
+			ok, seen := active[parent]
+			if !seen {
+				ok = !strings.Contains(parent, "/")
+				if ok {
+					_, err := s.Store.GetAgent(parent)
+					ok = err == nil
+				}
+				active[parent] = ok
+			}
+			canResume = ok
+		}
 		var ended *lostSubagent
+		var again *restartResume
 		err := s.Store.UpdateSubagentMeta(parent, id, func(meta map[string]any) bool {
 			switch meta["status"] {
 			case subagentJobQueued, subagentJobRunning, subagentJobWaiting, subagentJobAwaitingApproval:
 			default:
 				return false
+			}
+			if canResume {
+				if r, ok := resumableAfterRestart(parent, id, meta); ok {
+					meta["status"] = subagentJobQueued
+					meta["error"] = ""
+					meta["restarts"] = r.restarts
+					meta["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+					delete(meta, "wait_reason")
+					delete(meta, "browser")
+					again = &r
+					return true
+				}
 			}
 			meta["status"] = "errored"
 			meta["error"] = subagentRestartError
@@ -100,12 +188,133 @@ func (s *SubagentService) FailOrphanedSubagents() (int, []string) {
 		if ended != nil {
 			lost[parent] = append(lost[parent], *ended)
 		}
+		if again != nil {
+			resumes = append(resumes, *again)
+		}
 	}
-	return n, s.tellLostSubagents(lost)
+	for _, r := range resumes {
+		s.resumeAfterRestart(r)
+	}
+	if len(resumes) > 0 {
+		s.notifyWorkingChanged()
+	}
+	return n, s.tellLostSubagents(lost), len(resumes)
 }
 
-// lostSubagent is a task FailOrphanedSubagents rewrote, as its agent is
-// told about it.
+// restartResume is a task the last run left in flight, as
+// resumeAfterRestart runs it again: the task as it was dispatched, the
+// CLI session its last run reported (empty when it reported none, and
+// the task starts over), and how many restarts it has now been resumed
+// after.
+type restartResume struct {
+	parent   string
+	id       string
+	task     SubagentTaskInput
+	session  string
+	restarts int
+}
+
+// resumableAfterRestart reads a task's meta.json for a resume after a
+// restart. A task is resumable when the agent dispatched it itself
+// (a worker's answer was owed to a sub-lead whose run ended), it was
+// queued or running (a wait for a person is a person's to pick up
+// again), it names no files (their upload was a person's approval,
+// which lived in memory), it has been resumed fewer than
+// subagentRestartResumes times, and its record holds the task: the
+// description and prompt, and for a task with a schema the schema
+// itself. Called under the record's lock.
+func resumableAfterRestart(parent, id string, meta map[string]any) (restartResume, bool) {
+	switch meta["status"] {
+	case subagentJobQueued, subagentJobRunning:
+	default:
+		return restartResume{}, false
+	}
+	if caller, _ := meta["caller"].(string); caller != "" {
+		return restartResume{}, false
+	}
+	if files, _ := meta["files"].([]any); len(files) > 0 {
+		return restartResume{}, false
+	}
+	restarts := 0
+	if v, ok := meta["restarts"].(float64); ok && v > 0 {
+		restarts = int(v)
+	}
+	if restarts >= subagentRestartResumes {
+		return restartResume{}, false
+	}
+	var t SubagentTaskInput
+	t.Description, _ = meta["description"].(string)
+	t.Prompt, _ = meta["prompt"].(string)
+	t.Model, _ = meta["model"].(string)
+	t.Effort, _ = meta["effort"].(string)
+	if strings.TrimSpace(t.Description) == "" || strings.TrimSpace(t.Prompt) == "" {
+		return restartResume{}, false
+	}
+	if isStructured, _ := meta["structured"].(bool); isStructured {
+		schema, ok := meta["schema"]
+		if !ok || schema == nil {
+			return restartResume{}, false
+		}
+		raw, err := json.Marshal(schema)
+		if err != nil {
+			return restartResume{}, false
+		}
+		t.Schema = raw
+		if parsedSchema(t) == nil {
+			return restartResume{}, false
+		}
+	}
+	if kind, _ := meta["kind"].(string); kind == agentpod.SubagentKindWeb {
+		t.Kind = agentpod.SubagentKindWeb
+		t.Session, _ = meta["session"].(string)
+		t.StartURL, _ = meta["start_url"].(string)
+	}
+	t.toolUseID, _ = meta["tool_use_id"].(string)
+	if v, ok := meta["index"].(float64); ok && v >= 0 {
+		t.index = int(v)
+	}
+	session, _ := meta["cli_session"].(string)
+	if !cliSessionID.MatchString(session) {
+		session = ""
+	}
+	return restartResume{parent: parent, id: id, task: t, session: session, restarts: restarts + 1}, true
+}
+
+// resumeAfterRestart registers a task the last run left in flight under
+// its own id, and runs it as launch runs a dispatched task: its chip,
+// its record and its result are the task's as before. runJob waits for
+// the agent's pod (restartResumePodWait), and the run continues the
+// task's CLI session with restartResumeLineFor, or starts the task over
+// when its last run reported no session.
+func (s *SubagentService) resumeAfterRestart(r restartResume) {
+	jobCtx, cancel := context.WithCancel(context.Background())
+	job := s.newJob(r.parent, r.task.toolUseID, r.task.index, r.id, r.task, 1, "", time.Now().UTC(), cancel)
+	job.CLISession = r.session
+	job.afterRestart = true
+	s.registerJob(job)
+	log.Printf("subagent %s/%s: resuming after a restart (%d of %d)", r.parent, r.id, r.restarts, subagentRestartResumes)
+	go func() {
+		defer cancel()
+		s.runJob(jobCtx, r.parent, r.task.toolUseID, job, r.task.index, r.task)
+	}()
+}
+
+// restartResumeLineFor is the message a task's run resumed after a
+// restart gets: what happened, for a web task what became of its
+// browser, and how to answer if it had finished.
+func restartResumeLineFor(job *subagentJob) string {
+	line := restartResumeLine
+	if job.Kind == agentpod.SubagentKindWeb {
+		line += restartResumeWebLine
+	}
+	if job.Schema != nil {
+		return line + restartResumeStructuredLine
+	}
+	return line + restartResumeTextDoneLine
+}
+
+// lostSubagent is a task recoverOrphanedSubagents rewrote as errored,
+// as its agent is told about it.
 type lostSubagent struct {
 	id          string
 	description string
@@ -138,7 +347,7 @@ func (s *SubagentService) tellLostSubagents(lost map[string][]lostSubagent) []st
 		msg := store.ChatMessage{
 			Role:    store.RoleReceived,
 			Kind:    store.KindSubagentResult,
-			Content: renderSubagentRestartMessage(lost[parent], loadBackgroundPlan(s.Store, parent)),
+			Content: renderSubagentRestartMessage(lost[parent], s.OutstandingSubagents(parent), loadBackgroundPlan(s.Store, parent)),
 			TS:      time.Now().UTC(),
 		}
 		if err := s.DeliverToParent(parent, msg); err != nil {
@@ -151,13 +360,24 @@ func (s *SubagentService) tellLostSubagents(lost map[string][]lostSubagent) []st
 }
 
 // RecoverInterruptedWork is what a boot, and a restore, do with the work
-// the last run left unfinished: background tasks are marked errored and
-// their agents told (FailOrphanedSubagents), then interrupted turns get
-// their disruption rows (RecoverInterruptedTurns). Returns every agent
-// to wake once its pod is up, each once, for SpawnRecovered, which
-// applies the spawn gate.
-func (s *Server) RecoverInterruptedWork() []string {
-	n, told := s.SubagentService.FailOrphanedSubagents()
+// the last run left unfinished: at boot (resumeTasks) background tasks
+// that can be are resumed and the rest marked errored, their agents
+// told (ResumeOrphanedSubagents); a restore marks them all errored
+// (FailOrphanedSubagents). Then interrupted turns get their disruption
+// rows (RecoverInterruptedTurns). Returns every agent to wake once its
+// pod is up, each once, for SpawnRecovered, which applies the spawn
+// gate.
+func (s *Server) RecoverInterruptedWork(resumeTasks bool) []string {
+	var n, resumed int
+	var told []string
+	if resumeTasks {
+		n, told, resumed = s.SubagentService.ResumeOrphanedSubagents()
+	} else {
+		n, told = s.SubagentService.FailOrphanedSubagents()
+	}
+	if resumed > 0 {
+		log.Printf("subagents: %d task(s) left unfinished by the last run resumed", resumed)
+	}
 	if n > 0 {
 		log.Printf("subagents: %d task(s) left unfinished by the last run marked errored; %d agent(s) told", n, len(told))
 	}
@@ -223,6 +443,11 @@ type subagentJob struct {
 	WaitReason string
 	WaitSince  time.Time
 	CLISession string
+	// afterRestart: the job is a task the last run of core left in
+	// flight, registered again at boot (resumeAfterRestart). Its run
+	// waits for the agent's pod and continues CLISession. Set at
+	// registration, never mutated.
+	afterRestart bool
 	// cancelRun ends the task's current run and nothing else; a task
 	// that waits for a person ends its run this way and runs again
 	// later. resumed is closed when the wait is over; resumeDone says
@@ -415,7 +640,9 @@ func (s *SubagentService) updateJob(id string, fn func(*subagentJob)) bool {
 var cliSessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // recordCLISession keeps the session id a task's run reported, so a
-// later run of the task can continue it. An id that is not a UUID is
+// later run of the task can continue it: on the job, for a resume after
+// a wait for a person, and in the task's meta.json, for a resume after
+// a restart of core (resumeAfterRestart). An id that is not a UUID is
 // logged and dropped.
 func (s *SubagentService) recordCLISession(id, sessionID string) {
 	if sessionID == "" {
@@ -425,9 +652,26 @@ func (s *SubagentService) recordCLISession(id, sessionID string) {
 		log.Printf("subagent %s: ignoring a CLI session id that is not a UUID (%d bytes)", id, len(sessionID))
 		return
 	}
+	var parent string
 	s.updateJob(id, func(j *subagentJob) {
-		j.CLISession = sessionID
+		if j.CLISession != sessionID {
+			j.CLISession = sessionID
+			parent = j.Parent
+		}
 	})
+	if parent == "" || s.Store == nil {
+		return
+	}
+	err := s.Store.UpdateSubagentMeta(parent, id, func(meta map[string]any) bool {
+		if len(meta) == 0 || meta["cli_session"] == sessionID {
+			return false
+		}
+		meta["cli_session"] = sessionID
+		return true
+	})
+	if err != nil {
+		log.Printf("subagent %s/%s: record CLI session: %v", parent, id, err)
+	}
 }
 
 // listJobs returns copies of parent's jobs, newest dispatch first.

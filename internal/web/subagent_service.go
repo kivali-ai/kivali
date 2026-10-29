@@ -238,6 +238,11 @@ type SubagentTaskInput struct {
 	// empty for a task the agent dispatched itself. Set by launch from
 	// the caller's registered job; never from the request.
 	caller string
+	// toolUseID and index place the task in the chip that dispatched
+	// it, as on its job. Set by launch, and by a resume after a restart
+	// from the task's record; never from the request.
+	toolUseID string
+	index     int
 }
 
 // hasSchema reports whether the task asks for a structured answer. A
@@ -413,50 +418,11 @@ func (s *SubagentService) launch(parent, toolUseID string, tasks []SubagentTaskI
 	for i, t := range tasks {
 		i, t := i, t
 		t.caller = callerID
+		t.toolUseID, t.index = toolUseID, i
 		// context.WithCancel off Background, NOT off ctx — see the
 		// lifetime note on StartBatch.
 		jobCtx, cancel := context.WithCancel(context.Background())
-		// Model and effort are resolved HERE, once, and never again:
-		// the job is what the panel, the chip and meta.json read, and
-		// the spec the pod runs is built from the same job below. An
-		// unset field would otherwise be blank on every screen while
-		// the pod quietly ran the default.
-		job := &subagentJob{
-			ID:          taskIDs[i],
-			Parent:      parent,
-			Description: t.Description,
-			Model:       resolveSubagentModel(s.Provider, t.Model),
-			Effort:      resolveSubagentEffort(s.Provider, resolveSubagentModel(s.Provider, t.Model), t.Effort),
-			State:       subagentJobQueued,
-			QueuedAt:    now,
-			Depth:       depth,
-			CallerID:    callerID,
-			toolUseID:   toolUseID,
-			index:       i,
-			// validateTasks accepted the schema before launch; a task
-			// without one, or whose schema failed to parse, is free text.
-			Schema:        parsedSchema(t),
-			Kind:          taskKind(t),
-			Session:       taskSession(t),
-			Site:          taskSite(t),
-			StartURL:      strings.TrimSpace(t.StartURL),
-			Files:         append([]string(nil), t.Files...),
-			ApprovedFiles: append([]webApprovedFile(nil), t.approvedFiles...),
-			cancel:        cancel,
-			done:          make(chan struct{}),
-		}
-		if job.Kind == agentpod.SubagentKindWeb {
-			job.Prompt = t.Prompt
-			job.LockSite = job.Site
-			if job.needsApproval() {
-				// StartBatch worked the site out from the start URL and
-				// refused the dispatch when it could not; in a site
-				// session it is the session's.
-				job.LockSite = t.lockSite
-				s.holdForApproval(job)
-			}
-			s.chargeWebStart(parent, job.ID, job.StartURL)
-		}
+		job := s.newJob(parent, toolUseID, i, taskIDs[i], t, depth, callerID, now, cancel)
 		jobs[i] = job
 		s.registerJob(job)
 		go func() {
@@ -470,6 +436,55 @@ func (s *SubagentService) launch(parent, toolUseID string, tasks []SubagentTaskI
 	// until the next thing happens to move.
 	s.notifyWorkingChanged()
 	return jobs
+}
+
+// newJob builds the job for task t, queued at now, at index i of the
+// batch toolUseID dispatched; a web task is held for approval when it
+// names files, and charged to the web budget. Shared by launch and by a
+// resume after a restart (resumeAfterRestart).
+func (s *SubagentService) newJob(parent, toolUseID string, i int, id string, t SubagentTaskInput, depth int, callerID string, now time.Time, cancel context.CancelFunc) *subagentJob {
+	// Model and effort are resolved HERE, once, and never again: the
+	// job is what the panel, the chip and meta.json read, and the spec
+	// the pod runs is built from the same job in runJob. An unset field
+	// would otherwise be blank on every screen while the pod quietly
+	// ran the default.
+	job := &subagentJob{
+		ID:          id,
+		Parent:      parent,
+		Description: t.Description,
+		Model:       resolveSubagentModel(s.Provider, t.Model),
+		Effort:      resolveSubagentEffort(s.Provider, resolveSubagentModel(s.Provider, t.Model), t.Effort),
+		State:       subagentJobQueued,
+		QueuedAt:    now,
+		Depth:       depth,
+		CallerID:    callerID,
+		toolUseID:   toolUseID,
+		index:       i,
+		// validateTasks accepted the schema before launch; a task
+		// without one, or whose schema failed to parse, is free text.
+		Schema:        parsedSchema(t),
+		Kind:          taskKind(t),
+		Session:       taskSession(t),
+		Site:          taskSite(t),
+		StartURL:      strings.TrimSpace(t.StartURL),
+		Files:         append([]string(nil), t.Files...),
+		ApprovedFiles: append([]webApprovedFile(nil), t.approvedFiles...),
+		cancel:        cancel,
+		done:          make(chan struct{}),
+	}
+	if job.Kind == agentpod.SubagentKindWeb {
+		job.Prompt = t.Prompt
+		job.LockSite = job.Site
+		if job.needsApproval() {
+			// StartBatch worked the site out from the start URL and
+			// refused the dispatch when it could not; in a site
+			// session it is the session's.
+			job.LockSite = t.lockSite
+			s.holdForApproval(job)
+		}
+		s.chargeWebStart(parent, job.ID, job.StartURL)
+	}
+	return job
 }
 
 // runJob handles one dispatched task end-to-end: build the symlink
@@ -530,6 +545,25 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	// "dispatch five, change your mind, cancel" cost nothing.
 	s.writeSubagentMeta(parent, t, id, subagentJobQueued, "", "")
 	s.emitProgress(parent, toolUseID, index, id, subagentJobQueued, "", "")
+	// A task resumed after a restart runs in its agent's pod, which the
+	// boot may still be bringing up: it waits for it before it takes a
+	// slot, and ends failed when the pod is not back in time.
+	if job.afterRestart && !s.awaitPod(ctx, parent, restartResumePodWait) {
+		if ctx.Err() != nil {
+			s.writeSubagentMeta(parent, t, id, subagentJobCancelled, context.Canceled.Error(), "")
+			s.finishJob(job, toolUseID, index, "", "", context.Canceled)
+			return
+		}
+		var result string
+		runErr := errors.New(subagentResumeNoPodError)
+		if job.Schema != nil {
+			result = structured.Failed(subagentResumeNoPodError).Body()
+		}
+		s.writeSubagentMeta(parent, t, id, "errored", runErr.Error(), result)
+		s.emitProgress(parent, toolUseID, index, id, "errored", "", runErr.Error())
+		s.finishJob(job, toolUseID, index, "", result, runErr)
+		return
+	}
 	if err := s.adm().acquire(ctx, parent, job.Depth); err != nil {
 		s.writeSubagentMeta(parent, t, id, "cancelled", err.Error(), "")
 		s.finishJob(job, toolUseID, index, "", "", err)
@@ -562,13 +596,21 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 	// what ended the parent's turn.
 	s.notifyWorkingChanged()
 
+	// A task resumed after a restart continues the session its last
+	// run reported, with one message saying what happened; one whose
+	// run reported none starts over from its prompt.
+	prompt, resume := t.Prompt, ""
+	if job.afterRestart && job.CLISession != "" {
+		prompt, resume = restartResumeLineFor(job), job.CLISession
+	}
+
 	// Seed the subagent transcript with the inbound prompt — gives the
 	// task's transcript the same "kicked off by ..." anchor the parent's
-	// chat has.
+	// chat has. A resumed run's one message is there the same way.
 	if err := s.Store.AppendSubagentMessage(parent, id, store.ChatMessage{
 		Role:    store.RoleReceived,
 		Kind:    "direct_chat",
-		Content: t.Prompt,
+		Content: prompt,
 		TS:      time.Now().UTC(),
 	}); err != nil {
 		log.Printf("subagent %s/%s: seed transcript: %v", parent, id, err)
@@ -597,7 +639,8 @@ func (s *SubagentService) runJob(ctx context.Context, parent, toolUseID string, 
 		Model:        t.Model,
 		Effort:       t.Effort,
 		SystemPrompt: agentpod.SubagentSystemPrompt(parent, t.Description, depth, structuredTask),
-		UserPrompt:   t.Prompt,
+		UserPrompt:   prompt,
+		Resume:       resume,
 		Tools:        agentpod.SubagentTools(depth, structuredTask),
 		Depth:        depth,
 	}
@@ -665,7 +708,7 @@ drive:
 					snapshot = *j
 				})
 				s.leftWait(snapshot)
-				if !s.awaitPod(ctx, parent) {
+				if !s.awaitPod(ctx, parent, signInResumePodWait) {
 					if ctx.Err() != nil {
 						finalText, runErr = "", context.Canceled
 						break drive
@@ -1460,9 +1503,9 @@ func renderSubagentResultMessage(id, description, state, finalText, result strin
 // when a restart of core ended background tasks it dispatched: each
 // task's outcome as finishJob would report a failure, with
 // subagentRestartError as the reason (inside the result JSON for a task
-// with a schema), and the job's standing once. Nothing of the agent's
-// is running after a restart, so the standing counts none.
-func renderSubagentRestartMessage(lost []lostSubagent, plan PlanView) string {
+// with a schema), and the job's standing once. outstanding counts the
+// agent's tasks the restart resumed, which are running again.
+func renderSubagentRestartMessage(lost []lostSubagent, outstanding int, plan PlanView) string {
 	var b strings.Builder
 	if len(lost) == 1 {
 		b.WriteString("Kivali restarted, which ended 1 of your background tasks before it finished.\n\n")
@@ -1479,7 +1522,7 @@ func renderSubagentRestartMessage(lost []lostSubagent, plan PlanView) string {
 		}
 		b.WriteString(renderSubagentOutcome(t.id, t.description, subagentJobFailed, "", result, subagentRestartError))
 	}
-	b.WriteString(renderJobStanding(0, plan))
+	b.WriteString(renderJobStanding(outstanding, plan))
 	return b.String()
 }
 
@@ -1587,16 +1630,31 @@ func (s *SubagentService) writeSubagentMeta(parent string, t SubagentTaskInput, 
 		meta["status"] = status
 		meta["error"] = errMsg
 		meta["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+		// What follows the description and prompt is what a resume
+		// after a restart rebuilds the task from (resumeAfterRestart):
+		// its schema, its web session, start URL and files, and its
+		// place in the dispatching chip.
 		if t.hasSchema() {
 			meta["structured"] = true
+			meta["schema"] = t.Schema
 		}
 		if t.web() {
 			meta["kind"] = agentpod.SubagentKindWeb
 			meta["session"] = taskSession(t)
+			if u := strings.TrimSpace(t.StartURL); u != "" {
+				meta["start_url"] = u
+			}
+			if len(t.Files) > 0 {
+				meta["files"] = t.Files
+			}
 		}
+		if t.toolUseID != "" {
+			meta["tool_use_id"] = t.toolUseID
+		}
+		meta["index"] = t.index
 		if t.caller != "" {
 			// A worker's record says whose it is, so a restart that
-			// ends it reports it to nobody (FailOrphanedSubagents).
+			// ends it reports it to nobody (recoverOrphanedSubagents).
 			meta["caller"] = t.caller
 		}
 		if result != "" && json.Valid([]byte(result)) {

@@ -324,14 +324,16 @@ func (s *SubagentService) resumeLine(id string) string {
 	return line
 }
 
-// awaitPod blocks until the parent's agent pod is connected, so a
-// resumed run has somewhere to go, up to signInResumePodWait. False
-// when none came, or the job was cancelled.
-func (s *SubagentService) awaitPod(ctx context.Context, parent string) bool {
+// awaitPod blocks until the parent's agent pod is connected and ready
+// for turns, so a resumed run has somewhere to go, up to wait: after a
+// wait for a person, signInResumePodWait; after a restart,
+// restartResumePodWait. False when none came, or the job was
+// cancelled.
+func (s *SubagentService) awaitPod(ctx context.Context, parent string, wait time.Duration) bool {
 	if s.PodConnected == nil || s.PodConnected(parent) {
 		return true
 	}
-	limit := s.clk().NewTimer(signInResumePodWait)
+	limit := s.clk().NewTimer(wait)
 	defer limit.Stop()
 	tick := s.clk().NewTicker(signInResumePodPoll)
 	defer tick.Stop()

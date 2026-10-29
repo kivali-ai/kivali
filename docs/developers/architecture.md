@@ -918,9 +918,9 @@ cannot detect focus there; typing is unaffected. The lock binds the
 task's own actions, not the requests the site's pages make, so what a
 site's page does with a file is the site's.
 
-Waits live in memory. At boot `FailOrphanedSubagents` marks a web task
-an earlier run left awaiting approval errored, as it does every task
-left queued, running or waiting for a sign-in.
+Waits live in memory. At boot a web task an earlier run left awaiting
+approval or waiting for a sign-in is marked errored, and so is any task
+that names files; a task left queued or running is resumed (see below).
 
 **Web budget** (`subagent_web_budget.go`). Every web task, approved or
 not, is charged for the strings its model passes to a web action, except
@@ -1135,12 +1135,32 @@ Every write to a task's `meta.json` goes through
 `store.UpdateSubagentMeta`, one writer per task behind a lock, written
 whole through a temp file and a rename, so the job's full writes and
 the patches from the HTTP and registry goroutines (status, wait
-reason, site, browser state) keep each other's fields. Jobs live in
-memory: at boot, and after a restore, `FailOrphanedSubagents` rewrites
-every record left queued, running or waiting for a person by the last
-run as errored, "Kivali restarted before the task finished", without
-its wait reason and browser state, so nothing reads as live that core
-no longer holds.
+reason, site, browser state) keep each other's fields. The record also
+keeps what a resume needs: the task's schema, start URL and files, its
+place in the dispatching chip (`tool_use_id`, `index`), and the CLI
+session its run reported (`cli_session`).
+
+Jobs live in memory, so a restart of core loses them. At boot
+`ResumeOrphanedSubagents` registers again each task the agent
+dispatched itself that was left queued or running, names no files, and
+has been resumed fewer than `subagentRestartResumes` (2) times; its
+record counts the restart in `restarts`. The resumed job waits for the
+agent's pod, connected and released by the startup pass, for up to six
+minutes, then runs as a dispatched task does, with `--resume` on its
+CLI session and one line saying Kivali restarted (a task whose run
+reported no session starts over from its prompt). A pod that outlived
+core may still be running the task's earlier process: the runtime ends
+an earlier run of the same subagent, and waits for it to clean up,
+before it starts a new one (`claimSubagent`), so two processes never
+write one session. A task whose pod is not back in time ends failed
+with a reason that says so.
+
+Every other record left queued, running, waiting for a person or
+awaiting approval (a worker, a task that names files, one past its
+resumes, and every one after a restore, `FailOrphanedSubagents`) is
+rewritten as errored, "Kivali restarted before the task finished",
+without its wait reason and browser state, so nothing reads as live
+that core no longer holds.
 Each active agent that dispatched one of those tasks itself then gets
 one `subagent_result` naming them, through the same delivery as
 `finishJob`, and is woken with the recovered agents once its pod is up,
