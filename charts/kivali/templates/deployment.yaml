@@ -224,12 +224,20 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 3
+          # A starved node (memory pressure, a slow disk) answers late
+          # while the server itself is fine, and a restart interrupts
+          # every background task in flight. So a check may take 5 s,
+          # and the server is restarted only after 90 s of failed
+          # checks in a row: a hung server still is.
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
             initialDelaySeconds: 15
             periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.server.resources | nindent 12 }}
           securityContext:
