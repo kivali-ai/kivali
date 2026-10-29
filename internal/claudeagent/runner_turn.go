@@ -30,6 +30,15 @@ type runnerTurn struct {
 	// completion, exit watcher" from "external cancel, fire kill".
 	finalized chan struct{}
 
+	// sendMu orders every send on events against its close. The
+	// dispatcher emits, but a turn can end on another goroutine (the
+	// interrupt watcher, the absorb deadline, the supervisor, a failed
+	// stdin write) while the dispatcher is still emitting into it.
+	// sendClosed is set under sendMu when events closes; emit drops
+	// anything after that.
+	sendMu     sync.Mutex
+	sendClosed bool
+
 	errMu sync.Mutex
 	err   error
 
@@ -277,6 +286,11 @@ func (t *runnerTurn) finalize() {
 	// this runs in the runner's dispatcher goroutine, so blocking
 	// here would wedge ALL future turns on this runner. If the
 	// caller is gone we drop the StreamEnd and proceed.
+	//
+	// t.finalized is already closed, so an emit blocked on another
+	// goroutine gives up and releases sendMu.
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
 	timer := t.clk.NewTimer(finalizeEmitTimeout)
 	defer timer.Stop()
 	select {
@@ -285,6 +299,7 @@ func (t *runnerTurn) finalize() {
 	case <-timer.C():
 	}
 	close(t.events)
+	t.sendClosed = true
 }
 
 // finalizeEmitTimeout is how long finalize will wait to deliver
@@ -418,8 +433,8 @@ func (t *runnerTurn) SendFold(text string) (string, error) {
 }
 
 // emitFold reports the fate of one folded message to the caller.
-// Called only from the runner's dispatcher goroutine, and always
-// before finalize() closes the events channel.
+// Every caller emits before it ends the turn, so the report precedes
+// StreamEnd.
 func (t *runnerTurn) emitFold(id string, landed bool) {
 	t.emit(provider.StreamEvent{
 		Kind:       provider.StreamMessageFolded,
@@ -428,9 +443,18 @@ func (t *runnerTurn) emitFold(id string, landed bool) {
 	})
 }
 
+// emit delivers one event to the caller. An event for a turn that has
+// ended, or ends while emit waits, is dropped: once finalize starts,
+// StreamEnd is the last event the caller sees.
 func (t *runnerTurn) emit(ev provider.StreamEvent) {
+	t.sendMu.Lock()
+	defer t.sendMu.Unlock()
+	if t.sendClosed {
+		return
+	}
 	select {
 	case t.events <- ev:
 	case <-t.done:
+	case <-t.finalized:
 	}
 }
