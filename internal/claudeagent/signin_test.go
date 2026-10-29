@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,13 +22,10 @@ type testSignIn struct {
 	err   error
 	calls int
 	watch *signInWatch
-	// mtime advances on every write so a rewrite always moves the
-	// stamp, whatever the filesystem's timestamp resolution.
-	mtime time.Time
 }
 
 func newTestSignIn(t *testing.T, st claudeauth.Status) *testSignIn {
-	ts := &testSignIn{t: t, home: t.TempDir(), cur: st, mtime: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	ts := &testSignIn{t: t, home: t.TempDir(), cur: st}
 	ts.watch = &signInWatch{home: ts.home, status: func(context.Context) (claudeauth.Status, error) {
 		ts.calls++
 		return ts.cur, ts.err
@@ -36,8 +34,7 @@ func newTestSignIn(t *testing.T, st claudeauth.Status) *testSignIn {
 	return ts
 }
 
-// write puts body at HOME/.claude/name with a modification time later
-// than any before it.
+// write puts body at HOME/.claude/name.
 func (ts *testSignIn) write(name, body string) {
 	ts.t.Helper()
 	p := filepath.Join(ts.home, ".claude", name)
@@ -47,9 +44,38 @@ func (ts *testSignIn) write(name, body string) {
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		ts.t.Fatal(err)
 	}
-	ts.mtime = ts.mtime.Add(time.Minute)
-	if err := os.Chtimes(p, ts.mtime, ts.mtime); err != nil {
-		ts.t.Fatal(err)
+}
+
+// TestSignInFilesStampFollowsContents: a rewrite of the same size that
+// keeps the modification time (two writes inside one filesystem
+// timestamp tick) moves the stamp; a touch that leaves the contents
+// alone does not.
+func TestSignInFilesStampFollowsContents(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "settings.json")
+	missing := filepath.Join(dir, "config")
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	put := func(body string, mod time.Time) string {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+		return signInFilesStamp(p, missing)
+	}
+
+	s1 := put(`{"env":{"A":"1","B":"2"}}`, at)
+	s2 := put(`{"env":{"B":"2","A":"1"}}`, at)
+	if s1 == s2 {
+		t.Fatal("a same-size rewrite with the same modification time kept the stamp")
+	}
+	if s3 := put(`{"env":{"B":"2","A":"1"}}`, at.Add(time.Hour)); s3 != s2 {
+		t.Fatal("a rewrite with the same contents moved the stamp")
+	}
+	if !strings.HasSuffix(s2, ";-;") {
+		t.Fatalf("stamp %q does not mark the missing file", s2)
 	}
 }
 
