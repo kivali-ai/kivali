@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -30,9 +29,9 @@ import (
 // refresh rewrites .credentials.json with a new token for the same
 // account and leaves the key as it was, so it respawns nothing.
 //
-// The status costs a CLI run, so it is asked only when the files a
-// sign-in writes (.credentials.json, settings.json) have changed size
-// or modification time since the key was last worked out.
+// The status costs a CLI run, so it is asked only when the contents of
+// the files a sign-in writes (.credentials.json, settings.json) have
+// changed since the key was last worked out.
 type signInWatch struct {
 	// home is the CLI's HOME; empty stamps nothing, so the key is
 	// worked out once.
@@ -72,20 +71,30 @@ func (w *signInWatch) settingsPath() string {
 	return filepath.Join(w.home, ".claude", "settings.json")
 }
 
-// filesStamp is the size and modification time of each file a sign-in
-// writes ("-" for a missing one).
+// filesStamp stamps the files a sign-in writes (signInFilesStamp).
 func (w *signInWatch) filesStamp() string {
 	if w.home == "" {
 		return ""
 	}
+	return signInFilesStamp(w.credentialsPath(), w.settingsPath())
+}
+
+// signInFilesStamp is a SHA-256 digest of each file in paths ("-" for
+// one that cannot be read), so any change to a file's contents moves
+// it, however soon after the last write it lands. The files are a few
+// hundred bytes. The stamp covers the credentials file, so it is kept
+// in memory and never logged.
+func signInFilesStamp(paths ...string) string {
 	var b strings.Builder
-	for _, p := range []string{w.credentialsPath(), w.settingsPath()} {
-		fi, err := os.Stat(p)
+	for _, p := range paths {
+		body, err := os.ReadFile(p)
 		if err != nil {
 			b.WriteString("-;")
 			continue
 		}
-		fmt.Fprintf(&b, "%d@%d;", fi.Size(), fi.ModTime().UnixNano())
+		sum := sha256.Sum256(body)
+		b.WriteString(hex.EncodeToString(sum[:]))
+		b.WriteByte(';')
 	}
 	return b.String()
 }

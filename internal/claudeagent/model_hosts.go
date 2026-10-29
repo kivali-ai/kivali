@@ -2,7 +2,6 @@ package claudeagent
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -19,7 +18,7 @@ import (
 // each time they change, until ctx ends. Every interval it checks the
 // files a sign-in writes under HOME (.claude/.credentials.json,
 // .claude/settings.json, .aws/config) and asks the CLI again only when
-// one of them changed. A host left out for want of a region or resource
+// the contents of one of them changed. A host left out for want of a region or resource
 // is logged. Blocks; run it on its own goroutine.
 func (c *Driver) WatchModelHosts(ctx context.Context, interval time.Duration, report func(hosts []string)) {
 	w := newModelHostWatch(c.opts.ClaudeBinary, c.opts.HomeDir, c.opts.clock)
@@ -96,25 +95,15 @@ func (w *modelHostWatch) check(ctx context.Context, report func([]string)) {
 	report(hosts)
 }
 
-// filesStamp is the size and modification time of each file a sign-in
-// writes ("-" for a missing one). Empty home stamps nothing, so the
-// hosts are worked out once.
+// filesStamp stamps the files a sign-in writes (signInFilesStamp).
+// Empty home stamps nothing, so the hosts are worked out once.
 func (w *modelHostWatch) filesStamp() string {
 	if w.home == "" {
 		return ""
 	}
-	var b strings.Builder
-	for _, p := range []string{
+	return signInFilesStamp(
 		filepath.Join(w.home, ".claude", ".credentials.json"),
 		filepath.Join(w.home, ".claude", "settings.json"),
 		filepath.Join(w.home, ".aws", "config"),
-	} {
-		fi, err := os.Stat(p)
-		if err != nil {
-			b.WriteString("-;")
-			continue
-		}
-		fmt.Fprintf(&b, "%d@%d;", fi.Size(), fi.ModTime().UnixNano())
-	}
-	return b.String()
+	)
 }
