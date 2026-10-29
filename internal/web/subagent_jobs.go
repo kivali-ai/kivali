@@ -62,7 +62,7 @@ const restartResumePodWait = 6 * time.Minute
 // subagentResumeNoPodError is the reason a task resumed after a restart
 // ends with when its agent's pod was not back within
 // restartResumePodWait.
-const subagentResumeNoPodError = "Kivali restarted before the task finished, and the agent was not back in time to resume it"
+const subagentResumeNoPodError = "the task could not be resumed after Kivali restarted: the agent was not back in time"
 
 // restartResumeLine is the one user message a task's run gets when it
 // is resumed after a restart; restartResumeWebLine is added for a web
