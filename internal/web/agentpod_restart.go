@@ -255,6 +255,14 @@ func (s *Server) HoldTurnsForStartup() {
 	}
 }
 
+// startupHeld reports whether slug's turns are still held for the
+// startup pass (HoldTurnsForStartup): its pod may be recreated yet.
+func (s *Server) startupHeld(slug string) bool {
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	return s.startupHolds[slug]
+}
+
 // releaseStartupHold drops slug's startup hold, if it has one.
 func (s *Server) releaseStartupHold(slug string) {
 	s.streamMu.Lock()

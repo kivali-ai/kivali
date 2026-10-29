@@ -16,8 +16,8 @@
 // and it ends blocked, upload_denied, with the person's words. After
 // webApprovalLimit with no answer it ends blocked,
 // user_did_not_respond. The calling agent is told nothing until the
-// result. A restart of core leaves a waiting task errored, as it does
-// every unfinished task (FailOrphanedSubagents).
+// result. A restart of core leaves a waiting task errored: the
+// approval lived in memory (recoverOrphanedSubagents).
 
 package web
 

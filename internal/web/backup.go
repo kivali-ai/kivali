@@ -459,12 +459,13 @@ func (s *Server) restoreArchive(ctx context.Context, path, filename string) erro
 
 	// A backup taken while background tasks ran carries their records
 	// as live, and one taken mid-turn carries that agent's active-turn
-	// marker. Boot marks the tasks errored and tells their agents, turns
-	// a marker into a disruption row, and wakes those agents once their
-	// pods are up; a restore does the same, and brings up the pods boot
-	// would have: a restored agent has none until something provisions
-	// it, and a turn for an agent without a pod is dropped.
-	recovered := s.RecoverInterruptedWork()
+	// marker. A restore marks every such task errored and tells its
+	// agent (it resumes none, as a boot does: the tasks are a past
+	// run's), turns a marker into a disruption row, and wakes those
+	// agents once their pods are up. It brings up the pods boot would
+	// have: a restored agent has none until something provisions it,
+	// and a turn for an agent without a pod is dropped.
+	recovered := s.RecoverInterruptedWork(false)
 	s.restoreBG.Add(1)
 	go func() {
 		defer s.restoreBG.Done()

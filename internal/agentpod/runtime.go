@@ -69,6 +69,12 @@ type Runtime struct {
 	mu       sync.Mutex
 	inflight map[string]context.CancelFunc // turnID → cancel
 
+	// subagentRuns holds each subagent's run in flight by subagent id,
+	// so a new run of the same task first ends one still going: core
+	// resumes a task after it restarts, while the run it lost track of
+	// may still be working here (claimSubagent).
+	subagentRuns map[string]*subagentRun
+
 	// folders holds the fold-capable stream of each in-flight turn, so
 	// EventFoldMessage can splice into a turn that is already running.
 	// Only streams whose transport implements provider.Folder land here;
@@ -335,6 +341,51 @@ func (r *Runtime) untrackInflight(turnID string) {
 	r.mu.Lock()
 	delete(r.inflight, turnID)
 	r.mu.Unlock()
+}
+
+// subagentRun is one subagent run in flight: cancel ends it, and done
+// is closed once it has ended and cleaned up its run dir.
+type subagentRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// claimSubagent makes the run starting now, whose stream cancel is
+// cancel, the subagent's only one. An earlier run of the same subagent
+// still in flight is cancelled, and claimSubagent waits for it to end:
+// it shares the task's CLI session and run dir, which two processes
+// must not write at once. Returns the release the new run calls once it
+// has ended and cleaned up, or false when ctx ended first.
+func (r *Runtime) claimSubagent(ctx context.Context, id string, cancel context.CancelFunc) (func(), bool) {
+	run := &subagentRun{cancel: cancel, done: make(chan struct{})}
+	for {
+		r.mu.Lock()
+		prev := r.subagentRuns[id]
+		if prev == nil {
+			if r.subagentRuns == nil {
+				r.subagentRuns = map[string]*subagentRun{}
+			}
+			r.subagentRuns[id] = run
+			r.mu.Unlock()
+			break
+		}
+		r.mu.Unlock()
+		r.Logger.Printf("subagent %s: ending its earlier run before the new one starts", id)
+		prev.cancel()
+		select {
+		case <-prev.done:
+		case <-ctx.Done():
+			return nil, false
+		}
+	}
+	return func() {
+		r.mu.Lock()
+		if r.subagentRuns[id] == run {
+			delete(r.subagentRuns, id)
+		}
+		r.mu.Unlock()
+		close(run.done)
+	}, true
 }
 
 // handleChatTurn drives one chat turn end-to-end. Decodes the
@@ -678,6 +729,14 @@ func (r *Runtime) handleSubagentTurn(ctx context.Context, ev Event) error {
 		cancel()
 		r.untrackInflight(ct.TurnID)
 	}()
+	// Deferred before the run dir's cleanup, so it runs after it: the
+	// next run of this subagent starts only once this one's dir is gone.
+	release, ok := r.claimSubagent(ctx, spec.SubagentID, cancel)
+	if !ok {
+		r.postStopped(ctx, ct.TurnID, nil)
+		return nil
+	}
+	defer release()
 
 	// Subagent-private run dir: the driver keeps the run's config here
 	// and the runtime its stderr.log. The subagent's /files/ view lives

@@ -120,7 +120,8 @@ func TestRestartTellsEachAgentWhichOfItsTasksEnded(t *testing.T) {
 // never woken, it would sit unread until a person wrote. This guards
 // that RecoverInterruptedWork writes the row through deliverToAgent,
 // that the gate reads it as owed a reply, and that the agent is in the
-// list SpawnRecovered wakes, once.
+// list SpawnRecovered wakes, once. The task waited for a person, which
+// a boot does not resume.
 func TestRecoverInterruptedWorkQueuesTheNoticeBehindTheSpawnGate(t *testing.T) {
 	st, err := store.New(t.TempDir())
 	if err != nil {
@@ -134,13 +135,13 @@ func TestRecoverInterruptedWorkQueuesTheNoticeBehindTheSpawnGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc.writeSubagentMeta("alice", SubagentTaskInput{Description: "list the incidents", Prompt: "p"}, "lost0001", subagentJobRunning, "", "")
+	svc.writeSubagentMeta("alice", SubagentTaskInput{Description: "list the incidents", Prompt: "p"}, "lost0001", subagentJobWaiting, "", "")
 	// alice was mid-turn too: she is woken once, not twice.
 	if err := st.MarkActiveTurn("alice", store.ActiveTurnMarker{StartedAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Source: "chat"}); err != nil {
 		t.Fatal(err)
 	}
 
-	wake := srv.RecoverInterruptedWork()
+	wake := srv.RecoverInterruptedWork(true)
 	if !slices.Equal(wake, []string{"alice"}) {
 		t.Errorf("wake = %v, want alice once", wake)
 	}

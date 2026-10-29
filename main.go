@@ -529,17 +529,20 @@ func main() {
 		rt.SetOnRunningChange(srv.NotifyOrgState)
 	}
 
-	// Crash recovery. Background tasks left queued, running or waiting
-	// for a person by the last run went with it: their records say so,
-	// and each agent that dispatched one gets a subagent_result naming
-	// them. Then agents whose previous chat turn was killed mid-flight
+	// Crash recovery. Background tasks left queued or running by the
+	// last run are resumed from their CLI sessions, a bounded number of
+	// times each; the rest it left unfinished (a wait for a person
+	// among them) went with it: their records say so, and each agent
+	// that dispatched one gets a subagent_result naming them. A resumed
+	// task waits for its agent's pod, which provisioning below brings
+	// up. Then agents whose previous chat turn was killed mid-flight
 	// (Kivali OOM / pod restart / kubelet eviction — any case where the
 	// post-loop defer didn't get to clear the active-turn marker) get a
 	// kind:runtime-disruption chat entry. Auto-spawn is deferred until
 	// AFTER bulk agent-pod provisioning (below) so a recovered agent's
 	// first chat-turn event lands on a subscribed runtime, not a
 	// still-coming-up pod.
-	recovered := srv.RecoverInterruptedWork()
+	recovered := srv.RecoverInterruptedWork(true)
 
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,

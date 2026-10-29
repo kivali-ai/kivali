@@ -460,10 +460,14 @@ func NewServer(s *Server) (*Server, error) {
 		s.SubagentService.Driver = s
 	}
 	if s.SubagentService != nil && s.SubagentService.PodConnected == nil && s.AgentpodHub != nil {
-		// A task resumed after a sign-in runs in the parent's pod;
-		// DriveSubagent fails at once without a subscriber, so the
-		// service waits for one first.
-		s.SubagentService.PodConnected = func(parent string) bool { return s.AgentpodHub.SubscriberCount(parent) > 0 }
+		// A task resumed after a sign-in or a restart runs in the
+		// parent's pod; DriveSubagent fails at once without a
+		// subscriber, so the service waits for one first. A pod the
+		// startup pass has not provisioned yet may be recreated under
+		// the run, so it does not count until then.
+		s.SubagentService.PodConnected = func(parent string) bool {
+			return s.AgentpodHub.SubscriberCount(parent) > 0 && !s.startupHeld(parent)
+		}
 	}
 	if s.SubagentService != nil && s.SubagentService.DeliverToParent == nil {
 		// A finished background job reaches its parent through the
