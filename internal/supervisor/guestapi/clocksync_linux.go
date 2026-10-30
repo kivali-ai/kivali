@@ -93,7 +93,7 @@ func readPTP(path string) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var ts unix.Timespec
 	if err := unix.ClockGettime(int32((^int(f.Fd()))<<3|3), &ts); err != nil {
 		return time.Time{}, fmt.Errorf("clock_gettime: %w", err)
