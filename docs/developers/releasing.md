@@ -237,7 +237,15 @@ Choices worth knowing:
   dmg's window layout (large icons, the app beside an Applications link)
   comes from a Finder script that Tauri skips when `CI=true`;
   `desktop-app/Makefile` sets `TAURI_BUNDLER_DMG_IGNORE_CI=true` so the
-  release dmg gets the same layout as a local build. The
+  release dmg gets the same layout as a local build. Tauri's dmg script
+  gives up on the first `hdiutil create` that fails with "Resource
+  busy", which the macOS runners hit now and then, so every `tauri
+  bundle` on macOS finds `scripts/hdiutil-retry.sh` first on `PATH` as
+  `hdiutil`: it tries a busy `create` or `detach` up to five times, 30
+  seconds of waiting in all, clearing what a failed create left attached
+  first. Tauri discards the dmg script's output, so that script logs
+  every hdiutil call, and the step prints the log when the dmg failed or
+  had to try again. The
   updater's `Kivali.app.tar.gz` is that same stapled app. Tauri waits
   for Apple's verdict silently, so the step runs
   `scripts/notary-progress.sh` beside it, which logs each submission's

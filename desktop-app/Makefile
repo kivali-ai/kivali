@@ -50,6 +50,29 @@ endif
 # built locally.
 export TAURI_BUNDLER_DMG_IGNORE_CI := true
 
+# On macOS every `tauri bundle` finds scripts/hdiutil-retry.sh first on
+# PATH as hdiutil (DMG_HDIUTIL, a link under src-tauri/target). tauri's
+# dmg script gives up on the first `hdiutil create` that fails with
+# "Resource busy", which the CI runners hit now and then; the script
+# tries create and detach again instead. tauri discards the dmg script's
+# output, so the script logs every hdiutil call to DMG_HDIUTIL_LOG, and
+# the bundle targets print that log when the dmg step fails
+# (DMG_HDIUTIL_REPORT) or had to try again (DMG_HDIUTIL_REPORT_RETRIES).
+ifneq ($(IS_DARWIN),)
+  DMG_HDIUTIL := $(CURDIR)/src-tauri/target/dmg-hdiutil/hdiutil
+  DMG_HDIUTIL_LOG := $(CURDIR)/src-tauri/target/dmg-hdiutil/calls.log
+  TAURI_BUNDLE_ENV := PATH="$(dir $(DMG_HDIUTIL)):$$PATH" HDIUTIL_RETRY_LOG="$(DMG_HDIUTIL_LOG)"
+  DMG_HDIUTIL_RESET := rm -f "$(DMG_HDIUTIL_LOG)"
+  DMG_HDIUTIL_REPORT = echo "==> the dmg step's hdiutil calls ($(DMG_HDIUTIL_LOG)):"; cat "$(DMG_HDIUTIL_LOG)" 2>/dev/null || true
+  DMG_HDIUTIL_REPORT_RETRIES = if grep -q 'trying again' "$(DMG_HDIUTIL_LOG)" 2>/dev/null; then $(DMG_HDIUTIL_REPORT); fi
+else
+  DMG_HDIUTIL :=
+  TAURI_BUNDLE_ENV :=
+  DMG_HDIUTIL_RESET := true
+  DMG_HDIUTIL_REPORT := true
+  DMG_HDIUTIL_REPORT_RETRIES := true
+endif
+
 # The one desktop version: tauri.conf.json's. Cargo.toml and package.json
 # follow it (build.rs refuses a mismatch) and the supervisor is stamped
 # with it, so the app and its sidecar carry one number.
@@ -218,12 +241,23 @@ build: release-preflight build-compile build-bundle
 build-compile: deps sidecar licenses
 	npx tauri build --no-bundle $(VM_BUNDLE) $(LICENSES_BUNDLE)
 
-build-bundle: release-preflight
+ifneq ($(IS_DARWIN),)
+# A relative link, so a copied src-tauri/target still finds this tree's
+# script.
+$(DMG_HDIUTIL): $(REPO)/scripts/hdiutil-retry.sh
+	mkdir -p $(@D)
+	ln -sf ../../../../scripts/hdiutil-retry.sh $@
+endif
+
+build-bundle: release-preflight $(DMG_HDIUTIL)
 	@if [ -z "$$TAURI_SIGNING_PRIVATE_KEY" ] && [ ! -f "$(UPDATER_KEY)" ]; then \
 		echo "no updater key: set TAURI_SIGNING_PRIVATE_KEY or run npx tauri signer generate -w .keys/updater.key" >&2; exit 1; fi
+	@$(DMG_HDIUTIL_RESET)
 	TAURI_SIGNING_PRIVATE_KEY="$${TAURI_SIGNING_PRIVATE_KEY:-$(UPDATER_KEY)}" \
 	TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
-		npx tauri bundle $(VM_BUNDLE) $(LICENSES_BUNDLE) $(WINDOWS_SIGN)
+	$(TAURI_BUNDLE_ENV) \
+		npx tauri bundle $(VM_BUNDLE) $(LICENSES_BUNDLE) $(WINDOWS_SIGN) || { $(DMG_HDIUTIL_REPORT); exit 1; }
+	@$(DMG_HDIUTIL_REPORT_RETRIES)
 
 build-debug: deps sidecar licenses
 ifneq ($(DEBUG_NO_UPDATER),)
@@ -242,8 +276,11 @@ endif
 # Never for distribution: a release is `make build` with the keys.
 build-trial: build-compile build-trial-bundle
 
-build-trial-bundle:
-	npx tauri bundle $(VM_BUNDLE) $(LICENSES_BUNDLE) --config '{"bundle":{"createUpdaterArtifacts":false}}'
+build-trial-bundle: $(DMG_HDIUTIL)
+	@$(DMG_HDIUTIL_RESET)
+	$(TAURI_BUNDLE_ENV) npx tauri bundle $(VM_BUNDLE) $(LICENSES_BUNDLE) --config '{"bundle":{"createUpdaterArtifacts":false}}' \
+		|| { $(DMG_HDIUTIL_REPORT); exit 1; }
+	@$(DMG_HDIUTIL_REPORT_RETRIES)
 
 # The end-to-end test drives the fake supervisor's debug build, and the
 # real one too when KIVALI_REAL_SUPERVISOR names its binary.
