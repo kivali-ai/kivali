@@ -1,0 +1,41 @@
+framework       : 683.100.3
+driver          : 683.100.3
+images          : 2
+================================================
+image-path      : /Users/runner/work/kivali/kivali/desktop-app/src-tauri/target/release/bundle/dmg/rw.4242.Kivali_1.3.0_aarch64.dmg
+image-alias     : /Users/runner/work/kivali/kivali/desktop-app/src-tauri/target/release/bundle/dmg/rw.4242.Kivali_1.3.0_aarch64.dmg
+shadow-path     : <none>
+icon-path       : /System/Library/PrivateFrameworks/DiskImages.framework/Resources/CDiskImage.icns
+image-type      : read/write
+system-image    : false
+blockcount      : 4096
+blocksize       : 512
+writeable       : TRUE
+autodiskmount   : TRUE
+removable       : TRUE
+image-encrypted : false
+mounting user   : runner
+mounting mode   : <unknown>
+process ID      : 37453
+framework name  : DiskImages
+/dev/disk4	GUID_partition_scheme	
+/dev/disk4s1	48465300-0000-11AA-AA11-00306543ECAC	/Volumes/Kivali
+================================================
+image-path      : /Users/runner/Downloads/other.dmg
+image-alias     : /Users/runner/Downloads/other.dmg
+shadow-path     : <none>
+icon-path       : /System/Library/PrivateFrameworks/DiskImages.framework/Resources/CDiskImage.icns
+image-type      : read/write
+system-image    : false
+blockcount      : 4096
+blocksize       : 512
+writeable       : TRUE
+autodiskmount   : TRUE
+removable       : TRUE
+image-encrypted : false
+mounting user   : runner
+mounting mode   : <unknown>
+process ID      : 37464
+framework name  : DiskImages
+/dev/disk5	GUID_partition_scheme	
+/dev/disk5s1	48465300-0000-11AA-AA11-00306543ECAC	/Volumes/Other
