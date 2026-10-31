@@ -125,6 +125,26 @@ describe('you, in a transcript', () => {
   });
 });
 
+describe('a turn that answers, calls tools and closes', () => {
+  it('draws the answer written before the calls as well as the closing line after them', () => {
+    const agent = { kind: 'agent' as const, slug: 'horticulturalist', name: 'Horticulturalist' };
+    const rows = keyRows([
+      { kind: 'message', ts: 1, role: 'sent', from: { kind: 'person', slug: 'ceo', name: 'You' }, body_md: 'Should I pinch every tip?' },
+      { kind: 'message', ts: 2, role: 'received', from: agent, body_md: "I'd hold off on pinching everything. Pinching makes the ends bushier, not the inside.", model: 'Opus 5.5' },
+      { kind: 'tool_use', ts: 3, tool_use_id: 'a', name: 'file_str_replace', status: 'done', input: '{}', output: 'ok' },
+      { kind: 'tool_use', ts: 4, tool_use_id: 'b', name: 'artifact_publish', status: 'done', input: '{}', output: 'Published' },
+      { kind: 'message', ts: 5, role: 'received', from: agent, body_md: "I've added this to the record.", model: 'Opus 5.5' },
+    ]);
+    renderAt(<Transcript rows={rows} agent={{ slug: agent.slug, name: agent.name }} now={5} readOnly />);
+    const list = screen.getByRole('list', { name: 'Chat with Horticulturalist' });
+    expect(within(list).getByText(/I'd hold off on pinching everything\. Pinching makes the ends bushier/)).toBeVisible();
+    expect(within(list).getByText("I've added this to the record.")).toBeVisible();
+    expect(within(list).getByText('file_str_replace')).toBeInTheDocument();
+    // The answer and the closing line are two messages, each with its own badge.
+    expect(within(list).getAllByText('opus 5.5')).toHaveLength(2);
+  });
+});
+
 describe('a background task’s result', () => {
   it('is drawn where it landed, saying the task finished, closed on what it answered (chat_message_task_result.json)', () => {
     const row = goChatMessageTaskResult.row;

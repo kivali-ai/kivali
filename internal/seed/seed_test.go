@@ -315,3 +315,24 @@ func TestKivaliRole(t *testing.T) {
 		t.Errorf("KivaliRoleSlugs = %v", KivaliRoleSlugs)
 	}
 }
+
+// A progress line is one clause, and an answer to the owner is not
+// one: it goes in the reply. A default that sent "a summary or a plan"
+// out of chat into "the message or the artifact" taught agents to
+// write their answer into a record and tell the owner only that they
+// had added it.
+func TestDefaultHandbooksKeepTheAnswerInTheReply(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"work", Handbook},
+		{"personal", PersonalHandbook},
+	} {
+		flat := strings.Join(strings.Fields(tc.text), " ")
+		if strings.Contains(flat, "not in chat") {
+			t.Errorf("the %s handbook sends something out of chat", tc.name)
+		}
+		want := "An answer to the owner is not a progress line: it goes in your reply in full, never only into a file or an artifact."
+		if !strings.Contains(flat, want) {
+			t.Errorf("the %s handbook lost %q", tc.name, want)
+		}
+	}
+}

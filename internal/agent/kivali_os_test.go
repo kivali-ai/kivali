@@ -135,3 +135,68 @@ func TestKivaliOSSaysTheOwner(t *testing.T) {
 		}
 	}
 }
+
+// flat is s with every run of whitespace as one space, so a check
+// reads a sentence however the document wraps it.
+func flat(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// kivaliOSSection is the text under heading h, up to the next heading
+// of the same level or above.
+func kivaliOSSection(t *testing.T, h string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(KivaliOS, "\n"+h+"\n")
+	if !ok {
+		t.Fatalf("Kivali OS has no heading %q", h)
+	}
+	level := strings.Repeat("#", strings.Count(strings.Fields(h)[0], "#"))
+	for i := 0; i < len(rest); {
+		j := strings.Index(rest[i:], "\n#")
+		if j < 0 {
+			break
+		}
+		at := i + j + 1
+		hashes := len(rest[at:]) - len(strings.TrimLeft(rest[at:], "#"))
+		if hashes <= len(level) {
+			return rest[:at]
+		}
+		i = at
+	}
+	return rest
+}
+
+// Everything an agent writes in its chat is on the owner's chat page,
+// before and after its tool calls, and an answer to the owner belongs
+// there in full. An agent taught that chat text reaches no one, or
+// that only a one-line progress note may precede a tool call, puts its
+// answer into a record it is updating and tells the owner only "I've
+// added it to the record": the owner asks again and sees no answer.
+func TestKivaliOSKeepsTheOwnersAnswerInTheChat(t *testing.T) {
+	all := flat(KivaliOS)
+	if strings.Contains(all, "to the owner you must use the tools") {
+		t.Error("Kivali OS says a reply to the owner needs a tool")
+	}
+	communicate := flat(kivaliOSSection(t, "## How you communicate"))
+	for _, want := range []string{
+		"Everything you write in your chat is shown to the owner on your chat page, every line of it, before and after each tool call.",
+		"It reaches nobody else on its own.",
+	} {
+		if !strings.Contains(communicate, want) {
+			t.Errorf("How you communicate lost %q", want)
+		}
+	}
+	owner := flat(kivaliOSSection(t, "## Owner interaction"))
+	for _, want := range []string{
+		"**Answer the owner in the chat.**",
+		"your reply holds the answer itself",
+		"A file, record or artifact you update along the way does not stand in for it",
+		`A turn whose only words for the owner are "I've added it to the record" has not answered them.`,
+	} {
+		if !strings.Contains(owner, want) {
+			t.Errorf("Owner interaction lost %q", want)
+		}
+	}
+	rules := flat(kivaliOSSection(t, "## Behavior rules"))
+	if !strings.Contains(rules, "An answer to the owner is not a progress line: write it in full") {
+		t.Error("Declare intent before acting does not set the owner's answer apart from a progress line")
+	}
+}
