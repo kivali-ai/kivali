@@ -113,10 +113,11 @@ How work is taken on, done, and handed off here.
   replies, do not raise it to more than one owner, and do not expand
   your own task around it.
 - **Keep progress lines to one clause.** The line before each action
-  says what you are about to do and why. Never a summary, a table, a
-  reflection, or a plan between tool calls; those belong in the message
-  or the artifact, not in chat, because every chat line replays on
-  every later call.
+  says what you are about to do and why. A progress line is never a
+  summary, a table, a reflection or a plan, because every chat line
+  replays on every later call. An answer to the owner is not a progress
+  line: it goes in your reply in full, never only into a file or an
+  artifact.
 - **Respect what is off limits.** About says what this team does not
   touch. Treat it as settled; if a task cannot be done without crossing
   it, say so instead of working around it.

@@ -206,6 +206,53 @@ describe('thinking (chat-thinking-summary)', () => {
   });
 });
 
+describe('a reply written before tool calls', () => {
+  const ANSWER = "I'd hold off on pinching everything. Here's why.";
+  const CLOSING = "I've added this to the record.";
+  const MODEL = 'Opus 5.5';
+  const person = { kind: 'person', slug: 'ceo', name: 'You' } as const;
+  const agent = { kind: 'agent', ...AGENT } as const;
+  // What the server stores for the turn: the answer, the record update, and the line that says so.
+  const stored: Chat['rows'] = [
+    { kind: 'message', ts: 1, role: 'sent', from: person, body_md: 'Should I pinch every tip?', attachments: [], pending: false },
+    { kind: 'message', ts: 2, role: 'received', from: agent, body_md: ANSWER, attachments: [], pending: false, model: MODEL },
+    { kind: 'tool_use', ts: 3, tool_use_id: 'a', name: 'file_str_replace', status: 'done', input: '{}', output: 'ok' },
+    { kind: 'tool_use', ts: 4, tool_use_id: 'b', name: 'artifact_publish', status: 'done', input: '{}', output: 'Published' },
+    { kind: 'message', ts: 5, role: 'received', from: agent, body_md: CLOSING, attachments: [], pending: false, model: MODEL },
+  ];
+
+  it('keeps the answer while the turn streams, through the calls and the closing line', () => {
+    const s = run(start(), [
+      ev('delta', { text: "I'd hold off on pinching everything. ", start_ts: 2, model: MODEL }),
+      ev('delta', { text: "Here's why.", start_ts: 2, model: MODEL }),
+      ev('tool_use_start', { tool_use_id: 'a', tool_name: 'file_str_replace', start_ts: 3 }),
+      ev('tool_use', { tool_use_id: 'a', tool_name: 'file_str_replace', tool_input: '{}' }),
+      ev('tool_result', { tool_use_id: 'a', stdout: 'ok' }),
+      ev('tool_use_start', { tool_use_id: 'b', tool_name: 'artifact_publish', start_ts: 4 }),
+      ev('tool_result', { tool_use_id: 'b', stdout: 'Published' }),
+      ev('delta', { text: CLOSING, start_ts: 5, model: MODEL }),
+    ]);
+    expect(replies(s).map((r) => r.body_md)).toEqual([ANSWER, CLOSING]);
+    const blocks = toBlocks(s.rows, agent);
+    expect(blocks.map((b) => (b.type === 'agent' ? [b.text?.body_md, b.items.map((i) => i.tool_use_id)] : b.row.kind))).toEqual([
+      [ANSWER, ['a', 'b']],
+      [CLOSING, []],
+    ]);
+  });
+
+  it('keeps both replies when the turn ends and the page takes the server copy', () => {
+    let s = run(start(), [ev('delta', { text: ANSWER, start_ts: 2, model: MODEL }), ev('tool_use_start', { tool_use_id: 'a', tool_name: 'file_str_replace', start_ts: 3 }), ev('done', { waiting_tasks: 0 })]);
+    s = reduceTranscript(s, { type: 'loaded', chat: { ...emptyChat, rows: stored }, at: AT });
+    expect(replies(s).map((r) => r.body_md)).toEqual([ANSWER, CLOSING]);
+    const blocks = toBlocks(s.rows, agent);
+    expect(blocks.map((b) => (b.type === 'agent' ? [b.text?.body_md, b.items.length] : b.row.body_md))).toEqual([
+      'Should I pinch every tip?',
+      [ANSWER, 2],
+      [CLOSING, 0],
+    ]);
+  });
+});
+
 describe('tool calls (chat-history-group)', () => {
   it('update in place through start, input deltas, use and result, and ignore a replay after the result', () => {
     const s = play(sequences.toolLifecycle);

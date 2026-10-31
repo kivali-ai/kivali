@@ -482,6 +482,47 @@ func TestTranscriptToolPairing(t *testing.T) {
 	}
 }
 
+// A turn that answers, updates a record and then says so carries both
+// replies to the page, in order, with the calls between them: the
+// answer before the calls is never folded into them or dropped for the
+// closing line.
+func TestTranscriptKeepsTheReplyBeforeToolCalls(t *testing.T) {
+	srv := transcriptServer(t)
+	answer := "I'd hold off on pinching everything. Here's why."
+	closing := "I've added this to the record."
+	rows := srv.transcriptRows("alice", []store.ChatMessage{
+		{Role: store.RoleReceived, Kind: "direct_chat", Content: "Should I pinch every tip?", TS: tsAt(1)},
+		{Role: store.RoleSent, Kind: "direct_chat", Content: answer, Model: "claude-opus-5-5", TS: tsAt(2)},
+		{Role: store.RoleSent, Kind: "tool_use", ToolUseID: "a", ToolName: "file_str_replace", ToolInput: `{}`, TS: tsAt(3)},
+		{Role: store.RoleReceived, Kind: "tool_result", ToolUseID: "a", Content: "ok", TS: tsAt(4)},
+		{Role: store.RoleSent, Kind: "tool_use", ToolUseID: "b", ToolName: "artifact_publish", ToolInput: `{}`, TS: tsAt(5)},
+		{Role: store.RoleReceived, Kind: "tool_result", ToolUseID: "b", Content: "Published", TS: tsAt(6)},
+		{Role: store.RoleSent, Kind: "direct_chat", Content: closing, Model: "claude-opus-5-5", TS: tsAt(7)},
+	})
+	var got []string
+	for _, r := range rows {
+		switch r.Kind {
+		case apitypes.TranscriptKindMessage:
+			got = append(got, string(*r.Role)+":"+*r.BodyMD)
+		default:
+			got = append(got, string(r.Kind))
+		}
+	}
+	want := []string{
+		"sent:Should I pinch every tip?",
+		"received:" + answer,
+		"tool_use",
+		"tool_use",
+		"received:" + closing,
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("rows = %q, want %q", got, want)
+	}
+	if rows[1].Model == nil || rows[4].Model == nil {
+		t.Error("each reply carries its own model badge")
+	}
+}
+
 // A batch reads each task's state off disk. Every result is a row
 // where it landed, and its outcome folds into its task when the
 // dispatch is in the transcript.
