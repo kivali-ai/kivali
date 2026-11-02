@@ -82,7 +82,8 @@ prefixes all four names; empty, the tags are the bare local names.
 **The agent-shell toolkit.** The agent-shell's default packages are small
 and company-agnostic: bash, coreutils, ca-certificates, git, python3
 with pip and venv, jq, ripgrep, fd-find, curl, wget, tar, zip, unzip,
-less, pandoc and imagemagick. There is no compiler and no
+less, pandoc, poppler-utils (pdftotext, pdftoppm, pdfinfo) and
+imagemagick. There is no compiler and no
 ffmpeg, database client or Go. To bake others in, name them in the
 `AGENT_SHELL_EXTRA_PACKAGES` build arg (space-separated apt packages):
 

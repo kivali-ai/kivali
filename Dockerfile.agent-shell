@@ -103,14 +103,16 @@ ARG AGENT_SHELL_EXTRA_PACKAGES=""
 
 # Toolkit: bash and coreutils; python3 + pip + venv; the everyday
 # utilities (git, jq, ripgrep, fd-find, curl, wget, tar/zip/unzip,
-# less); pandoc (document conversion) and imagemagick (raster images).
+# less); pandoc (document conversion), poppler-utils (PDF text, page
+# images and metadata: pdftotext, pdftoppm, pdfinfo) and imagemagick
+# (raster images).
 # ca-certificates underpins outbound HTTPS.
 #
 # fd-find ships its binary as `fdfind` on Debian (collision with the
 # `fd` debugger). Symlink to `fd` so agent commands match upstream
 # documentation.
 RUN set -eu; \
-    packages="bash ca-certificates coreutils git python3 python3-pip python3-venv jq ripgrep fd-find curl wget tar zip unzip less pandoc imagemagick"; \
+    packages="bash ca-certificates coreutils git python3 python3-pip python3-venv jq ripgrep fd-find curl wget tar zip unzip less pandoc poppler-utils imagemagick"; \
     apt-get update; \
     apt-get install -y --no-install-recommends $packages ${AGENT_SHELL_EXTRA_PACKAGES}; \
     ln -s /usr/bin/fdfind /usr/local/bin/fd; \
