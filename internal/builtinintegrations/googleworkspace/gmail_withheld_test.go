@@ -31,8 +31,9 @@ func (wc withheldCase) message() gmailMessage {
 // come in must be withheld. And withholding hides mail the agent may
 // need, so the emails that read most like them and carry no access (a
 // security alert, a meeting's passcode, a booking's confirmation code,
-// a promotion's code, a footer, a person's own thread about the same
-// words) must be shown.
+// a promotion's code, a card receipt's authorization code, a phone
+// number, a newsletter about magic links, a footer, a person's own
+// thread about the same words) must be shown.
 func TestAccessKind(t *testing.T) {
 	cases := []withheldCase{
 		{name: "verification code", subject: "Your verification code", body: "Your verification code is 482913. It expires in 10 minutes.", want: accessCode},
@@ -54,6 +55,17 @@ func TestAccessKind(t *testing.T) {
 		{name: "email confirmation", subject: "Please confirm your email address", body: "Confirm your address to finish signing up: [link 1]", want: accessConfirm},
 		{name: "account activation", subject: "Activate your account", body: "[link 1]", want: accessConfirm},
 		{name: "email confirmation with a code", subject: "Verify your email", body: "Enter 739104 to verify your email.", want: accessConfirm},
+		{name: "letter confirmation code to sign in", subject: "Acme confirmation code: QJS-PNT", body: "Your confirmation code is below. Enter it in your open browser window and we'll help you get signed in.\n\nQJS-PNT", want: accessCode},
+		{name: "named code not to share", subject: "Your code", body: "Your Acme Account code is: 482913. Don't share it with anyone.", want: accessCode},
+		{name: "hyphenated named code not to share", subject: "Acme", body: "Your Acme code 482-913. Don't share this code with others.", want: accessCode},
+		{name: "code far below a code subject", subject: "Your Acme verification code", body: "Hi Dana, Someone tried to sign in to your Acme account from a new browser in Lisbon, using the address you gave us when you made the account. To finish signing in, enter this code: 482913", want: accessCode},
+		{name: "parenthesised 2FA", subject: "Sign in", body: "Your two-factor authentication (2FA) code is 482913", want: accessCode},
+		{name: "two-word brand reset", subject: "Reset your Acme Cloud account password", body: "[link 1]", want: accessReset},
+		{name: "two-word brand activation", subject: "Activate your Acme Cloud account", body: "[link 1]", want: accessConfirm},
+		{name: "reset request received", subject: "Your password reset request has been received", body: "Use this link to choose a new password: [link 1]", want: accessReset},
+		{name: "reset subject with a bar", subject: "Reset your password | Acme", body: "[link 1]", want: accessReset},
+		{name: "email-link sign-in", subject: "Sign in to Acme", body: "Hello, We received a request to sign in to Acme using this email address. If you want to sign in with your dana@example.com account, click this link: [link 1] If you did not request this link, you can safely ignore this email.", want: accessLink},
+		{name: "button-only magic link", subject: "Sign in", body: "Sign in to Acme [link 1] This link expires in 24 hours.", want: accessLink},
 
 		{name: "security alert", subject: "New sign-in to your account", body: "We noticed a new sign-in to your Acme account on a Windows device. If this was you, you don't need to do anything. If not, we'll help you secure your account.\n[link 1] Check activity"},
 		{name: "password changed alert", subject: "Your password was changed", body: "The password for your account was changed. If you didn't change it, reset your password: [link 1]"},
@@ -74,6 +86,17 @@ func TestAccessKind(t *testing.T) {
 		{name: "forward", subject: "Fwd: Reset your password", body: "Can you look at this? [link 1]"},
 		{name: "reply without Re", subject: "Your verification code", body: "Your verification code is 482913.", inReplyTo: "<a@acme.example>"},
 		{name: "sent", subject: "Your verification code", body: "Your verification code is 482913.", labels: []string{"SENT"}},
+		{name: "newsletter on magic links", subject: "Product update", body: "Why magic links are replacing passwords: read our new post. [link 1]"},
+		{name: "a person's login link", subject: "Staging access", body: "Here's the login link for the staging server: [link 1]"},
+		{name: "card receipt", subject: "Your receipt", body: "Visa 4242\nAuth code: 012345\nTotal $4.50 [link 1]"},
+		{name: "event registration code", subject: "See you Thursday", body: "Your registration code: 7F3K9Q. Show it at the door."},
+		{name: "hash name", subject: "Changelog", body: "The verification code path now uses sha256 for hashing."},
+		{name: "time", subject: "About your sign-in", body: "Your verification code arrives by 10am tomorrow."},
+		{name: "decade", subject: "Blog", body: "Verification codes sent by SMS were introduced in the 1990s and remain weak."},
+		{name: "phone number", subject: "Changes to sign-in", body: "Starting March 2026, verification codes will be sent by text message to (415) 555-0100."},
+		{name: "phone ending", subject: "Security alert", body: "A one-time passcode was sent to the phone number ending in 1234."},
+		{name: "card ending", subject: "Update your card", body: "Please update the security code (CVV) for your Visa ending in 4242. [link 1]"},
+		{name: "bank account verification", subject: "Verify your bank account", body: "We sent two small deposits. [link 1]"},
 	}
 	for _, wc := range cases {
 		if got := accessKind(wc.message(), wc.body); got != wc.want {
@@ -127,6 +150,14 @@ func TestRedactSecrets(t *testing.T) {
 		"ghp_short",
 		"Rotate the AKIA keys before Friday.",
 		"Our sk-ant- prefix docs.",
+	}
+	// A token cut short where the text was clipped ("..." after it, or
+	// the text's end) is removed too: its first part may be all that is
+	// needed, and the rest of a header was cut away.
+	for _, s := range []string{"ghp_a1B2a1B2a1B2a1B2...", "token ghp_a1B2a1B2a1B2"} {
+		if got, n := redactSecrets(s); strings.Contains(got, "ghp_") || n != 1 {
+			t.Errorf("redactSecrets(%q) = %q, %d", s, got, n)
+		}
 	}
 	for _, s := range kept {
 		if got, n := redactSecrets(s); got != s || n != 0 {
@@ -186,6 +217,28 @@ func TestWithheldMessageReads(t *testing.T) {
 	}
 	if !strings.HasSuffix(res.Audit, ", withholding 1: w1") {
 		t.Errorf("get_thread audit %q", res.Audit)
+	}
+}
+
+// Why this test exists: a search shows only a message's subject and
+// snippet, but must judge it by its body, or a code below an innocent
+// subject and opening would be withheld by get_message yet show in the
+// snippet of a later search page. And since a search now reads bodies,
+// a message whose body does not decode must not fail the whole page: it
+// is judged by its snippet and listed as before.
+func TestSearchJudgesTheBody(t *testing.T) {
+	f, g := newFakeGoogle(t)
+	withMail(f, mailMsg{id: "b1", thread: "b1", labels: []string{"INBOX"}, at: monday, from: "Acme <no-reply@acme.example>", to: "dana@example.com",
+		subject: "Account update", snippet: "Hi Dana, here is the update you asked for.",
+		plain: "Hi Dana, here is the update you asked for.\n\nYour verification code is 482913."})
+	broken := mailMsg{id: "b2", thread: "b2", labels: []string{"INBOX"}, at: monday.Add(-time.Hour), from: "Alice <alice@example.org>", to: "dana@example.com",
+		subject: "Lunch", snippet: "Tuesday?", plain: "Tuesday?"}.full(f)
+	broken.Payload.Body.Data = "%%% not base64 %%%"
+	f.mail = append(f.mail, broken)
+
+	res := gmailAnswer(t, g, agent(map[string]any{}), "search_messages", `{"query":""}`)
+	if got := res.Content[0]; !strings.Contains(got, withheldLine("b1", accessCode)) || strings.Contains(got, "update you asked") || !strings.Contains(got, "Snippet: Tuesday?") {
+		t.Errorf("search:\n%s", got)
 	}
 }
 
