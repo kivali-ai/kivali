@@ -94,12 +94,6 @@ func attachmentPath(messageID, attachmentID string) string {
 	return messagePath(messageID) + "/attachments/" + url.PathEscape(attachmentID)
 }
 
-// metadataQuery asks for the headers a search lists.
-var metadataQuery = url.Values{
-	"format":          {"metadata"},
-	"metadataHeaders": {"From", "Reply-To", "To", "Subject", "Authentication-Results"},
-}.Encode()
-
 // threadQuery asks for a thread's messages without their bodies: their
 // ids, labels and when Gmail received them, and one header.
 var threadQuery = url.Values{
@@ -298,29 +292,34 @@ func (c *call) addOutside(who string) {
 var headerLines = []string{"From", "Reply-To", "To", "Cc", "Date", "Subject", "Message-ID"}
 
 // renderMessage is one message as get_message and get_thread answer it,
-// in at most room characters: Kivali's heading and provenance lines;
-// between the framing lines its headers, its body as text, its links and
-// its attachments; then Kivali's notes. The body is cut at bodyClip
+// in at most room characters, and the rendering it was made from:
+// Kivali's heading and provenance lines; between the framing lines its
+// headers, its body as text, its links and its attachments; then
+// Kivali's notes. A withheld message (r.withheld) is its heading and
+// provenance lines and withheldLine alone. The body is cut at bodyClip
 // characters, and shorter where the whole would not fit in room, saying
 // so, so that the framing always closes within the answer; ok is false
 // when even a body cut to minBody characters does not fit.
-func (c *call) renderMessage(ctx context.Context, m gmailMessage, room int) (text string, who sent, ok bool, err error) {
-	r, err := c.prepare(ctx, m)
+func (c *call) renderMessage(ctx context.Context, m gmailMessage, room int) (text string, r *rendering, ok bool, err error) {
+	r, err = c.prepare(ctx, m)
 	if err != nil {
-		return "", sent{}, false, err
+		return "", nil, false, err
+	}
+	if r.withheld != "" {
+		return r.head + "\n" + r.provenance + "\n" + withheldLine(m.ID, r.withheld), r, true, nil
 	}
 	most := min(bodyClip, room)
 	for range renderTries {
 		text := r.text(most)
 		over := utf8.RuneCountInString(text) - room
 		if over <= 0 {
-			return text, r.who, true, nil
+			return text, r, true, nil
 		}
 		if most -= over + 100; most < minBody {
 			break
 		}
 	}
-	return "", r.who, false, nil
+	return "", r, false, nil
 }
 
 // renderTries bounds the cuts renderMessage tries, and minBody is the
@@ -331,7 +330,8 @@ const (
 )
 
 // rendering is a message read for renderMessage: everything but the
-// body's cut, which text makes.
+// body's cut, which text makes; the kind of access it carries when
+// Kivali withholds it (accessKind), and how many secrets it removed.
 type rendering struct {
 	head, provenance string
 	headers          []string
@@ -339,11 +339,14 @@ type rendering struct {
 	links            *linkList
 	attachments      string
 	who              sent
+	withheld         string
+	secrets          int
 }
 
 // prepare reads what renderMessage writes of m: the heading, the
 // sender, the headers and the body, their URLs replaced by markers in
-// that order, and the attachments.
+// that order, then the secrets of those and of the links removed; the
+// attachments; and whether Kivali withholds it.
 func (c *call) prepare(ctx context.Context, m gmailMessage) (*rendering, error) {
 	head, err := c.heading(ctx, m)
 	if err != nil {
@@ -357,12 +360,18 @@ func (c *call) prepare(ctx context.Context, m gmailMessage) (*rendering, error) 
 		attachments: attachmentLines(&m.Payload)}
 	for _, name := range headerLines {
 		if v := headerAll(m.Payload.Headers, name); v != "" {
-			r.headers = append(r.headers, name+": "+r.links.replace(oneLine(decodeHeader(v), headerClip)))
+			line, n := redactSecrets(r.links.replace(oneLine(decodeHeader(v), headerClip)))
+			r.headers = append(r.headers, name+": "+line)
+			r.secrets += n
 		}
 	}
 	if r.body, err = c.body(ctx, m, r.links); err != nil {
 		return nil, err
 	}
+	r.withheld = accessKind(m, r.body.text)
+	var n int
+	r.body.text, n = redactSecrets(r.body.text)
+	r.secrets += n + r.links.redactSecrets()
 	return r, nil
 }
 
@@ -394,6 +403,9 @@ func (r *rendering) text(most int) string {
 	}
 	if r.body.hidden > 0 {
 		notes = append(notes, fmt.Sprintf("Kivali left out %d characters of hidden text.", r.body.hidden))
+	}
+	if r.secrets > 0 {
+		notes = append(notes, secretsNote(r.secrets))
 	}
 	if cut {
 		notes = append(notes, fmt.Sprintf("The body is cut to its first %d characters.", most))
@@ -628,7 +640,7 @@ func searchMessages(ctx context.Context, c *call) (any, error) {
 			ids = append(ids, m.ID)
 		}
 	}
-	found, err := c.metadata(ctx, ids)
+	found, err := c.fullMessages(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -657,9 +669,9 @@ func searchMessages(ctx context.Context, c *call) (any, error) {
 	// The page stays within answerClip, every framing closed: a message
 	// there is no room for is named instead, for get_message.
 	used := utf8.RuneCountInString(strings.Join(out, "\n"))
-	var listed, unlisted []string
+	var listed, unlisted, withheld []string
 	for i, m := range shown {
-		text, who, err := c.renderListed(ctx, i+1, m)
+		text, who, kind, err := c.renderListed(ctx, i+1, m)
 		if err != nil {
 			return nil, err
 		}
@@ -671,7 +683,11 @@ func searchMessages(ctx context.Context, c *call) (any, error) {
 		used += n
 		out = append(out, "", text)
 		listed = append(listed, m.ID)
-		c.addOutside(who.who)
+		if kind != "" {
+			withheld = append(withheld, m.ID)
+		} else {
+			c.addOutside(who.who)
+		}
 	}
 	if len(unlisted) > 0 {
 		out = append(out, "", fmt.Sprintf("Kivali left out the page's last %d messages, as the answer is full; read each with get_message: %s.", len(unlisted), strings.Join(unlisted, ", ")))
@@ -680,13 +696,14 @@ func searchMessages(ctx context.Context, c *call) (any, error) {
 	if len(listed) > 0 {
 		c.audit += ": " + idList(listed)
 	}
+	c.audit += withheldAudit(withheld)
 	return strings.Join(out, "\n"), nil
 }
 
-// metadata reads each message of ids with the headers a search lists,
-// a few at a time, in ids' order. A message gone since the search
-// (Gmail answers 404) is left out.
-func (c *call) metadata(ctx context.Context, ids []string) ([]gmailMessage, error) {
+// fullMessages reads each message of ids in full, as a search must to
+// know whether Kivali withholds it, a few at a time, in ids' order. A
+// message gone since the search (Gmail answers 404) is left out.
+func (c *call) fullMessages(ctx context.Context, ids []string) ([]gmailMessage, error) {
 	got := make([]gmailMessage, len(ids))
 	errs := make([]error, len(ids))
 	sem := make(chan struct{}, searchWorkers)
@@ -697,7 +714,7 @@ func (c *call) metadata(ctx context.Context, ids []string) ([]gmailMessage, erro
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			errs[i] = c.g.get(ctx, c.token, gmailAPI, messagePath(id)+"?"+metadataQuery, &got[i])
+			errs[i] = c.g.get(ctx, c.token, gmailAPI, messagePath(id)+"?format=full", &got[i])
 		}()
 	}
 	wg.Wait()
@@ -715,35 +732,70 @@ func (c *call) metadata(ctx context.Context, ids []string) ([]gmailMessage, erro
 	return out, nil
 }
 
-// renderListed is one message of a search page, and who sent it:
-// Kivali's heading and provenance lines, then between the framing
-// lines its sender, recipients, subject and Gmail's snippet, each cut
-// at listedClip characters, and the links they name.
-func (c *call) renderListed(ctx context.Context, n int, m gmailMessage) (string, sent, error) {
+// renderListed is one message of a search page, who sent it, and the
+// kind of access it carries when Kivali withholds it: Kivali's heading
+// and provenance lines, then between the framing lines its sender,
+// recipients, subject and Gmail's snippet, each cut at listedClip
+// characters, and the links they name, their secrets removed; or for a
+// withheld message, withheldLine in their place.
+func (c *call) renderListed(ctx context.Context, n int, m gmailMessage) (string, sent, string, error) {
 	head, err := c.heading(ctx, m)
 	if err != nil {
-		return "", sent{}, err
+		return "", sent{}, "", err
 	}
 	who, err := c.sender(ctx, m)
 	if err != nil {
-		return "", sent{}, err
+		return "", sent{}, "", err
+	}
+	kind, err := c.withholding(ctx, m)
+	if err != nil {
+		return "", sent{}, "", err
+	}
+	if kind != "" {
+		return fmt.Sprintf("%d. %s\n%s\n%s", n, head, who.provenance(), withheldLine(m.ID, kind)), who, kind, nil
 	}
 	links := newLinkList()
 	var inner []string
+	secrets := 0
+	add := func(name, v string) {
+		v, k := redactSecrets(links.replace(v))
+		inner = append(inner, name+": "+v)
+		secrets += k
+	}
 	for _, name := range []string{"From", "Reply-To", "To", "Subject"} {
 		if v := headerAll(m.Payload.Headers, name); v != "" {
-			inner = append(inner, name+": "+links.replace(oneLine(decodeHeader(v), listedClip)))
+			add(name, oneLine(decodeHeader(v), listedClip))
 		}
 	}
 	// Gmail's snippet is the body's start with HTML's characters
 	// escaped.
 	if s := oneLine(stdhtml.UnescapeString(m.Snippet), snippetClip); s != "" {
-		inner = append(inner, "Snippet: "+links.replace(s))
+		add("Snippet", s)
 	}
+	secrets += links.redactSecrets()
 	if l := links.listing(maxLinks); l != "" {
 		inner = append(inner, l)
 	}
-	return fmt.Sprintf("%d. %s\n%s\n%s", n, head, who.provenance(), delimitEmail(strings.Join(inner, "\n"))), who, nil
+	text := fmt.Sprintf("%d. %s\n%s\n%s", n, head, who.provenance(), delimitEmail(strings.Join(inner, "\n")))
+	if secrets > 0 {
+		text += "\n" + secretsNote(secrets)
+	}
+	return text, who, "", nil
+}
+
+// secretsNote is Kivali's note of the n secrets it removed from an
+// email.
+func secretsNote(n int) string {
+	return fmt.Sprintf("Kivali removed %d secrets, such as keys and tokens, from the email, each shown as %s.", n, secretRemoved)
+}
+
+// withheldAudit is the audit's words for the messages of ids Kivali
+// withheld; "" for none.
+func withheldAudit(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", withholding %d: %s", len(ids), idList(ids))
 }
 
 // getMessage reads one message the access includes.
@@ -759,14 +811,18 @@ func getMessage(ctx context.Context, c *call) (any, error) {
 	if !c.readable(m) {
 		return nil, notIncluded("Message", id)
 	}
-	text, who, ok, err := c.renderMessage(ctx, m, answerClip)
+	text, r, ok, err := c.renderMessage(ctx, m, answerClip)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
 		return nil, failure("Message " + id + " is too large to read in one answer.")
 	}
-	c.addOutside(who.who)
+	if r.withheld != "" {
+		c.audit = "withheld message " + id + ": it carries " + r.withheld
+		return text, nil
+	}
+	c.addOutside(r.who.who)
 	c.audit = "read message " + id
 	return text, nil
 }
@@ -819,7 +875,7 @@ func getThread(ctx context.Context, c *call) (any, error) {
 		out[0] += fmt.Sprintf(" Kivali left out %d messages of the thread outside the labels your access includes.", left)
 	}
 	used := utf8.RuneCountInString(out[0])
-	var read, unread []string
+	var read, unread, withheld []string
 	for _, listed := range shown {
 		room := answerClip - answerRoom - used
 		if room < threadLeast || len(unread) > 0 {
@@ -839,7 +895,7 @@ func getThread(ctx context.Context, c *call) (any, error) {
 		case !c.readable(m):
 			continue
 		}
-		text, who, ok, err := c.renderMessage(ctx, m, room)
+		text, r, ok, err := c.renderMessage(ctx, m, room)
 		if err != nil {
 			return nil, err
 		}
@@ -850,7 +906,11 @@ func getThread(ctx context.Context, c *call) (any, error) {
 		out = append(out, "", text)
 		used += utf8.RuneCountInString(text) + 2
 		read = append(read, m.ID)
-		c.addOutside(who.who)
+		if r.withheld != "" {
+			withheld = append(withheld, m.ID)
+		} else {
+			c.addOutside(r.who.who)
+		}
 	}
 	if len(unread) > 0 {
 		out = append(out, "", fmt.Sprintf("Kivali left out the last %d messages, as the answer is full; read each with get_message: %s.", len(unread), idList(unread)))
@@ -859,5 +919,6 @@ func getThread(ctx context.Context, c *call) (any, error) {
 	if left > 0 {
 		c.audit += fmt.Sprintf(", %d outside the access's labels left out", left)
 	}
+	c.audit += withheldAudit(withheld)
 	return strings.Join(out, "\n"), nil
 }

@@ -4347,8 +4347,8 @@ message's or thread's letters and digits, a label's letters, digits,
 
 - `search_messages(query, label?, page_token?)` is `GET
   /gmail/v1/users/me/messages` with `q`, `maxResults=25` and
-  `pageToken`, then each message's metadata (`format=metadata`, the
-  headers From, Reply-To, To, Subject and Authentication-Results), five requests
+  `pageToken`, then each message in full (`format=full`, so that
+  [withholding](#mail-agents-never-see) judges its body), five requests
   at a time; one gone since (404) is left out. `label` (an id, or an
   option as stored) must be in the access's list, or the call is
   refused naming it before anything reaches Google; it holds the search
@@ -4366,7 +4366,8 @@ message's or thread's letters and digits, a label's letters, digits,
   Each message is a numbered heading, a provenance line and, framed,
   From, Reply-To, To, Subject and Gmail's snippet (HTML characters unescaped,
   cut at 500), with its own links. Audit: "searched mail, listing N
-  messages: <the first ten ids> and M more".
+  messages: <the first ten ids> and M more", then ", withholding N:
+  <ids>" when it withheld any.
 - `get_message(id)` is `GET /gmail/v1/users/me/messages/{id}?format=full`
   rendered (`renderMessage`): a heading (the message's and thread's
   ids, when Gmail received it from `internalDate`, the labels it
@@ -4375,7 +4376,9 @@ message's or thread's letters and digits, a label's letters, digits,
   and Message-ID, each decoded (RFC 2047), one line and cut at 1000
   characters; the body; its links; its attachments; and after the
   framing Kivali's notes (hidden text, a cut, links past 50, no text
-  body, a body over 8 MB). Audit: "read message <id>".
+  body, a body over 8 MB, secrets removed). Audit: "read message
+  <id>", or for a withheld message "withheld message <id>: it carries
+  <kind>".
 - `get_thread(id)` is `GET /gmail/v1/users/me/threads/{id}` with
   `format=metadata` (labels, `internalDate` and the Date header, no
   bodies), its messages sorted by `internalDate`, each the access
@@ -4384,7 +4387,7 @@ message's or thread's letters and digits, a label's letters, digits,
   after a line saying how many it left out; one gone since (404), or
   no longer the access's, is left out. A thread with none is refused as
   a message is. Audit: "read thread <id>: N messages (<ids>), M outside
-  the access's labels left out".
+  the access's labels left out", then ", withholding N: <ids>".
 - `get_attachment(message_id, attachment_id)` is in [Attachments](#attachments).
 
 The body is the first `text/plain` part that is not an attachment
@@ -4512,11 +4515,82 @@ an email says to the agent.
   end, so every line the agent sees is one `delimitEmail` checks;
   headers are one line.
 
+#### Mail agents never see
+
+`gmail_withheld.go` withholds every message that hands over access to
+an account, and removes secrets from the rest. Neither has a switch.
+
+**Withholding.** `accessKind(m, body)` judges a message from its
+subject and its body as rendered (each link a `[link` marker; Gmail's
+snippet, HTML characters unescaped, when there is no text part), both
+NFKC-folded, lower-cased, every dash a hyphen and white space single.
+It answers one of four kinds, or none:
+
+- **a sign-in or verification code**: a phrase naming such a code
+  (`codePhrase`: verification, security, sign-in, login, one-time,
+  authentication, 2FA, two-factor, 2-step, MFA, recovery, backup,
+  reset, device, registration or identity, then code, passcode or PIN;
+  one-time password; OTP; "enter this code to sign in" and the like)
+  with a code within 100 characters after it or 40 before it; or
+  "confirmation code" with a code of digits alone; or "<digits> is your
+  ... code". A code is 4 to 10 digits that are not a year from 1900 to
+  2099, two groups of digits ("482 913"), or 4 to 16 letters and
+  digits holding at least two digits, hyphens ignored ("BDWP-HQ84").
+  A bare "passcode" (a meeting's), a booking's confirmation code of
+  letters and digits, and a discount code are not.
+- **a sign-in link**: the body has a link, and names a magic, sign-in
+  or login link, or asks to approve or confirm a sign-in; or asks the
+  reader to sign in by the link or button and says the link expires,
+  is valid for a while or works once (`singleUse`), which a link to a
+  sign-in page in a notification does not.
+- **a password reset**: a temporary or one-time password given in the
+  text; or a subject naming a reset, a forgotten password, account
+  recovery or setting a first password, with a link or a code.
+- **an email address confirmation**: a subject asking to confirm,
+  verify, validate or activate an email address or an account, or to
+  confirm a sign-up, with a link or a code.
+
+A reset's or a confirmation's subject phrase counts only at the
+subject's end, before punctuation, or before a word of the email's
+purpose (`subjectEnd`: for, now, to, request, link, code and the
+like), so a person's "password reset flow redesign" is not one; and
+not when the subject says the change was made (`alreadyDone`: was,
+has been, successful, changed, verified and the like). Nothing a
+person writes in a conversation is withheld: a message in Sent or
+Drafts, one with an `In-Reply-To` header, or one whose subject starts
+as a reply or a forward does ("Re:", "Fwd:", "AW:" and others).
+
+A withheld message reads, in `search_messages`, `get_message` and
+`get_thread`, as its heading and provenance lines and `withheldLine`:
+"Kivali withheld message <id>: it carries <kind>. Agents never see
+sign-in or verification codes, sign-in links, password resets or email
+address confirmations. If your work needs it, ask the owner." Its
+headers, snippet and body are never shown, and its sender is not added
+to `Result.Outside`. `get_attachment`, `modify_labels` and a reply by
+`create_draft` (the message replied to, by id or as a thread's latest)
+read the message in full and refuse a withheld one, "Kivali withheld
+message <id>: it carries <kind>, so you may not <save its attachments,
+change its labels, reply to it>. ...", audited as `message <id>
+carries <kind>`. `emailWithheld` in the read actions' descriptions
+says so.
+
+**Secrets.** `redactSecrets` replaces each secret in a format nothing
+else takes with "[secret removed by Kivali]": a private key block (to
+its END line, or to the text's end when cut off), AWS access key ids
+(`AKIA`, `ASIA`), GitHub tokens (`ghp_` and the others, `github_pat_`),
+Stripe live secret and restricted keys, Slack tokens (`xox?-`),
+Anthropic and OpenAI project keys (`sk-ant-`, `sk-proj-`) and Google
+API keys (`AIza`). It runs on every header line, the snippet and the
+body after their URLs became markers, then on each listed URL
+(`linkList.redactSecrets`). A message that had any ends with "Kivali
+removed N secrets, such as keys and tokens, from the email, each shown
+as [secret removed by Kivali].".
+
 #### Attachments
 
 `get_attachment(message_id, attachment_id)` reads the message
 (`format=full`), refuses it as above when the access does not include
-it, and finds, among the parts `attachments` lists (never the text of
+it or Kivali withholds it, and finds, among the parts `attachments` lists (never the text of
 the body, nor a part holding others), the one whose `partId` is
 `attachment_id`. Kivali lists
 attachments by part id because Gmail's own `attachmentId` changes from
@@ -4584,8 +4658,9 @@ returns text a sender wrote.
   one both added and removed. When `gmail_labels` names labels, each
   label added or removed must be one of them or INBOX, UNREAD or
   STARRED (`alwaysChangeable`: archive, read and unread, star), else
-  the call is refused naming it, and the message, read in format
-  `minimal`, must carry one of them, as `get_message` decides. The
+  the call is refused naming it, and the message, read in full,
+  must carry one of them, as `get_message` decides, and not be one
+  Kivali withholds. The
   answer names what changed and the labels the message carries after,
   by option (`labelName`: Gmail's own by `list_labels`' names, UNREAD
   as Unread), and when the access names labels, only those it may
@@ -4603,12 +4678,14 @@ the header reaches a recipient is unverified too, and `send_draft`
 takes the mark out of what it sends ([Sending mail](#sending-mail)).
 
 **Replies.** A reply (`in_reply_to_message_id`, or `thread_id` alone)
-reads the replied message's headers (`messages/{id}?format=metadata`
-with From, Reply-To, To, Cc, Subject, Message-ID, References and
-In-Reply-To); for `thread_id` alone, the thread's (`threads/{id}` in
-the same format), taking its latest message by `internalDate` that
-the access includes and is not a draft, in Spam or in Trash. The message must be one the
-access includes (`call.readable`), refused as reading refuses one, and
+reads the replied message in full (`messages/{id}?format=full`); for
+`thread_id` alone, the thread's headers first (`threads/{id}` in format
+metadata, with From, Reply-To, To, Cc, Subject, Message-ID, References
+and In-Reply-To), taking its latest message by `internalDate` that the
+access includes and is not a draft, in Spam or in Trash, then that
+message in full. The message must be one the
+access includes (`call.readable`), refused as reading refuses one, not
+one Kivali withholds ([Mail agents never see](#mail-agents-never-see)), and
 in `thread_id` when both are given. A reply by `in_reply_to_message_id`
 refuses a draft too, and Spam or Trash unless the access names them (as
 `call.readable` decides). `In-Reply-To` is its Message-ID,

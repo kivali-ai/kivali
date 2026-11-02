@@ -37,7 +37,7 @@ var gmailActions = []action{
 	},
 	{
 		name:             actionSearchMessages,
-		description:      "Search the owner's Gmail with Gmail's search words (from:, to:, subject:, after:2026/10/01, has:attachment and the rest; empty for every message), within the labels your access includes, newest first, 25 messages a page. label holds the search to one of those labels, by its id as list_labels gives it. Each message is listed with its id, its thread's id, when Gmail received it, its labels, and its sender, recipients, subject and Gmail's snippet of it. A page lists only messages in your labels, so it may list fewer than 25, or none, with more to come: pass next_page_token as page_token for the next page." + emailUntrusted,
+		description:      "Search the owner's Gmail with Gmail's search words (from:, to:, subject:, after:2026/10/01, has:attachment and the rest; empty for every message), within the labels your access includes, newest first, 25 messages a page. label holds the search to one of those labels, by its id as list_labels gives it. Each message is listed with its id, its thread's id, when Gmail received it, its labels, and its sender, recipients, subject and Gmail's snippet of it. A page lists only messages in your labels, so it may list fewer than 25, or none, with more to come: pass next_page_token as page_token for the next page." + emailWithheld + emailUntrusted,
 		ownerDescription: "Search mail with Gmail's search words, within the labels the access names, 25 at a time. Reads only.",
 		schema: schema(map[string]any{
 			"query":      map[string]string{"type": "string", "description": "Gmail's search words, as in Gmail's search box; empty for every message"},
@@ -49,7 +49,7 @@ var gmailActions = []action{
 	},
 	{
 		name:             actionGetMessage,
-		description:      "Read one message by its id: its headers, its body as text, and its attachments, each with its name, type, size and attachment id, which get_attachment saves. Each link in the text is replaced by a marker such as [link 1] and listed after the body, its host first. Text the email hides from a reader is left out, and Kivali says how much; a body over 60000 characters is cut." + emailUntrusted,
+		description:      "Read one message by its id: its headers, its body as text, and its attachments, each with its name, type, size and attachment id, which get_attachment saves. Each link in the text is replaced by a marker such as [link 1] and listed after the body, its host first. Text the email hides from a reader is left out, and Kivali says how much; a body over 60000 characters is cut." + emailWithheld + emailUntrusted,
 		ownerDescription: "Read one message as text, with its attachments listed by name and size. Reads only.",
 		schema:           schema(map[string]any{"id": map[string]string{"type": "string", "description": "the message's id, as search_messages or get_thread gives it"}}, "id"),
 		bucket:           keyGmailRead,
@@ -57,7 +57,7 @@ var gmailActions = []action{
 	},
 	{
 		name:             actionGetThread,
-		description:      "Read a conversation by its thread id: its messages in the labels your access includes, oldest first, each as get_message reads one, saying how many it left out. A long conversation is cut to what one answer holds, naming the messages left out, which get_message reads." + emailUntrusted,
+		description:      "Read a conversation by its thread id: its messages in the labels your access includes, oldest first, each as get_message reads one, saying how many it left out. A long conversation is cut to what one answer holds, naming the messages left out, which get_message reads." + emailWithheld + emailUntrusted,
 		ownerDescription: "Read a conversation's messages as text. Reads only.",
 		schema:           schema(map[string]any{"id": map[string]string{"type": "string", "description": "the thread's id, as search_messages or get_message gives it"}}, "id"),
 		bucket:           keyGmailRead,

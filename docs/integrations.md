@@ -402,6 +402,12 @@ An email can be written by anyone, and may carry text meant to steer the agent. 
 
 Text an email hides from the person reading it is left out, and the agent is told how many characters were: text styled not to show (by the email's style rules or its inline styles), moved off the page, clipped away, in a tiny font, in the colour of its background (white text on the white page counts), in comments, and invisible characters such as zero-width spaces. Each link is replaced by a numbered marker such as [link 1] and listed after the body, its host first, so the agent sees where a link goes before following it.
 
+#### Mail agents never see
+
+An email that hands over access to an account is withheld from every agent, whatever its access: one that carries a sign-in or verification code, a sign-in link, a password reset or a temporary password, or a link that confirms an email address or activates an account. Whoever holds one can sign in as you, so an agent misled by another email could otherwise pass it on, or use it in its browser. The agent sees such a message listed by its id, when it arrived and who sent it, never its subject or text, with a line saying why it was withheld and that it can ask you if its work needs it. It cannot save the message's attachments, change its labels (so it cannot archive a password reset or mark it read) or reply to it. **Recent calls** names each message withheld. Kivali judges a message by its subject and text and errs towards showing it: a reply, a forward, mail you sent and your drafts are never withheld, and neither are emails that only mention these things, such as a security alert about a new sign-in, a meeting's passcode or a booking's confirmation code. Open the message in Gmail to read it yourself.
+
+Keys and tokens pasted into an email are removed from what the agent reads, its links included, each shown as "[secret removed by Kivali]" with a note saying how many: private keys, and the keys and tokens of AWS, GitHub, Stripe, Slack, Anthropic, OpenAI and Google.
+
 #### Attachments
 
 An attachment the agent saves lands in its files as it came, under `/files/integrations/google-workspace/untrusted-downloads/`, in a folder of its own for each message: the path tells the agent the file is content from outside, never instructions. Kivali never opens it. Its name is cleaned to a plain file name, and an attachment over 25 MB is refused before any of it is read. An attachment saved again is answered where it already is, and a message's folder holds at most 20 files.
