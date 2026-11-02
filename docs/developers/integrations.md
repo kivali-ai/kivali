@@ -4522,43 +4522,60 @@ an account, and removes secrets from the rest. Neither has a switch.
 
 **Withholding.** `accessKind(m, body)` judges a message from its
 subject and its body as rendered (each link a `[link` marker; Gmail's
-snippet, HTML characters unescaped, when there is no text part), both
-NFKC-folded, lower-cased, every dash a hyphen and white space single.
-It answers one of four kinds, or none:
+snippet, HTML characters unescaped, when there is no text part, and
+when the body does not decode or Gmail does not answer for it, so one
+such message does not fail a search), both NFKC-folded, every dash a
+hyphen and white space single. Case is kept: phrases match whatever
+their case, but a code is told from a word partly by its capitals. It
+answers one of four kinds, or none:
 
 - **a sign-in or verification code**: a phrase naming such a code
   (`codePhrase`: verification, security, sign-in, login, one-time,
   authentication, 2FA, two-factor, 2-step, MFA, recovery, backup,
-  reset, device, registration or identity, then code, passcode or PIN;
-  one-time password; OTP; "enter this code to sign in" and the like)
-  with a code within 100 characters after it or 40 before it; or
-  "confirmation code" with a code of digits alone; or "<digits> is your
-  ... code". A code is 4 to 10 digits that are not a year from 1900 to
-  2099, two groups of digits ("482 913"), or 4 to 16 letters and
-  digits holding at least two digits, hyphens ignored ("BDWP-HQ84").
-  A bare "passcode" (a meeting's), a booking's confirmation code of
-  letters and digits, and a discount code are not.
-- **a sign-in link**: the body has a link, and names a magic, sign-in
-  or login link, or asks to approve or confirm a sign-in; or asks the
-  reader to sign in by the link or button and says the link expires,
-  is valid for a while or works once (`singleUse`), which a link to a
-  sign-in page in a notification does not.
+  reset, device or identity, an abbreviation in brackets allowed, then
+  code, passcode or PIN; one-time password; OTP; "enter this code to
+  sign in" and the like) with a code within 150 bytes after it or 60
+  before it; "confirmation code" with a code of digits alone, or of
+  capitals in two groups ("QJS-PNT") in an email about signing in and
+  not about a booking or an order; "<digits> is your ... code"; when
+  the subject holds such a phrase, a code right after "enter this
+  code", "code is" or "code:" anywhere; or a code right after "your
+  <name> code is" in an email that asks it not be shared. A code is 4
+  to 10 digits that are not a year from 1900 to 2099, two groups of
+  digits ("482 913"), or 4 to 16 letters and digits holding at least
+  two digits, not a number with a unit ("10am", "1990s"), and either
+  with no small letters ("BDWP-HQ84", "G-482913") or in hyphenated
+  groups of 4 to 6 ("a1b2c-3d4e5"). Phone numbers and card or phone
+  endings ("ending in 4242") are never codes (`notCode`). A bare
+  "passcode" (a meeting's), a card's "auth code", an event's
+  registration code, a booking's confirmation code of letters and
+  digits, and a discount code are not.
+- **a sign-in link**: the body has a link, and hands one over ("your
+  magic link", "here's your login link") or asks to approve or confirm
+  a sign-in; or names a sign-in link, or asks the reader to sign in by
+  the link or button, and says the link expires, is valid for a while,
+  works once or was requested (`singleUse`), which a link to a sign-in
+  page in a notification, or a newsletter about magic links, does not.
 - **a password reset**: a temporary or one-time password given in the
   text; or a subject naming a reset, a forgotten password, account
   recovery or setting a first password, with a link or a code.
 - **an email address confirmation**: a subject asking to confirm,
   verify, validate or activate an email address or an account, or to
-  confirm a sign-up, with a link or a code.
+  confirm a sign-up, with a link or a code; an account that is a
+  bank's, a payment's, a billing's, a payout's, a business's or a tax
+  one (`moneyAccount`) is not.
 
-A reset's or a confirmation's subject phrase counts only at the
-subject's end, before punctuation, or before a word of the email's
-purpose (`subjectEnd`: for, now, to, request, link, code and the
-like), so a person's "password reset flow redesign" is not one; and
-not when the subject says the change was made (`alreadyDone`: was,
-has been, successful, changed, verified and the like). Nothing a
-person writes in a conversation is withheld: a message in Sent or
-Drafts, one with an `In-Reply-To` header, or one whose subject starts
-as a reply or a forward does ("Re:", "Fwd:", "AW:" and others).
+A reset's or a confirmation's subject phrase may name up to three
+words ("your Acme Cloud account"), and counts only at the subject's
+end, before punctuation or " |", or before a word of the email's
+purpose (`subjectEnd`: for, now, to, at, with, request, link, code and
+the like), so a person's "password reset flow redesign" is not one;
+and not when the subject says the change was made (`alreadyDone`:
+was, has been, successful, changed, verified and the like) unless it
+names a request. Nothing a person writes in a conversation is
+withheld: a message in Sent or Drafts, one with an `In-Reply-To`
+header, or one whose subject starts as a reply or a forward does
+("Re:", "Fwd:", "AW:" and others). The phrases are English.
 
 A withheld message reads, in `search_messages`, `get_message` and
 `get_thread`, as its heading and provenance lines and `withheldLine`:
@@ -4580,7 +4597,8 @@ its END line, or to the text's end when cut off), AWS access key ids
 (`AKIA`, `ASIA`), GitHub tokens (`ghp_` and the others, `github_pat_`),
 Stripe live secret and restricted keys, Slack tokens (`xox?-`),
 Anthropic and OpenAI project keys (`sk-ant-`, `sk-proj-`) and Google
-API keys (`AIza`). It runs on every header line, the snippet and the
+API keys (`AIza`), each also when cut short by a clip (8 characters
+or more after its prefix, then "..." or the text's end). It runs on every header line, the snippet and the
 body after their URLs became markers, then on each listed URL
 (`linkList.redactSecrets`). A message that had any ends with "Kivali
 removed N secrets, such as keys and tokens, from the email, each shown
