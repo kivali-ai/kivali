@@ -88,10 +88,11 @@ const shellToolkitUnknown = "The shell is bash on Debian. Its package list could
 // shellCommandNames are the well-known packages whose command is not
 // the package name. Only these are annotated; nothing else is guessed.
 var shellCommandNames = map[string]string{
-	"ripgrep":     "rg",
-	"fd-find":     "fd",
-	"imagemagick": "magick, convert",
-	"python3-pip": "pip3",
+	"ripgrep":       "rg",
+	"fd-find":       "fd",
+	"imagemagick":   "magick, convert",
+	"poppler-utils": "pdftotext, pdftoppm, pdfinfo",
+	"python3-pip":   "pip3",
 }
 
 // shellToolkitText is the toolkit paragraph: the packages the shell
