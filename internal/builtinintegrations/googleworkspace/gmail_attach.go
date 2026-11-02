@@ -46,6 +46,11 @@ func getAttachment(ctx context.Context, c *call) (any, error) {
 	if !c.readable(m) {
 		return nil, notIncluded("Message", mid)
 	}
+	if kind, err := c.withholding(ctx, m); err != nil {
+		return nil, err
+	} else if kind != "" {
+		return nil, refuseWithheld(mid, kind, "save its attachments")
+	}
 	// Only a part attachmentLines would list is an attachment: never
 	// the message's text, or a part holding others.
 	as := attachments(&m.Payload)

@@ -255,9 +255,12 @@ var replyQuery = url.Values{
 // starts so; and, when the agent named no one in to, is addressed as
 // replyRecipients says.
 func (c *call) replyTo(ctx context.Context, m *composition, reply, thread string, all bool, me account) error {
+	// The message replied to is read whole, to know whether Kivali
+	// withholds it: a reply carries its subject, which may hold its code.
 	var r gmailMessage
 	if reply != "" {
-		if err := c.g.get(ctx, c.token, gmailAPI, messagePath(reply)+"?"+replyQuery, &r); err != nil {
+		var err error
+		if r, err = c.message(ctx, reply); err != nil {
 			return err
 		}
 		if !c.readable(r) {
@@ -270,10 +273,18 @@ func (c *call) replyTo(ctx context.Context, m *composition, reply, thread string
 			return badArgument(fmt.Sprintf("Message %s is not in thread %s; give one of them.", reply, thread))
 		}
 	} else {
-		var err error
-		if r, err = c.latestInThread(ctx, thread); err != nil {
+		latest, err := c.latestInThread(ctx, thread)
+		if err != nil {
 			return err
 		}
+		if r, err = c.message(ctx, latest.ID); err != nil {
+			return err
+		}
+	}
+	if kind, err := c.withholding(ctx, r); err != nil {
+		return err
+	} else if kind != "" {
+		return refuseWithheld(r.ID, kind, "reply to it")
 	}
 	hs := r.Payload.Headers
 	m.reply, m.threadID = r.ID, r.ThreadID
@@ -727,8 +738,9 @@ func labelName(id string, table []gmailLabel) string {
 // TRASH or SPAM is refused: Kivali moves no mail there. When the
 // access names labels, every label added or removed must be one of them
 // or alwaysChangeable, and the message must carry one of them (read in
-// format minimal, as get_message decides). The answer names the labels
-// the message carries afterwards, of those the agent may change.
+// full, as get_message decides). A message Kivali withholds is refused.
+// The answer names the labels the message carries afterwards, of those
+// the agent may change.
 func modifyLabels(ctx context.Context, c *call) (any, error) {
 	id, err := c.args.id("message_id", messageIDPattern)
 	if err != nil {
@@ -777,13 +789,20 @@ func modifyLabels(ctx context.Context, c *call) (any, error) {
 	}
 	// The message is read whatever the access names, so that mail in
 	// Spam or Trash, which the access reads only when it names them, is
-	// not changed (an INBOX add would pull it out).
-	var m gmailMessage
-	if err := c.g.get(ctx, c.token, gmailAPI, messagePath(id)+"?format=minimal", &m); err != nil {
+	// not changed (an INBOX add would pull it out); and read whole, so
+	// that a message Kivali withholds is not changed either (archiving
+	// or marking read a password reset would hide it from the owner).
+	m, err := c.message(ctx, id)
+	if err != nil {
 		return nil, err
 	}
 	if !c.readable(m) {
 		return nil, notIncluded("Message", id)
+	}
+	if kind, err := c.withholding(ctx, m); err != nil {
+		return nil, err
+	} else if kind != "" {
+		return nil, refuseWithheld(id, kind, "change its labels")
 	}
 	change := struct {
 		Add    []string `json:"addLabelIds,omitempty"`

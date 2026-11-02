@@ -18,8 +18,8 @@ import (
 
 // fakeGmailWrites is the fake's Gmail changes, in front of its reads:
 // drafts (users/me/drafts), labels on messages (messages/{id}/modify),
-// messages sent (messages/send), and the reads only a change makes (a
-// message in format minimal, a thread in format metadata). Every other
+// messages sent (messages/send), and the read only a change makes (a
+// thread in format metadata). Every other
 // request goes on to the fake's own handler. Its requests are in
 // fakeGoogle.requests, a change's as "gmail <method> <path>?<query>".
 type fakeGmailWrites struct {
@@ -110,8 +110,7 @@ func (w *fakeGmailWrites) handler(reads http.Handler) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		path, q := r.URL.Path, r.URL.Query()
 		mine := r.Method != http.MethodGet || strings.HasPrefix(path, "/gmail/v1/users/me/drafts/") ||
-			(strings.HasPrefix(path, "/gmail/v1/users/me/threads/") && q.Get("format") == "metadata") ||
-			(strings.HasPrefix(path, "/gmail/v1/users/me/messages/") && q.Get("format") == "minimal")
+			(strings.HasPrefix(path, "/gmail/v1/users/me/threads/") && q.Get("format") == "metadata")
 		if !mine {
 			reads.ServeHTTP(rw, r)
 			return
@@ -193,19 +192,6 @@ func (w *fakeGmailWrites) handler(reads http.Handler) http.Handler {
 			w.send(rw, body)
 		case r.Method == http.MethodPost && strings.HasPrefix(path, "/gmail/v1/users/me/messages/") && strings.HasSuffix(path, "/modify"):
 			w.modify(rw, strings.TrimSuffix(strings.TrimPrefix(path, "/gmail/v1/users/me/messages/"), "/modify"), body)
-		case r.Method == http.MethodGet && strings.HasPrefix(path, "/gmail/v1/users/me/messages/"):
-			f.mu.Lock()
-			i := slices.IndexFunc(f.mail, func(m gmailMessage) bool { return m.ID == strings.TrimPrefix(path, "/gmail/v1/users/me/messages/") })
-			var m gmailMessage
-			if i >= 0 {
-				m = f.mail[i]
-			}
-			f.mu.Unlock()
-			if i < 0 {
-				notFound()
-				return
-			}
-			writeJSON(rw, map[string]any{"id": m.ID, "threadId": m.ThreadID, "labelIds": m.LabelIDs})
 		case r.Method == http.MethodGet && strings.HasPrefix(path, "/gmail/v1/users/me/threads/"):
 			id := strings.TrimPrefix(path, "/gmail/v1/users/me/threads/")
 			want := q["metadataHeaders"]

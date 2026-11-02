@@ -244,7 +244,7 @@ func TestCreateDraftReply(t *testing.T) {
 	if d.askedThread != "t1" {
 		t.Errorf("thread asked for: %q", d.askedThread)
 	}
-	if got := requestsFor(f, "gmail /gmail/v1/users/me/messages/m1"); len(got) != 1 || !strings.Contains(got[0], "format=metadata") {
+	if got := requestsFor(f, "gmail /gmail/v1/users/me/messages/m1"); len(got) != 1 || !strings.HasSuffix(got[0], "?format=full") {
 		t.Errorf("the replied message was read as %v", got)
 	}
 
@@ -459,7 +459,7 @@ func TestModifyLabelsRestricted(t *testing.T) {
 	if strings.Contains(res.Content[0], "Label_3") || !strings.HasSuffix(res.Content[0], "it now carries: Clients (old) (Label_12), Unread (UNREAD).") {
 		t.Errorf("a label outside the access is named:\n%s", res.Content[0])
 	}
-	if got := requestsFor(f, "gmail /gmail/v1/users/me/messages/m5"); len(got) != 1 || got[0] != "gmail /gmail/v1/users/me/messages/m5?format=minimal" {
+	if got := requestsFor(f, "gmail /gmail/v1/users/me/messages/m5"); len(got) != 1 || got[0] != "gmail /gmail/v1/users/me/messages/m5?format=full" {
 		t.Errorf("the message was read as %v", got)
 	}
 }
