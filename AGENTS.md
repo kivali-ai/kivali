@@ -72,3 +72,22 @@ when it is not the version CI pins (`GOLANGCI_VERSION` in the Makefile).
 - **Dependency licenses.** A new or updated dependency must pass
   `make licenses`; the allowed licenses and per-package exceptions (each
   with a reason) are in `scripts/license-policy.txt`.
+
+## Commits and pull requests
+
+This repository is public, and commit messages, pull requests, issues
+and review comments stay in it for good. Describe a bug by what Kivali
+does wrong, never by the team it happened on. When a real team helped
+find the cause, leave out:
+
+- the team, its owner, and its agents' names and roles
+- anything from the team's data: chat quotes, project and file names,
+  what its records hold, message counts, dates and times
+- that a team's or production data was read, and how
+- hostnames, addresses, paths and IDs from the machine it ran on
+
+Write "an agent answered the owner's question only inside a record it
+was updating", not "the Researcher on the Acme team put its answer in
+leads.md on 3 March". Show the bug on a demo team (`make run`) or in a
+test, and cite that. Test names, fixtures and code comments follow the
+same rule.
