@@ -848,6 +848,11 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
     let blank = Url::parse("about:blank").expect("a constant URL");
     let web = WebviewBuilder::new(web_label(&id), WebviewUrl::External(start.unwrap_or(blank)))
         .initialization_script(TEAM_WINDOW_SCRIPT)
+        // Files dropped on the page reach it as HTML5 drag and drop (the
+        // chat attaches them). Tauri's own handler would take every drop
+        // on macOS and replace WebView2's on Windows. A drop the page
+        // does not take navigates to a file: URL, which team_nav denies.
+        .disable_drag_drop_handler()
         .on_navigation(move |url| {
             let pinned = pin_nav.lock().unwrap().clone();
             match team_nav(url, pinned.as_ref()) {

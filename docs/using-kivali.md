@@ -56,7 +56,7 @@ The **Auto-release** control sets how long the Queue holds a message before rele
 
 ## Talking to agents
 
-Open any agent from **Team** and type in its **Chat**. It is like walking into a colleague's office: immediate, and part of the agent's context from then on. You can attach files with the paperclip.
+Open any agent from **Team** and type in its **Chat**. It is like walking into a colleague's office: immediate, and part of the agent's context from then on. You can attach files with the paperclip or by dropping them on the chat.
 
 - **While an agent is working**, a message you send waits for a moment to deliver and shows as pending. It reaches the agent at its next step. **Send now** pauses the agent's turn so it reads your message at once; **Delete** takes it back before it is delivered.
 - **Stop** ends the agent's turn and cancels its background tasks. The agent then waits for you: it does not pick its work back up until you tell it to.

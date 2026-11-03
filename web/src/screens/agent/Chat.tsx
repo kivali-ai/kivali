@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
+import type { DragEvent } from 'react';
 import { ApiError, apiDelete, apiGet, apiPost, apiPostForm } from '../../api/client';
 import type { Chat as ChatData, ChatSettings, MessagePostResponse, PendingRestoreResponse, StopResponse } from '../../api/types.gen';
 import { Badge, Banner, Button, Composer, EmptyState, Icon, Select, Skeleton, Toast } from '../../ds';
@@ -39,6 +40,32 @@ function scroller(): HTMLElement {
 
 function fileKey(f: File): string {
   return f.name + '\u0000' + f.size + '\u0000' + f.lastModified;
+}
+
+/** A drag the chat takes: files from the computer, not text or a link dragged across the page. */
+function carriesFiles(e: DragEvent): boolean {
+  return Array.from(e.dataTransfer.types).includes('Files');
+}
+
+/**
+ * The files a drop carries, and how many folders it carried. A folder arrives as a File the browser cannot
+ * upload, which would fail the whole send, so it is left out.
+ */
+function droppedFiles(dt: DataTransfer): { files: File[]; folders: number } {
+  const items = Array.from(dt.items ?? []);
+  if (items.length === 0) return { files: Array.from(dt.files), folders: 0 };
+  const files: File[] = [];
+  let folders = 0;
+  for (const item of items) {
+    if (item.kind !== 'file') continue;
+    if (item.webkitGetAsEntry?.()?.isDirectory) {
+      folders++;
+      continue;
+    }
+    const f = item.getAsFile();
+    if (f) files.push(f);
+  }
+  return { files, folders };
 }
 
 function ChatToast({ entry, onDone, onUndo }: { entry: ToastEntry; onDone(id: number): void; onUndo(entry: ToastEntry): void }) {
@@ -86,6 +113,9 @@ export function Chat() {
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const [draft, setDraft] = useState(() => loadDraft(slug, deps.now()));
   const [files, setFiles] = useState<File[]>([]);
+  const [dropping, setDropping] = useState(false);
+  // dragenter and dragleave fire for every child the pointer crosses; the count says when it left the chat.
+  const dragDepth = useRef(0);
   const [posting, setPosting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [toasts, setToasts] = useState<ToastEntry[]>([]);
@@ -280,8 +310,8 @@ export function Chat() {
     }
   };
 
-  const attach = async () => {
-    const picked = await pickFiles({ multiple: true });
+  // The paperclip and a drop stage files the same way: once each, in the order they came.
+  const stage = (picked: File[]) => {
     if (picked.length === 0) return;
     setFiles((list) => {
       const seen = new Set(list.map(fileKey));
@@ -293,6 +323,37 @@ export function Chat() {
       }
       return next;
     });
+  };
+
+  const attach = async () => stage(await pickFiles({ multiple: true }));
+
+  const dropTarget = {
+    onDragEnter: (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current++;
+      setDropping(true);
+    },
+    onDragOver: (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDropping(false);
+    },
+    onDrop: (e: DragEvent) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDropping(false);
+      const { files: dropped, folders } = droppedFiles(e.dataTransfer);
+      stage(dropped);
+      if (folders === 1) addToast({ tone: 'info', title: 'The folder was not attached', body: 'Drop the files inside it instead.' });
+      if (folders > 1) addToast({ tone: 'info', title: 'The folders were not attached', body: 'Drop the files inside them instead.' });
+    },
   };
 
   const stop = async () => {
@@ -408,7 +469,7 @@ export function Chat() {
   );
 
   return (
-    <div className="app-chat">
+    <div className="app-chat" {...(readOnly ? {} : dropTarget)}>
       {loadError && (
         <Banner tone="danger" title={loadError.message}>
           {loadError.who}
@@ -470,6 +531,12 @@ export function Chat() {
             allowEmpty={files.length > 0}
             footer={footer}
           />
+          {dropping && (
+            <div className="app-chat-drop" aria-hidden="true">
+              <Icon name="upload" size={18} />
+              Drop to attach
+            </div>
+          )}
         </div>
       )}
       {toasts.length > 0 && (

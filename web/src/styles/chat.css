@@ -215,6 +215,21 @@
   padding-bottom: var(--space-4);
   background: var(--paper);
 }
+/* While files are dragged over the chat, the composer shows where they land. */
+.app-chat-drop {
+  position: absolute;
+  inset: 0 0 var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 1px dashed var(--cobalt);
+  border-radius: var(--radius-lg);
+  background: var(--cobalt-soft);
+  color: var(--cobalt);
+  font: var(--text-body);
+  pointer-events: none;
+}
 .app-chat-select {
   width: calc(var(--space-8) * 2.5);
 }
