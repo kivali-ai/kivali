@@ -35,6 +35,9 @@ func uniquePipe(kind string) string {
 	return fmt.Sprintf(`\\.\pipe\kivali-test-%s-%d-%d`, kind, os.Getpid(), pipeSeq.Add(1))
 }
 
+// stopping is the state Hyper-V reports between a VM's end and Off.
+const stopping = "Stopping"
+
 // fakeBroker answers the broker's HTTP interface over a named pipe, so
 // the client's production path (HTTP over a pipe) is exercised for real.
 type fakeBroker struct {
@@ -55,6 +58,12 @@ type fakeBroker struct {
 	gracefulIgnored bool
 	// missing makes GET /v1/vm/{name} answer 404: no VM yet.
 	missing bool
+	// offAfter counts down the state queries of a VM going down: the one
+	// that takes it to zero, and every one after it, reads Off.
+	offAfter int
+	// startStatus, when set, refuses POST /v1/vm/{name}/start and leaves
+	// the VM Stopping, as Hyper-V does with a start it could not finish.
+	startStatus int
 	// optimizes records POST /v1/vhd/optimize requests; optimizeResult
 	// is the answer, or optimizeStatus the refusal when set.
 	optimizes      []broker.DiskRequest
@@ -106,6 +115,12 @@ func (f *fakeBroker) handler() http.Handler {
 	mux.HandleFunc("GET /v1/vm/{name}", func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
 		f.gets++
+		if f.offAfter > 0 {
+			f.offAfter--
+			if f.offAfter == 0 {
+				f.state = broker.StateOff
+			}
+		}
 		st := broker.VMState{ID: f.id, State: f.state}
 		missing := f.missing
 		f.mu.Unlock()
@@ -128,6 +143,13 @@ func (f *fakeBroker) handler() http.Handler {
 	})
 	mux.HandleFunc("POST /v1/vm/{name}/start", func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
+		if f.startStatus != 0 {
+			f.state = stopping
+			status := f.startStatus
+			f.mu.Unlock()
+			http.Error(w, "not enough memory", status)
+			return
+		}
 		f.state = broker.StateRunning
 		st := broker.VMState{ID: f.id, State: f.state}
 		f.mu.Unlock()
@@ -432,18 +454,103 @@ func TestPoweroffVerbWritten(t *testing.T) {
 }
 
 func TestDoneOnPipeClose(t *testing.T) {
-	client := serveBroker(t, &fakeBroker{id: "d1e2f3a4-0000-0000-0000-000000000005", state: broker.StateRunning})
+	fb := &fakeBroker{id: "d1e2f3a4-0000-0000-0000-000000000005", state: broker.StateRunning}
+	client := serveBroker(t, fb)
 	m, _, key := newMachine(t, client, false)
 	g := startGuest(t, broker.ComPipe(key), false, false)
 	if err := m.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	<-g.ready
+	fb.setState(broker.StateOff)
 	g.stop() // the guest writes the clean line and closes the pipe
 	select {
 	case <-m.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("Done did not close when the console pipe ended")
+	}
+}
+
+// Hyper-V reports a VM Stopping for a moment after its console pipe
+// ends, and the broker refuses any data disk change until it is Off. An
+// upgrade trusts Done before it snapshots the disk, so a Done that closed
+// with the pipe failed the upgrade with a 409 whenever Hyper-V was slower
+// than the next disk call.
+func TestDoneWaitsForOffAfterThePipeEnds(t *testing.T) {
+	fb := &fakeBroker{id: "d1e2f3a4-0000-0000-0000-0000000000b1", state: broker.StateRunning}
+	client := serveBroker(t, fb)
+	m, _, key := newMachine(t, client, false)
+	m.offPoll = time.Millisecond
+	g := startGuest(t, broker.ComPipe(key), false, false)
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	<-g.ready
+	fb.mu.Lock()
+	fb.state, fb.offAfter = stopping, 3
+	fb.mu.Unlock()
+	g.stop()
+	select {
+	case <-m.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done did not close once the VM was Off")
+	}
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	if fb.state != broker.StateOff || fb.offAfter != 0 {
+		t.Fatalf("Done closed with the VM %s, %d state queries before Off", fb.state, fb.offAfter)
+	}
+}
+
+// A VM that never reports Off (a broker that stopped answering) must not
+// hold Done, or the stop waiting on it, for ever: it closes after the
+// wait and the log says why. The broker still guards the disk.
+func TestDoneClosesWhenTheVMNeverReportsOff(t *testing.T) {
+	fb := &fakeBroker{id: "d1e2f3a4-0000-0000-0000-0000000000b2", state: broker.StateRunning}
+	client := serveBroker(t, fb)
+	m, log, key := newMachine(t, client, false)
+	m.offPoll, m.offWait = time.Millisecond, 0
+	g := startGuest(t, broker.ComPipe(key), false, false)
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	<-g.ready
+	fb.setState(stopping)
+	g.stop()
+	select {
+	case <-m.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Done did not close after the wait for Off")
+	}
+	if !strings.Contains(log.String(), "did not report the VM Off") {
+		t.Fatalf("console log: %q", log.String())
+	}
+}
+
+// A start Hyper-V refuses (not enough memory) leaves the VM Stopping, and
+// the upgrade that asked rolls back at once with no machine left to stop
+// or wait for. Start itself must hold until the VM is Off, or the rollback
+// is refused with a 409 and the team is left stopped on an open journal.
+func TestFailedStartReturnsOnceTheVMIsOff(t *testing.T) {
+	// settleLeftover's query reads Off, then three read Stopping, Stopping, Off.
+	fb := &fakeBroker{id: "d1e2f3a4-0000-0000-0000-0000000000b3", state: broker.StateOff, startStatus: http.StatusInternalServerError, offAfter: 4}
+	client := serveBroker(t, fb)
+	m, _, _ := newMachine(t, client, false)
+	m.offPoll = time.Millisecond
+	err := m.Start()
+	if err == nil || !strings.Contains(err.Error(), "not enough memory") {
+		t.Fatalf("Start = %v, want the broker's refusal", err)
+	}
+	fb.mu.Lock()
+	state, left := fb.state, fb.offAfter
+	fb.mu.Unlock()
+	if state != broker.StateOff || left != 0 {
+		t.Fatalf("Start returned with the VM %s, %d state queries before Off", state, left)
+	}
+	select {
+	case <-m.Done():
+	default:
+		t.Fatal("Done is open after a failed start")
 	}
 }
 
@@ -471,7 +578,7 @@ func TestDoneOnBrokerReportsOff(t *testing.T) {
 
 // The poll is a backstop, not the signal: a running VM is not queried
 // every couple of seconds (each query is a PowerShell process in the
-// broker), and Done still closes at once when the console pipe ends.
+// broker), and Done closes when the console pipe ends and the VM is Off.
 // Start's own state query (settleLeftover) is not a poll, so the count
 // starts once Start returns.
 func TestStatePollIsABackstop(t *testing.T) {
@@ -493,16 +600,18 @@ func TestStatePollIsABackstop(t *testing.T) {
 	fb.mu.Unlock()
 	<-g.ready
 	time.Sleep(500 * time.Millisecond)
+	fb.mu.Lock()
+	polls := fb.gets - started
+	fb.mu.Unlock()
+	if polls != 0 {
+		t.Fatalf("the broker was polled %d times in half a second", polls)
+	}
+	fb.setState(broker.StateOff)
 	g.stop()
 	select {
 	case <-m.Done():
 	case <-time.After(5 * time.Second):
 		t.Fatal("Done did not close when the console pipe ended")
-	}
-	fb.mu.Lock()
-	defer fb.mu.Unlock()
-	if polls := fb.gets - started; polls != 0 {
-		t.Fatalf("the broker was polled %d times in half a second", polls)
 	}
 }
 
