@@ -386,6 +386,13 @@ func TestAPIFiles(t *testing.T) {
 	if dl.Code != http.StatusOK || dl.Body.String() != "# Notes\nhello\n" || !strings.Contains(dl.Header().Get("content-disposition"), "notes.md") {
 		t.Errorf("download = %d %q %q", dl.Code, dl.Body.String(), dl.Header().Get("content-disposition"))
 	}
+	// Guards against the Files page's download replacing the web app in
+	// Kivali Desktop on macOS: its WKWebView shows a markdown (or text,
+	// PDF) answer in place despite Content-Disposition, and saves only a
+	// type it cannot display.
+	if got := dl.Header().Get("content-type"); got != "application/octet-stream" {
+		t.Errorf("download content-type = %q, want application/octet-stream", got)
+	}
 
 	f = orgOK[apitypes.ProjectFiles](t, orgDo(t, srv, "", http.MethodDelete, "/api/v1/org/files/"+notes.SHA, "", nil))
 	if len(f.Files) != 1 || f.Files[0].Name != "plan.md" {

@@ -539,7 +539,7 @@ way, to the browser through the gate below.
 | the pinned origin, `/auth/login` without `client=desktop` | refused; the desktop sign-in starts its listener and loads it again with `client=desktop`, `return_port` and `return_token` |
 | the pinned origin, `/connect/start?flow=<32 hex digits>` (its path percent-decoded) | refused; for a team here the system browser opens the team's handoff with `next=<flow>`, for a team elsewhere nothing opens ("Signing in to an integration" below) |
 | the pinned origin, any other path (including `/auth/login?…client=desktop`, as is, and `/auth/callback`) | loads |
-| the pinned origin, an answer that is a download (`Content-Disposition: attachment`) | the web view saves nothing; the shell asks where to save and fetches the URL itself ("Downloads" below) |
+| the pinned origin, an answer that is a download (`Content-Disposition: attachment` and a type the web view cannot display, `application/octet-stream`) | the web view saves nothing; the shell asks where to save and fetches the URL itself ("Downloads" below) |
 | `about:blank`, `about:srcdoc`, the pinned origin's `blob:` | loads |
 | any other `http`/`https` page (another team, another port, Google) | refused, opened in the system browser |
 | the app's origin, `file:`, `data:`, `asset:`, foreign `blob:` | refused |
@@ -721,7 +721,13 @@ here is platform-specific: macOS and Windows behave the same.
 A team's web view never saves a file on its own (`downloads.rs`). Its
 `on_download` hook answers every `DownloadEvent::Requested` with
 `false`, so neither WKWebView nor WebView2 writes anything, and the
-shell takes the download over:
+shell takes the download over. The hook only runs for an answer the
+web view treats as a download. WebView2 goes by `Content-Disposition:
+attachment`; WKWebView (through wry) ignores that header and goes by
+type, displaying anything it can (text, markdown, PDF, images) in place
+of the web app. So the server sends every download as
+`application/octet-stream` (`setDownloadType` in
+`internal/web/attachments.go`), which neither displays:
 
 1. **Where.** The system save dialog (the dialog plugin's
    `save_file`, non-blocking, a sheet on the team's window; a download
