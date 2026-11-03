@@ -933,9 +933,8 @@ fn create_team_window(app: &AppHandle, t: &Team, visible: bool) -> Option<Window
             // Closing a window hides it; the team keeps running. Its
             // browser windows close with it.
             api.prevent_close();
-            let _ = w2.hide();
+            hide_window(&w2);
             close_browsers(&app2, &id);
-            sync_dock(&app2, Some(w2.label()));
         }
         tauri::WindowEvent::Focused(f) => {
             gate_focus.lock().unwrap().focus(*f, Instant::now());
@@ -1158,6 +1157,15 @@ pub fn sync_dock(app: &AppHandle, hiding: Option<&str>) {
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (app, hiding);
+}
+
+/// Closes `window` as Kivali closes its windows: hidden, the app staying
+/// in the tray, and out of the Dock once no window shows. A window in
+/// full screen leaves it first (macOS, [`platform::hide_window`]), and
+/// the Dock follows once it is hidden.
+pub fn hide_window(window: &Window) {
+    let (app, label) = (window.app_handle().clone(), window.label().to_string());
+    platform::hide_window(window, Box::new(move || sync_dock(&app, Some(&label))));
 }
 
 /// Before a window shows: back in the Dock.
@@ -1519,10 +1527,10 @@ pub fn show_setup(app: &AppHandle, route: &str) {
 }
 
 pub fn close_setup(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window(SETUP) {
-        let _ = w.hide();
+    match app.get_webview_window(SETUP) {
+        Some(w) => hide_window(&w.as_ref().window()),
+        None => sync_dock(app, Some(SETUP)),
     }
-    sync_dock(app, Some(SETUP));
 }
 
 /// Opens Settings at `route` (`general`, `team/<id>[/<tab>]`, `advanced`).
@@ -1536,8 +1544,7 @@ fn hide_on_close(w: &WebviewWindow) {
     w.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
-            let _ = w2.hide();
-            sync_dock(w2.app_handle(), Some(w2.label()));
+            hide_window(&w2.as_ref().window());
         }
     });
 }

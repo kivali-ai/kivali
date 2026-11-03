@@ -660,6 +660,13 @@ pub fn on_second_launch(dir: &Path, show: Box<dyn Fn() + Send>) {
     });
 }
 
+/// Hides `window`, then runs `hidden`. A full-screen window here is a
+/// window over the monitor, hidden and shown again as any other.
+pub fn hide_window(window: &tauri::Window, hidden: Box<dyn FnOnce() + Send>) {
+    let _ = window.hide();
+    hidden();
+}
+
 pub fn is_reopen(_event: &tauri::RunEvent) -> bool {
     false
 }

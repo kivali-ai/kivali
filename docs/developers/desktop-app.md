@@ -490,7 +490,12 @@ it as `last_open`. **Open Kivali** (the tray, the Dock's reopen, a
 second launch) opens the `last_open` team's window, else the first
 team's, else setup's welcome. Closing any window hides it: the team
 keeps running and Kivali stays in the tray. **Quit** is the app's own
-exit ("Launch and quit").
+exit ("Launch and quit"). On macOS a window in full screen leaves it
+first and is hidden once AppKit has finished leaving
+(`platform::hide_window`, on `NSWindowDidExitFullScreenNotification`):
+a window hidden while in full screen leaves its Space behind, an empty
+black screen named Kivali that only quitting clears. On Windows full
+screen is a window over the monitor, and hides as any other.
 
 **The team web view is pinned to its team's origin** (scheme, host and
 port), its frames included, and only that origin loads (`team_nav`).
