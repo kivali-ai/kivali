@@ -123,7 +123,7 @@ A **skill** is a shared procedure: instructions in a `SKILL.md` file, with optio
 
 Each agent has a private workspace. Writing a file there shows it to nobody. To share a file with the team, the agent **publishes** it, and every agent can read every published file. Published files cannot be changed in place; an agent publishes a new version.
 
-Agents also read the **project files** you upload in **Org**, **Project files**: your plans, specs and documents. An agent can attach files to a message or drop them into its chat for you to download.
+Agents also read the **project files** you upload in **Org**, **Project files**: your plans, specs and documents. An agent can attach files to a message or drop them into its chat for you to download. A markdown file opens formatted, on a page of its own with **Download** and **Back**.
 
 ## The knowledge graph
 

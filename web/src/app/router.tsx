@@ -5,6 +5,7 @@ import type { EventStream } from '../api/sse';
 import { Gallery } from '../screens/gallery/Gallery';
 import { Agent } from '../screens/agent/Agent';
 import { BrowserWindow, BrowserWindowDone } from '../screens/browser/BrowserWindow';
+import { DocumentView } from '../screens/document/DocumentView';
 import { Graph } from '../screens/graph/Graph';
 import { Home } from '../screens/home/Home';
 import { Login } from '../screens/login/Login';
@@ -76,6 +77,7 @@ export function createAppRoutes(deps: RouteDeps = {}): RouteObject[] {
             screen('proposals/*', <Proposal />),
             screen('work', <Work />),
             screen('assignments/:id', <Assignment />),
+            screen('documents/:sha', <DocumentView />),
             screen('graph', <Graph />),
             screen('org', <Org />),
             screen('org/:section', <Org />),

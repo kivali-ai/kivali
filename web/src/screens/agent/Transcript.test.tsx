@@ -1,10 +1,11 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { type ReactNode, useState } from 'react';
-import { createMemoryRouter } from 'react-router';
+import { createMemoryRouter, useLocation } from 'react-router';
 import { RouterProvider } from 'react-router/dom';
 import { describe, expect, it, vi } from 'vitest';
 import type { PastChatDetail, SubagentTranscript, TranscriptRow } from '../../api/types.gen';
+import { documentBack } from '../../app/attachments';
 import { identityColorFor } from '../../lib/agentIdentity';
 import { goChat, goChatMessageTaskResult, goPastChatDetail, goSubagentTranscript, goToolCallDetail } from '../../state/fixtures/transcript';
 import { Transcript, keyRows } from './Transcript';
@@ -232,8 +233,10 @@ describe('a background task’s result', () => {
 });
 
 describe('attachments (chat-attachment-markdown)', () => {
-  it('opens markdown rendered in a new tab and downloads anything else in place', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  // Guards against a markdown attachment leaving the web app: in Kivali Desktop on macOS, opening the file's URL
+  // showed it as raw text over the whole window with no way back. It opens on the app's document page instead, which
+  // remembers where Back goes; anything else is still a download.
+  it('opens markdown on the document page and downloads anything else', async () => {
     const rows = keyRows([
       {
         kind: 'message',
@@ -247,11 +250,22 @@ describe('attachments (chat-attachment-markdown)', () => {
         ],
       },
     ]);
-    renderAt(<Transcript rows={rows} agent={{ slug: 'a', name: 'A' }} now={1} />);
-    await userEvent.click(screen.getByRole('button', { name: 'notes.md · 2 KB' }));
-    expect(open).toHaveBeenCalledWith('/attachments/aa', '_blank', 'noopener');
+    function Opened() {
+      const loc = useLocation();
+      return <p>{loc.pathname + loc.search + ' from ' + documentBack(loc.state)}</p>;
+    }
+    const router = createMemoryRouter(
+      [
+        { path: '/x', element: <Transcript rows={rows} agent={{ slug: 'a', name: 'A' }} now={1} /> },
+        { path: '/documents/:sha', element: <Opened /> },
+      ],
+      { basename: '/', initialEntries: ['/x'] },
+    );
+    render(<RouterProvider router={router} />);
+    expect(screen.getByRole('button', { name: 'notes.md · 2 KB' })).toHaveAttribute('title', 'Open notes.md');
     expect(screen.getByRole('button', { name: 'quote.pdf' })).toHaveAttribute('title', 'Download quote.pdf');
-    open.mockRestore();
+    await userEvent.click(screen.getByRole('button', { name: 'notes.md · 2 KB' }));
+    expect(await screen.findByText('/documents/aa?name=notes.md from /x')).toBeInTheDocument();
   });
 });
 

@@ -1,0 +1,32 @@
+/*
+ * A markdown attachment shown as a document: the reading column (640, set by the frame), the name and a Download
+ * button on one line, then the formatted text. Tokens only; the text is the design system's Prose.
+ */
+
+.app-document {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.app-document-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.app-document-head .app-page-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-document-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.app-document-body {
+  overflow-wrap: anywhere;
+}

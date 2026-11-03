@@ -99,6 +99,12 @@ export function apiGet<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   return request<T>('GET', path, null, {}, opts);
 }
 
+/** A GET whose answer is text, such as a stored file, decoded as UTF-8. */
+export async function apiGetText(path: string, opts: RequestOptions = {}): Promise<string> {
+  const res = await send('GET', path, null, { Accept: '*/*' }, opts);
+  return res.text();
+}
+
 export function apiPost<T>(path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
   if (body === undefined) return request<T>('POST', path, null, {}, opts);
   return request<T>('POST', path, JSON.stringify(body), { 'Content-Type': 'application/json' }, opts);
