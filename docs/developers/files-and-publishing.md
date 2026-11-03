@@ -186,7 +186,7 @@ as root, the daemon:
    name to accept a connection (a try every second for up to two
    minutes: a pod the server recreates at its boot starts before the
    proxy is reachable), runs `apt-get update`, up to four times ten
-   seconds apart while it fetches nothing, for a proxy or package server
+   seconds apart while a fetch fails, for a proxy or package server
    that refuses for a moment (a failed update does not stop the install;
    its reason, after a wait that ran out, is added to each failure),
    then checks each name is exactly a name in the package

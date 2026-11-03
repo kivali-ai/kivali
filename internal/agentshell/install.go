@@ -113,7 +113,7 @@ type Installer struct {
 	// Nil means the system clock.
 	Clock clock.Clock
 	// UpdateAttempts is how many times Install runs apt-get update
-	// while it fetches nothing, updateRetryInterval apart. Zero means
+	// while a fetch fails, updateRetryInterval apart. Zero means
 	// updateAttemptsDefault.
 	UpdateAttempts int
 }
@@ -200,7 +200,7 @@ const updateAttemptsDefault = 4
 // updateRetryInterval is the pause before each further update attempt.
 const updateRetryInterval = 10 * time.Second
 
-// update runs apt-get update until it fetches what it asks for, up to
+// update runs apt-get update until it fetches all it asks for, up to
 // UpdateAttempts times, and returns the last attempt's failure, or ""
 // once one succeeds. A failure is apt-get exiting non-zero or warning
 // that a fetch failed: it exits 0 when a package server refuses it.

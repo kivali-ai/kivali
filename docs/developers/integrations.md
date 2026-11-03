@@ -2034,7 +2034,7 @@ each time its pod starts, before anything of the bundle runs.
      install-software gh jq`, a root child that is the agent shell's
      installer (`agentshell.StartInstallCommand`,
      `RunInstallSubcommand`): `apt-get update` (up to four times, ten
-     seconds apart, while it fetches nothing), a lookup that each name
+     seconds apart, while a fetch fails), a lookup that each name
      is exactly a package's, then `apt-get install -y -q
      --no-install-recommends` with the names as arguments, never
      through a shell; it kills whatever a package's scripts left

@@ -310,8 +310,10 @@ The proxy serves five kinds of request, told apart by
   (Org → Network) into a shared emptyDir; the proxy hot-reloads it.
   The emptyDir is empty when the server's pod starts and the
   `kivali-egress` Service publishes the pod before it is ready, so the
-  proxy listens only once that file exists (`--allowlist-wait`, two
-  minutes, after which it listens with an empty list): listening
+  proxy listens only once that file exists. It listens with an empty
+  list instead once the agents file, which the server writes next even
+  when it could not write the allowlist, is there alone, or after
+  `--allowlist-wait` (two minutes). Listening
   earlier, it would refuse `deb.debian.org` to agent shells installing
   their software at start. A
   pattern covers its name and every subdomain; one with `*` or `[...]`

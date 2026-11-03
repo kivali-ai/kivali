@@ -6,8 +6,8 @@
 // the allowlist (allowlist.go) and the agents file (agents.go), both
 // hot-reloaded. Agent pods set HTTP_PROXY / HTTPS_PROXY to the Service
 // in front of this process. It listens once the server has written the
-// allowlist, or once --allowlist-wait has passed without it
-// (startup.go).
+// allowlist, or without it once the server has written the agents file
+// alone or --allowlist-wait has passed (startup.go).
 //
 // Each request is in one of five modes, decided by its
 // Proxy-Authorization:
@@ -94,8 +94,8 @@ func main() {
 
 	clk := clock.New()
 
-	if !awaitFile(*allowlistPath, *allowlistWait, clk) {
-		log.Printf("no allowlist at %s after %s; listening with none", *allowlistPath, *allowlistWait)
+	if !awaitConfig(*allowlistPath, *agentsPath, *allowlistWait, clk) {
+		log.Printf("no allowlist at %s; listening with none", *allowlistPath)
 	}
 	var allow Allowlist
 	if err := allow.Load(*allowlistPath); err != nil {

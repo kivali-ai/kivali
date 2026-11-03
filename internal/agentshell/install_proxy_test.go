@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -192,6 +193,25 @@ func TestInstallerWaitsForTheProxyBeforeUpdate(t *testing.T) {
 	}
 }
 
+// lockedBuffer is an Installer.Log for tests: apt-get's stdout and
+// stderr are copied to it from two goroutines at once.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // refusedMarker is a file whose presence makes the fake apt-get's
 // update fail as the egress proxy's 403 does
 // ($FAKE_APT_UPDATE_REFUSED_WHILE).
@@ -213,7 +233,7 @@ func TestInstallerRetriesAnUpdateTheProxyRefused(t *testing.T) {
 	apt := newFakeApt(t)
 	refused := refusedMarker(t)
 	clk := clock.NewFake()
-	var log bytes.Buffer
+	var log lockedBuffer
 	in := apt.installer("FAKE_APT_UPDATE_REFUSED_WHILE=" + refused)
 	in.UpdateAttempts = 0 // the default
 	in.Clock = clk
