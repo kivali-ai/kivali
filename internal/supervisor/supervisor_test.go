@@ -587,7 +587,7 @@ func TestUpgradeCommits(t *testing.T) {
 // than the team's, and `upgrade --baked` moves the team to it with
 // nothing downloaded (no downloads directory, no feed), through the
 // same journal, snapshot and waits as a feed upgrade. Guards the
-// first-boot update the desktop runs after it is updated.
+// update the desktop runs when a team starts after it is updated.
 func TestUpgradeFromTheBakedRelease(t *testing.T) {
 	h := newHarness(t)
 	h.mustUp(UpOptions{Install: owner})
