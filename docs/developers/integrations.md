@@ -301,7 +301,7 @@ anything runs, and the page shows it in the Connection block
 "connection": {
   "method": "setup",
   "setup": {
-    "summary": "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues and pull requests, and installs it on the repositories you choose.",
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues, pull requests and workflow files, and read checks and Actions runs, and installs it on the repositories you choose.",
     "hosts": ["github.com"],
     "fields": {
       "account": {"words": "Your personal account, or an organization's name"},
@@ -2784,8 +2784,8 @@ every access row, now naming no connection (or naming a connection set
 aside), as invalid until the owner sets it again.
 
 GitHub 1.0.0 (a bundle an earlier Kivali shipped and ran in a pod) is
-GitHub 2.1.0 here, a built-in of Go code. Boot's
-`InstallBuiltinIntegrations` makes 2.1.0 the version in use and 1.0.0
+GitHub 2.2.0 here, a built-in of Go code. Boot's
+`InstallBuiltinIntegrations` makes 2.2.0 the version in use and 1.0.0
 superseded; the reconcile stops 1.0.0's pod, since it runs no pod for
 a built-in record. 1.0.0's connection, the owner's own GitHub App
 signed in with (its client id in the record; its client secret and
@@ -2817,6 +2817,16 @@ the installation, which an app 2.0.0 made does not have: its
 the owner's Fix gives it on GitHub ([The GitHub
 built-in](#the-github-built-in)).
 Until then GitHub refuses a push's token, and everything else works.
+
+GitHub 2.1.0's connection fits 2.2.0 the same way: 2.2.0 keeps its
+setup, and its access form adds only `workflows`, a switch off when
+absent, so every access row carries over unchanged. 2.2.0 adds the
+[CI](#ci) actions and push's `workflows`, and needs `checks: read`,
+`actions: read` and `workflows: write` of the installation, which an
+app 2.1.0 made does not have: its `permissions` requirement reads
+unmet, naming the three, until the owner's Fix gives them on GitHub.
+Until then GitHub refuses the CI actions' tokens and a push's that
+asks for workflows, and everything else works.
 
 ### Dispatch
 
@@ -3041,11 +3051,11 @@ form:
 
 | `gitops` | Is |
 | --- | --- |
-| `Integration` | how the actions name the built-in: `Name` (its tool prefix: `git_fetch`), `DisplayName` (in every refusal and answer), `HostWords` (the host in the tools' words: Git (Basic)'s "the connection's host"), `NameRepository` (a fetch and a push must name the repository; Git (Basic)'s may reach the working copy's origin) and `ForceSwitch` (the access can allow force; without it a push's schema has no `force`, and `force: true` or a `+` is refused as something the integration does not do) |
-| `Policy` | one call's grant: the `Integration`, the exact host, the repositories it may pull (`Pull`) and push to (`Push`, which it may pull too), the refs a push may write (`Refs`, normalised patterns, or `AnyRef`: any branch or tag), `Force`, and `Refused`, the built-in's own refusal when its connection or the access grants nothing |
-| `Tools(in)` | the three tools, their descriptions and schemas worded for `in` |
+| `Integration` | how the actions name the built-in: `Name` (its tool prefix: `git_fetch`), `DisplayName` (in every refusal and answer), `HostWords` (the host in the tools' words: Git (Basic)'s "the connection's host"), `NameRepository` (a fetch and a push must name the repository; Git (Basic)'s may reach the working copy's origin), `ForceSwitch` (the access can allow force; without it a push's schema has no `force`, and `force: true` or a `+` is refused as something the integration does not do) and `WorkflowsSwitch` (the host refuses a push that changes a workflow file unless its credential may, and the access can allow asking for that: a push takes `workflows`, the agent's word that its commits add, change or delete one; without it a push takes no `workflows`, and giving it, true or false, reads as arguments that do not read) |
+| `Policy` | one call's grant: the `Integration`, the exact host, the repositories it may pull (`Pull`) and push to (`Push`, which it may pull too), the refs a push may write (`Refs`, normalised patterns, or `AnyRef`: any branch or tag), `Force`, `Workflows` (a push may say it changes workflow files; `workflows: true` without it is refused for the access), and `Refused`, the built-in's own refusal when its connection or the access grants nothing |
+| `Tools(in)` | the three tools, their descriptions and schemas worded for `in`; a built-in lists `in` with `WorkflowsSwitch` only to a caller whose access allows it |
 | `Check(name, args, p)` | the first request: a `Refusal`, or a `Call` |
-| `Call.Job(auth, connID)`, `Call.Started()` | the job, with the credential the built-in presents, and the `started: ...` audit reason |
+| `Call.Job(auth, connID)`, `Call.Started()`, `Call.Workflows()` | the job, with the credential the built-in presents; the `started: ...` audit reason, ending ", changing workflow files" for a push that said so; and whether it did, for the built-in to mint a credential that may |
 | `Complete(name, args, p, connID, result)` | the second request: the answer and the audit row, with the two edge cases below |
 
 `Policy.Refused` is how Git (Basic) says its connection has no host or token,
@@ -3525,8 +3535,9 @@ submodules (not cloned), and deleting a remote ref.
 ### The GitHub built-in
 
 `internal/builtinintegrations/githubintegration` (name `github`,
-version 2.1.0, in `builtins.All()`) is GitHub as a built-in of Go
-code: agents read and open issues, comments and pull requests, close
+version 2.2.0, in `builtins.All()`) is GitHub as a built-in of Go
+code: agents read and open issues, comments and pull requests, read
+checks, GitHub Actions runs and job logs (`ci.go`, [CI](#ci)), close
 the ones the app opened and delete their branches through GitHub's
 REST API, and clone, fetch and push through the agent-shell
 daemon, as a private GitHub App its setup makes on the owner's account
@@ -3544,11 +3555,16 @@ or an organization's. The package implements `Integration`,
   `slug`, `installation_id` and `installation_account` (the login of
   the account the app is installed on), declared not secret, and
   `private_key`, secret; no `then`), an empty `user_config`,
-  `kivali.hosts: ["api.github.com", "github.com"]`, `kivali.verify:
+  `kivali.hosts: ["api.github.com", "github.com",
+  "productionresultssa*.blob.core.windows.net",
+  "actions.githubusercontent.com"]` (the last two `logHosts`, where
+  GitHub keeps job logs, [CI](#ci)), `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
   over: `repositories` (required) and `write`, "May create, comment,
-  push and close". Its `tools` are the actions an agent may be given,
-  the REST ones then `clone`, `fetch` and `push`, the seven write ones
+  push and close", then `workflows`, "May change workflows", off when
+  absent ([Clone, fetch and push](#clone-fetch-and-push)).
+  Its `tools` are the actions an agent may be given,
+  the REST ones, the CI ones, then `clone`, `fetch` and `push`, the seven write ones
   (`create_issue`, `comment`, `close_issue`, `create_pull_request`,
   `close_pull_request`, `delete_branch`, `push`) with `"access":
   "write"`, so the page lists them under "May create, comment, push and
@@ -3598,7 +3614,8 @@ GitHub's own pages and nothing copied:
    <the same>, "setup_on_update": true, "public":
    false, "hook_attributes": {"url": "https://example.com/no-webhook",
    "active": false}, "default_permissions": {"metadata": "read",
-   "contents": "write", "issues": "write", "pull_requests": "write"},
+   "contents": "write", "issues": "write", "pull_requests": "write",
+   "workflows": "write", "checks": "read", "actions": "read"},
    "default_events": []}`. GitHub takes no `hook_attributes` without a
    `url`, an inactive webhook's included, and names the lack "url"
    alone; and no `url` whose host is not reachable over the public
@@ -3683,12 +3700,19 @@ page is read and on the hourly refresh, never for the list or Home
 
 Any other failure is an error, which core shows as its one `checks` row.
 This version needs `needed()`: `contents: write` (a push's token
-writes contents), `issues: write`, `pull_requests: write` and
+writes contents), `issues: write`, `pull_requests: write`,
+`workflows: write` (a push that changes a file under
+`.github/workflows` needs it; GitHub offers it at no lower level),
+`checks: read` and `actions: read` (the [CI](#ci) actions) and
 `metadata: read`, which is also what the app is made with. An app 2.0.0
 made has `contents: read`, so its row reads "...lacks permissions this
-version needs: contents: write. Approve them on GitHub.", and the Fix
-sends the owner to the app's own permissions first, since the app does
-not ask for it.
+version needs: actions: read, checks: read, contents: write, workflows:
+write. Approve them on GitHub.", and the Fix sends the owner to the
+app's own permissions first, since the app does not ask for them. An
+app 2.1.0 made reads the same, naming `actions: read`, `checks: read`
+and `workflows: write`. Until the owner gives them, GitHub refuses the
+CI actions' tokens and a push's that asks for workflows (422), and
+everything else works.
 
 #### Uninstall
 
@@ -3784,8 +3808,13 @@ permission, and to ask the owner.
 | `delete_branch` | `GET /repos/{o}/{r}` for its default branch and owner, `GET /repos/{o}/{r}/branches/{branch}`, `GET /repos/{o}/{r}/pulls?head={owner}:{branch}&state=open` and `?base={branch}&state=open`, `GET /repos/{o}/{r}/branches/{default}`, `GET /repos/{o}/{r}/compare/{default's commit}...{branch's commit}`, and when a commit's identity is unresolved `GET /users/{slug}[bot]`, held to [the same app](#the-same-app); the branch read again; then `DELETE /repos/{o}/{r}/git/refs/heads/{branch}` | reads with `contents: read`, `pull_requests: read` (the bot user with none); deletes with `contents: write` |
 | `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
 | `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
+| `list_checks` | with `pull_request`, `GET /repos/{o}/{r}/pulls/{n}` for its head commit; then `GET /repos/{o}/{r}/commits/{ref}/check-runs?filter=latest&per_page=100` | `pull_requests: read` for the head; `checks: read` |
+| `get_check_run` | `GET /repos/{o}/{r}/check-runs/{id}`, and when it has annotations `GET .../check-runs/{id}/annotations?per_page=50` | `checks: read` |
+| `list_workflow_runs` | `GET /repos/{o}/{r}/actions/runs` (`branch`, `head_sha`, `status`, `per_page`) | `actions: read` |
+| `get_workflow_run` | `GET /repos/{o}/{r}/actions/runs/{id}` and `GET .../actions/runs/{id}/jobs?filter=latest&per_page=100` | `actions: read` |
+| `get_job_log` | `GET /repos/{o}/{r}/actions/jobs/{id}/logs`, whose redirect is followed with no credential ([CI](#ci)) | `actions: read` |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
-| `push` | a shell job | `contents: write`, in the job's own token |
+| `push` | a shell job | `contents: write`, and `workflows: write` when the push says it changes workflow files and the access allows it, in the job's own token |
 
 The REST actions' rules are GitHub 1.0.0's:
 
@@ -4008,18 +4037,22 @@ requests as Git (Basic)'s are ([A call, in two
 requests](#a-call-in-two-requests)): the same job, daemon, relay, audit
 rows and words, naming the GitHub integration. Its `gitops.Integration`
 is `Name: "github"`, `DisplayName: "GitHub"`, `HostWords: "github.com"`
-and `NameRepository`, with no `ForceSwitch`, so agents call
-`github_clone(url, path)`, `github_fetch(path, url, refs?)` and
-`github_push(path, refs, url)`; each tool's description ends, as the
-REST ones do, with the owner deciding which repositories the agent may
-use and whether it may open, comment on and close issues and pull
-requests, push and delete branches.
+and `NameRepository`, with no `ForceSwitch` and with `WorkflowsSwitch`,
+so agents call `github_clone(url, path)`, `github_fetch(path, url,
+refs?)` and `github_push(path, refs, url, workflows?)`; each tool's
+description ends, as the REST ones do, with the owner deciding which
+repositories the agent may use and whether it may open, comment on and
+close issues and pull requests, push and delete branches. `Tools`
+lists `workflows` in push's schema, and the description's sentence
+"Set workflows to true when the commits you push add, change or delete
+a file under .github/workflows/; ...", only to an agent whose access
+has both `write` and `workflows` (`access.pushesWorkflows`).
 
 `gitPolicy` reads the call's `gitops.Policy`: the host `github.com`;
 with `write`, `Push` is the access's `repositories`, with `AnyRef` (any
-branch or tag); without, `Pull` is, and `Push` is empty. A job's
-`allowed_repositories` are the row's patterns either way. Its
-`Refused`:
+branch or tag); without, `Pull` is, and `Push` is empty; `Workflows` is
+`pushesWorkflows()`. A job's `allowed_repositories` are the row's
+patterns either way. Its `Refused`:
 
 | Cause | The agent reads | The audit's reason |
 | --- | --- | --- |
@@ -4031,8 +4064,12 @@ branch or tag); without, `Pull` is, and `Push` is empty. A job's
 deletion ("A push never deletes a remote ref."; `delete_branch` is
 [the same app](#the-same-app)'s), a fetch or a push without `url` ("github_fetch
 needs url: name the repository, as its HTTPS URL on github.com or
-owner/name."), a URL on another host, and a repository outside the
-access. `callGit` adds one: a path of more than two segments is not a
+owner/name."), a URL on another host, a repository outside the
+access, and `workflows: true` without `Workflows` ("The GitHub
+integration's access for you does not allow pushing changes to
+workflow files (.github/workflows). Ask the owner if your work needs
+it.", `the access does not allow pushing changes to workflow files`).
+`callGit` adds one: a path of more than two segments is not a
 GitHub repository ("A GitHub repository is owner/name, and
 acme/tools/cli is not one.", `the repository is not owner/name`), and
 `jobToken`, as every token narrowed to a repository, one under another
@@ -4058,7 +4095,16 @@ branch holding them.
 Once the check has passed, `callGit` mints the job's token
 (`jobToken`, [Tokens](#tokens)): `repositories: [<name>]`, the call's
 repository alone, and `permissions` `contents: read` for a clone or a
-fetch, `contents: write` for a push, with `metadata: read`. It goes
+fetch, `contents: write` for a push, with `metadata: read`
+(`jobPermissions`). A push the check let through with `workflows: true`
+(`Call.Workflows`) also asks for `workflows: write`, and its started
+row ends ", changing workflow files"; every other push's token goes
+without, so GitHub refuses a push whose commits change a workflow file
+unless the agent said they do. GitHub mints no token at all for a
+permission the installation lacks: such a push's 422 reads "GitHub
+refused the GitHub App a token that may change workflow files in
+<owner/name> (HTTP 422): ... The app's installation may lack the
+workflows permission; ask the owner to approve it on GitHub." It goes
 into the job as `auth: {username: x-access-token, password: <the
 token>}`, and core adds the connection's proxy credential
 ([The connection's proxy credential](#the-connections-proxy-credential)).
@@ -4075,7 +4121,67 @@ policy again and calls `gitops.Complete`, so a push whose `write` was
 turned off while it ran is told as landed when refs did
 (`pushedUnderOldAccess`). GitHub's own rules for the repository, such
 as branch protection, still apply to a push, and its refusal reaches
-the agent in the daemon's words.
+the agent in the daemon's words. A push GitHub refused for a workflow
+file (its words match "without `workflows` permission",
+`workflowRefusal`) has `Complete` add what to do next
+(`workflowWords`): without `pushesWorkflows`, "The commits change a
+workflow file (.github/workflows), and your access to GitHub does not
+include changing workflows; ask the owner if your work needs it.";
+with it and no `workflows: true`, "... push again with workflows set
+to true."; with both, that GitHub refused the token the permission and
+to ask the owner to approve it.
+
+#### CI
+
+`ci.go`. Five REST actions read what GitHub ran on a repository's
+commits; they read only, so any agent whose access includes the
+repository has them, and each refuses another repository before a
+token is asked for, as every REST action does ([The actions](#the-actions)).
+
+- `list_checks(repository, ref | pull_request)`: the latest check run
+  of each check on a commit, one page of 100, each with its id, name,
+  app, status, conclusion, times, the output's title and its summary
+  cut at 500 characters, and `actions_job` when GitHub Actions ran it
+  (app `github-actions`: its id is its job's). The answer has the
+  commit, the total GitHub counts, a tally ("1 failed, 1 succeeded")
+  and a note when GitHub lists more than the page. Exactly one of
+  `ref` (a branch, a tag or a commit id, read as `args.branch`) and
+  `pull_request` (its head commit) is given.
+- `get_check_run(repository, check_run_id)`: one check's output, its
+  summary cut at 10,000 characters and its text at 20,000, and its
+  first 50 annotations (path, lines, level, title, message cut at
+  1,000), asked for only when `annotations_count` is above 0.
+- `list_workflow_runs(repository, branch?, commit?, status?, limit?)`:
+  runs newest first, 20 or `limit` up to 100; `commit` is a full id
+  (`commitID`), `status` one of `runStatuses`.
+- `get_workflow_run(repository, run_id)`: the run, and the latest
+  attempt's jobs (`filter=latest`), each with its id, status,
+  conclusion, times and steps.
+- `get_job_log(repository, job_id, lines?)`: GitHub answers `GET
+  .../actions/jobs/{id}/logs` with a redirect (303, or 302) to the log,
+  at an address it signs for a minute. `jobLog` asks with the token on
+  a client that follows no redirect, holds the `Location` to `logURL`
+  (https, no user info, on a host of `logHosts`, each pattern read as
+  `kivali.hosts` reads one: the host or a name under it, `*` a glob
+  within one label; against the tests' fake, plain http on loopback),
+  and GETs it with no credential. Anywhere else is refused, "GitHub
+  keeps the log on <host>, which is not a host Kivali reads logs from;
+  tell the owner." `readLog` reads at most 64 MiB, line by line with
+  each line's memory bounded, drops each line's timestamp, keeps the
+  first 20 lines holding `##[error]` with their numbers, and ends with
+  the last `lines` (200, at most 2,000), as many of the last ones as
+  fit in an answer, so the cut never takes the log's end. A 404 or 410
+  reads "GitHub has no log of job <id> in <owner/name> (HTTP 404): the
+  job may still be running, its log may be past GitHub's retention, or
+  it is not a job of this repository."
+
+Their tokens ask for `checks: read` (`list_checks`, `get_check_run`;
+`pull_requests: read` too for a pull request's head) or `actions:
+read` (the rest), which an app made before 2.2.0 lacks until the
+owner's Fix ([Requirements](#requirements)); until then GitHub refuses
+the token (422) in [Tokens](#tokens)' words. Commit statuses (`GET
+.../commits/{ref}/status`, another permission) are not read, and
+nothing reruns, cancels or downloads a run's artifacts.
 
 ### The Google Workspace built-in
 

@@ -80,6 +80,13 @@ type Integration struct {
 	// force: true or a + in front of an entry is refused as something it
 	// does not do.
 	ForceSwitch bool
+	// WorkflowsSwitch is a built-in whose host refuses a push that
+	// changes a workflow file (.github/workflows) unless its credential
+	// may, and whose access has a switch that lets an agent ask for that
+	// (Policy.Workflows): its push takes workflows, the agent's word that
+	// the commits add, change or delete one. Without it a push takes no
+	// workflows.
+	WorkflowsSwitch bool
 }
 
 // tool is the action's name as the agent calls it.
@@ -112,6 +119,9 @@ type Policy struct {
 	// Force lets a push force (force, or a + in front of an entry), for an
 	// Integration with ForceSwitch.
 	Force bool
+	// Workflows lets a push say it changes workflow files (workflows),
+	// for an Integration with WorkflowsSwitch.
+	Workflows bool
 	// InsecureHTTP makes the URLs a call builds http://: for tests, whose
 	// git server is an httptest one. The binary never sets it.
 	InsecureHTTP bool
@@ -136,6 +146,9 @@ type Call struct {
 	allowedRefs []string
 	anyRef      bool
 	force       bool
+	// workflows is a push whose caller said its commits change workflow
+	// files, which the policy allowed.
+	workflows bool
 	// repo is the repository the call names; zero for a fetch or a push
 	// without a url, whose repository is the working copy's origin.
 	repo    gitrepo.Repository
@@ -149,6 +162,11 @@ func (c Call) Action() string { return c.action }
 // one: a fetch or a push without a url names none.
 func (c Call) Repository() (gitrepo.Repository, bool) { return c.repo, c.hasRepo }
 
+// Workflows reports whether the call is a push whose caller said its
+// commits add, change or delete a workflow file, which the policy
+// allowed: its credential is to be one that may.
+func (c Call) Workflows() bool { return c.workflows }
+
 type cloneArgs struct {
 	URL  string `json:"url"`
 	Path string `json:"path"`
@@ -160,19 +178,24 @@ type fetchArgs struct {
 	Refs []string `json:"refs"`
 }
 
+// pushArgs is a push's arguments. Workflows is nil when the call does
+// not give it, which is the only way a built-in without
+// WorkflowsSwitch takes a push.
 type pushArgs struct {
-	Path  string   `json:"path"`
-	Refs  []string `json:"refs"`
-	Force bool     `json:"force"`
-	URL   string   `json:"url"`
+	Path      string   `json:"path"`
+	Refs      []string `json:"refs"`
+	Force     bool     `json:"force"`
+	URL       string   `json:"url"`
+	Workflows *bool    `json:"workflows"`
 }
 
 // pushArgsNoForce is a push's arguments where the built-in never
 // forces: force is not one.
 type pushArgsNoForce struct {
-	Path string   `json:"path"`
-	Refs []string `json:"refs"`
-	URL  string   `json:"url"`
+	Path      string   `json:"path"`
+	Refs      []string `json:"refs"`
+	URL       string   `json:"url"`
+	Workflows *bool    `json:"workflows"`
 }
 
 func refuse(text, reason string) error {
@@ -236,7 +259,10 @@ func Check(name string, args json.RawMessage, p Policy) (Call, error) {
 				}
 				return c, refuse(pushTakes(in), "the arguments do not read")
 			}
-			a = pushArgs{Path: b.Path, Refs: b.Refs, URL: b.URL}
+			a = pushArgs{Path: b.Path, Refs: b.Refs, URL: b.URL, Workflows: b.Workflows}
+		}
+		if a.Workflows != nil && !in.WorkflowsSwitch {
+			return c, refuse(pushTakes(in), "the arguments do not read")
 		}
 		url, c.path = strings.TrimSpace(a.URL), strings.TrimSpace(a.Path)
 		if c.path == "" || len(a.Refs) == 0 {
@@ -285,17 +311,36 @@ func fetchTakes(in Integration) string {
 
 // pushTakes is the refusal of a push's arguments that do not read.
 func pushTakes(in Integration) string {
-	tool := in.tool(Push)
-	switch {
-	case in.ForceSwitch && in.NameRepository:
-		return tool + " takes path, url and refs, a list of strings, and optionally force (true or false)."
-	case in.ForceSwitch:
-		return tool + " takes path and refs, a list of strings, and optionally force (true or false) and url."
-	case in.NameRepository:
-		return tool + " takes path, url and refs, a list of strings."
-	default:
-		return tool + " takes path and refs, a list of strings, and optionally url."
+	required := "path and refs, a list of strings"
+	if in.NameRepository {
+		required = "path, url and refs, a list of strings"
 	}
+	var optional []string
+	if in.ForceSwitch {
+		optional = append(optional, "force (true or false)")
+	}
+	if in.WorkflowsSwitch {
+		optional = append(optional, "workflows (true or false)")
+	}
+	if !in.NameRepository {
+		optional = append(optional, "url")
+	}
+	words := in.tool(Push) + " takes " + required
+	switch len(optional) {
+	case 0:
+	case 1:
+		words += ", and optionally " + optional[0]
+	default:
+		words += ", and optionally " + strings.Join(optional[:len(optional)-1], ", ") + " and " + optional[len(optional)-1]
+	}
+	return words + "."
+}
+
+// refuseWorkflows refuses a push that says it changes workflow files
+// when the access does not allow it.
+func refuseWorkflows(in Integration) error {
+	return refuse(fmt.Sprintf("The %s integration's access for you does not allow pushing changes to workflow files (.github/workflows). Ask the owner if your work needs it.", in.DisplayName),
+		"the access does not allow pushing changes to workflow files")
 }
 
 // refuseNoURL refuses a fetch or a push without a url, for a built-in
@@ -315,13 +360,20 @@ func refuseForcing(in Integration) error {
 // to (p.Push, which becomes c's patterns), every entry must read as a
 // ref or a refspec that deletes nothing, its destination must be one of
 // p.Refs (any branch or tag with p.AnyRef), and a forced one (force, or
-// a + in front) needs p.Force, where the built-in forces at all. It
-// fills c's refs, destinations and force.
+// a + in front) needs p.Force, where the built-in forces at all; one
+// that says it changes workflow files (workflows) needs p.Workflows. It
+// fills c's refs, destinations, force and workflows.
 func checkPush(c *Call, p Policy, a pushArgs) error {
 	in := p.Integration
 	tool := in.tool(Push)
 	if len(p.Push) == 0 {
 		return refuse(fmt.Sprintf("The %s integration's access for you does not allow pushing. Ask the owner if your work needs it.", in.DisplayName), "the access does not allow pushing")
+	}
+	if a.Workflows != nil && *a.Workflows {
+		if !p.Workflows {
+			return refuseWorkflows(in)
+		}
+		c.workflows = true
 	}
 	c.patterns = p.Push
 	c.anyRef = p.AnyRef
@@ -391,7 +443,8 @@ func (c Call) Job(auth shelljob.GitAuth, connectionID string) *shelljob.GitJob {
 // job out: "started: <owner/name>", or "started: the working copy's
 // origin at <path>" without a url; a push's adds what core read it to
 // write, ", push of <refs>" or ", force push of <refs>", from core's own
-// reading of the refs, never the shell's report.
+// reading of the refs, never the shell's report, then ", changing
+// workflow files" for a push that said it does (Workflows).
 func (c Call) Started() string {
 	started := "started: the working copy's origin at " + clip(c.path, 200)
 	if c.hasRepo {
@@ -403,6 +456,9 @@ func (c Call) Started() string {
 			verb = "force push of "
 		}
 		started += ", " + verb + auditNames(c.dsts, len(c.dsts))
+		if c.workflows {
+			started += ", changing workflow files"
+		}
 	}
 	return started
 }

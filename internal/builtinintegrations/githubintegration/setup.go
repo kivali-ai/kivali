@@ -39,9 +39,16 @@ const webBase = "https://github.com"
 const appNameMax = 34
 
 // needed is what this version needs of the installation: the
-// permissions the app is made with.
+// permissions the app is made with. workflows write lets a push change
+// the repository's workflow files (.github/workflows), and GitHub offers
+// it at no lower level; checks read and actions read let an agent read
+// the checks, Actions runs and job logs of what it pushed (ci.go). Each
+// token asks for only what its call needs, and a push asks for
+// workflows only when the agent's access allows it and the push says
+// so.
 func needed() permissions {
-	return perms("contents", "write", "issues", "write", "pull_requests", "write")
+	return perms("contents", "write", "issues", "write", "pull_requests", "write",
+		workflowsPermission, "write", "checks", "read", "actions", "read")
 }
 
 // accountName is a GitHub account's name: letters, digits and hyphens,
@@ -599,13 +606,19 @@ func lacking(have map[string]string) []string {
 	slices.Sort(names)
 	var out []string
 	for _, n := range names {
-		want, got := need[n], have[n]
-		if got == want || got == "admin" || (got == "write" && want == "read") {
+		want := need[n]
+		if covers(have[n], want) {
 			continue
 		}
 		out = append(out, strings.ReplaceAll(n, "_", " ")+": "+want)
 	}
 	return out
+}
+
+// covers is whether a permission granted at the level got does what
+// one at want does: write covers read, and admin covers both.
+func covers(got, want string) bool {
+	return got == want || got == "admin" || (got == "write" && want == "read")
 }
 
 var (
