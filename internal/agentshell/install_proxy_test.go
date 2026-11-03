@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -187,5 +189,100 @@ func TestInstallerWaitsForTheProxyBeforeUpdate(t *testing.T) {
 		"Some index files failed to download. They have been ignored, or old ones used instead."
 	if len(res.Failed) != 1 || res.Failed[0].Error != want {
 		t.Errorf("Failed = %+v, want jq with %q", res.Failed, want)
+	}
+}
+
+// refusedMarker is a file whose presence makes the fake apt-get's
+// update fail as the egress proxy's 403 does
+// ($FAKE_APT_UPDATE_REFUSED_WHILE).
+func refusedMarker(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "refused")
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// Guards the lost-software bug: at a server's boot the egress proxy can
+// answer apt-get update with 403 for a moment, and an install that gave
+// up on that one refusal left the agent without its software until the
+// pod next started. The install runs the update again and installs
+// once the proxy lets it through.
+func TestInstallerRetriesAnUpdateTheProxyRefused(t *testing.T) {
+	apt := newFakeApt(t)
+	refused := refusedMarker(t)
+	clk := clock.NewFake()
+	var log bytes.Buffer
+	in := apt.installer("FAKE_APT_UPDATE_REFUSED_WHILE=" + refused)
+	in.UpdateAttempts = 0 // the default
+	in.Clock = clk
+	in.Log = &log
+	done := make(chan InstallResult, 1)
+	go func() { done <- in.Install(context.Background(), []string{"jq"}) }()
+	clk.BlockUntil(1) // the pause after the refused update
+	if err := os.Remove(refused); err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(updateRetryInterval)
+	res := <-done
+	if want := []string{"jq"}; !reflect.DeepEqual(res.Installed, want) || len(res.Failed) != 0 {
+		t.Errorf("result = %+v, want jq installed with nothing failed", res)
+	}
+	runs := apt.runs(t)
+	if len(runs) != 3 || runs[0][0] != "update" || runs[1][0] != "update" || runs[2][0] != "install" {
+		t.Errorf("apt-get runs = %q, want update, update, install", runs)
+	}
+	if !strings.Contains(log.String(), "403  Forbidden") || !strings.Contains(log.String(), "trying again in 10s") {
+		t.Errorf("log = %q, want the refusal and the retry in it", log.String())
+	}
+}
+
+// Guards the bound: a package server that never answers must not hold
+// the install, and every command waiting on it, past the retries; the
+// failure still names the last refusal.
+func TestInstallerStopsRetryingTheUpdateAfterItsAttempts(t *testing.T) {
+	apt := newFakeApt(t)
+	clk := clock.NewFake()
+	in := apt.installer("FAKE_APT_UPDATE_REFUSED_WHILE="+refusedMarker(t), "FAKE_APT_UNKNOWN=jq")
+	in.UpdateAttempts = 0 // the default
+	in.Clock = clk
+	done := make(chan InstallResult, 1)
+	go func() { done <- in.Install(context.Background(), []string{"jq"}) }()
+	for i := 1; i < updateAttemptsDefault; i++ {
+		clk.BlockUntil(1)
+		clk.Advance(updateRetryInterval)
+	}
+	res := <-done
+	want := "no package has this name; the package lists could not be updated: " +
+		"The repository 'http://deb.debian.org/debian trixie InRelease' is not signed.; " +
+		"Failed to fetch http://deb.debian.org/debian/dists/trixie/InRelease  403  Forbidden [IP: 10.43.0.12 3128]"
+	if len(res.Failed) != 1 || res.Failed[0].Error != want {
+		t.Errorf("Failed = %+v, want jq with %q", res.Failed, want)
+	}
+	if runs := apt.runs(t); len(runs) != updateAttemptsDefault {
+		t.Errorf("apt-get runs = %q, want %d updates and nothing else", runs, updateAttemptsDefault)
+	}
+}
+
+// Guards the install's own deadline: a pause between attempts ends when
+// the install is stopped, or the install child would outlive
+// InstallTimeout.
+func TestInstallerStopsRetryingTheUpdateWhenTheInstallEnds(t *testing.T) {
+	apt := newFakeApt(t)
+	clk := clock.NewFake()
+	in := apt.installer("FAKE_APT_UPDATE_REFUSED_WHILE=" + refusedMarker(t))
+	in.UpdateAttempts = 0 // the default
+	in.Clock = clk
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan string, 1)
+	go func() { done <- in.update(ctx) }()
+	clk.BlockUntil(1)
+	cancel()
+	if got := <-done; !strings.Contains(got, "403  Forbidden") {
+		t.Errorf("update = %q, want the refusal", got)
+	}
+	if runs := apt.runs(t); len(runs) != 1 {
+		t.Errorf("apt-get runs = %q, want the one update", runs)
 	}
 }

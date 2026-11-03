@@ -16,7 +16,9 @@ import (
 // arguments, one per line, then a "--" line, to $FAKE_APT_LOG, and its
 // DEBIAN_FRONTEND and http_proxy to $FAKE_APT_ENV, and, when fd 3 is
 // open in it, a line to $FAKE_APT_FD3 (if set). `update` fails when
-// $FAKE_APT_UPDATE_FAILS is set; `install` fails, naming the package,
+// $FAKE_APT_UPDATE_FAILS is set, and as the egress proxy's 403 does
+// while the file $FAKE_APT_UPDATE_REFUSED_WHILE names exists; `install`
+// fails, naming the package,
 // when any argument is a name listed in $FAKE_APT_MISSING.
 const fakeAptScript = `#!/bin/sh
 for a in "$@"; do printf '%s\n' "$a" >> "$FAKE_APT_LOG"; done
@@ -28,6 +30,11 @@ if [ "$1" = update ]; then
   if [ -n "$FAKE_APT_UPDATE_FAILS" ]; then
     echo "W: Failed to fetch http://deb.debian.org/debian/dists/trixie/InRelease  Temporary failure resolving 'deb.debian.org'" >&2
     echo "E: Some index files failed to download. They have been ignored, or old ones used instead." >&2
+    exit 100
+  fi
+  if [ -n "$FAKE_APT_UPDATE_REFUSED_WHILE" ] && [ -e "$FAKE_APT_UPDATE_REFUSED_WHILE" ]; then
+    echo "E: The repository 'http://deb.debian.org/debian trixie InRelease' is not signed." >&2
+    echo "E: Failed to fetch http://deb.debian.org/debian/dists/trixie/InRelease  403  Forbidden [IP: 10.43.0.12 3128]" >&2
     exit 100
   fi
   if [ -n "$FAKE_APT_UPDATE_WARNS" ]; then
@@ -116,9 +123,10 @@ func (f fakeApt) envVars() []string {
 }
 
 // installer is an Installer on the fakes whose proxy wait, when
-// extraEnv names a proxy, is answered at once (dialAnswering).
+// extraEnv names a proxy, is answered at once (dialAnswering), and
+// which runs apt-get update once: the retries have their own tests.
 func (f fakeApt) installer(extraEnv ...string) Installer {
-	return Installer{AptGet: f.bin, AptCache: f.cache, Env: append(f.envVars(), extraEnv...), Dial: dialAnswering}
+	return Installer{AptGet: f.bin, AptCache: f.cache, Env: append(f.envVars(), extraEnv...), Dial: dialAnswering, UpdateAttempts: 1}
 }
 
 // dialAnswering is an Installer.Dial that accepts every connection.

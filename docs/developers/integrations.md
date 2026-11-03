@@ -2033,7 +2033,8 @@ each time its pod starts, before anything of the bundle runs.
   2. the shim runs itself again as `kivali integration-shim
      install-software gh jq`, a root child that is the agent shell's
      installer (`agentshell.StartInstallCommand`,
-     `RunInstallSubcommand`): `apt-get update`, a lookup that each name
+     `RunInstallSubcommand`): `apt-get update` (up to four times, ten
+     seconds apart, while it fetches nothing), a lookup that each name
      is exactly a package's, then `apt-get install -y -q
      --no-install-recommends` with the names as arguments, never
      through a shell; it kills whatever a package's scripts left

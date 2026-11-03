@@ -185,9 +185,11 @@ as root, the daemon:
    result pipe (fd 3) close-on-exec, waits for the proxy the variables
    name to accept a connection (a try every second for up to two
    minutes: a pod the server recreates at its boot starts before the
-   proxy is reachable), runs `apt-get update` (a failed update does not
-   stop the install; its reason, after a wait that ran out, is added to
-   each failure), then checks each name is exactly a name in the package
+   proxy is reachable), runs `apt-get update`, up to four times ten
+   seconds apart while it fetches nothing, for a proxy or package server
+   that refuses for a moment (a failed update does not stop the install;
+   its reason, after a wait that ran out, is added to each failure),
+   then checks each name is exactly a name in the package
    lists (`apt-cache pkgnames --all-names <name>`), so apt-get never
    reads one as a pattern; a name that is not fails with "no package
    has this name". Then one `apt-get install -y --no-install-recommends`
