@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Chat } from '../../api/types.gen';
@@ -24,6 +24,22 @@ function transcript() {
 
 async function loaded() {
   await screen.findByRole('list', { name: 'Chat with Engineering lead' });
+}
+
+/** What a drag from the computer's file manager carries: each file once in `files` and once as an item. */
+function filesDrag(entries: { file: File; folder?: boolean }[]) {
+  return {
+    types: ['Files'],
+    files: entries.map((e) => e.file),
+    items: entries.map((e) => ({ kind: 'file', getAsFile: () => e.file, webkitGetAsEntry: () => ({ isDirectory: !!e.folder }) })),
+    dropEffect: 'none',
+  };
+}
+
+function chatPane(): HTMLElement {
+  const pane = composer().closest('.app-chat');
+  if (!(pane instanceof HTMLElement)) throw new Error('no chat pane');
+  return pane;
 }
 
 function composer() {
@@ -609,6 +625,54 @@ describe('Chat: the composer', () => {
     expect(form?.get('text')).toBe('');
     expect(form?.getAll('attachment').map((f) => (f as File).name)).toEqual(['hosting-quote.pdf', 'notes.md']);
     await waitFor(() => expect(screen.queryByText('notes.md')).toBeNull());
+  });
+
+  // Guards dropping files on the chat: they stage beside picked ones (once each) and go out with the message,
+  // and the composer says where they land only while a drag is over the chat.
+  it('stages files dropped on the chat and sends them (chat-attachments)', async () => {
+    const user = userEvent.setup();
+    const h = renderAgent({ chat: idle, routes: { ['POST ' + BASE + '/messages']: { ts: 7, attachments: [{ sha: 'a', name: 'hosting-quote.pdf' }] } } });
+    await loaded();
+    await user.click(screen.getByRole('button', { name: 'Attach files' }));
+    await screen.findByText('notes.md');
+    const drag = filesDrag([
+      { file: new File(['# Notes'], 'notes.md', { lastModified: 2 }) },
+      { file: new File(['a,b'], 'leads.csv', { lastModified: 3 }) },
+    ]);
+    fireEvent.dragEnter(chatPane(), { dataTransfer: drag });
+    expect(screen.getByText('Drop to attach')).toBeInTheDocument();
+    // Crossing into a child and back out of it is still over the chat.
+    fireEvent.dragEnter(composer(), { dataTransfer: drag });
+    fireEvent.dragLeave(composer(), { dataTransfer: drag });
+    expect(screen.getByText('Drop to attach')).toBeInTheDocument();
+    fireEvent.dragOver(composer(), { dataTransfer: drag });
+    fireEvent.drop(composer(), { dataTransfer: drag });
+    expect(screen.queryByText('Drop to attach')).toBeNull();
+    await screen.findByText('leads.csv');
+    // notes.md was already staged from the picker.
+    expect(screen.getAllByText('notes.md')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(h.calls.some((c) => c.url === BASE + '/messages')).toBe(true));
+    const form = h.calls.find((c) => c.url === BASE + '/messages')?.form;
+    expect(form?.getAll('attachment').map((f) => (f as File).name)).toEqual(['hosting-quote.pdf', 'notes.md', 'leads.csv']);
+  });
+
+  // Guards what a drop must not stage: a folder, which the browser cannot upload and would fail the whole
+  // send, and a drag of text or a link across the page, which is not a file at all.
+  it('leaves dropped folders and non-file drags out of the message', async () => {
+    renderAgent({ chat: idle });
+    await loaded();
+    const text = { types: ['text/plain'], files: [], items: [{ kind: 'string' }], dropEffect: 'none' };
+    fireEvent.dragEnter(chatPane(), { dataTransfer: text });
+    expect(screen.queryByText('Drop to attach')).toBeNull();
+    fireEvent.drop(chatPane(), { dataTransfer: text });
+    expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull();
+    const drag = filesDrag([{ file: new File([''], 'Quotes', { lastModified: 4 }), folder: true }, { file: new File(['a,b'], 'leads.csv', { lastModified: 3 }) }]);
+    fireEvent.dragEnter(chatPane(), { dataTransfer: drag });
+    fireEvent.drop(chatPane(), { dataTransfer: drag });
+    await screen.findByText('leads.csv');
+    expect(screen.queryByText('Quotes')).toBeNull();
+    expect(screen.getByText('The folder was not attached')).toBeInTheDocument();
   });
 
   it('keeps the text and staged files when the send fails', async () => {

@@ -516,6 +516,13 @@ browser otherwise. The team's own `/auth/login` (that exact path) loads only wit
 sign-in, which loads it again with that parameter and the return
 address ("Signing in to a team" below).
 
+Files dropped on the team web view reach the page as HTML5 drag and
+drop, on both platforms: the web view is built without Tauri's own
+drag-drop handler, which would take every drop on macOS and replace
+WebView2's on Windows. The chat attaches what is dropped on it. A drop
+the page does not take navigates to a `file:` URL, which `team_nav`
+refuses.
+
 A frame the Windows hook refuses is cancelled and logged with its
 origin only (`kivali: web-<id> refused a frame of <origin>`), and that
 is all: it never opens the browser and never starts the desktop
