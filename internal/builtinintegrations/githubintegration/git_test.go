@@ -129,6 +129,67 @@ func TestPushNeedsWriteAndNeverForcesOrDeletes(t *testing.T) {
 	}
 }
 
+// Why this test exists: a push that changes a workflow file
+// (.github/workflows) needs workflows write in its token, or GitHub
+// refuses it. GitHub gives no token at all for a permission the
+// installation lacks, so a push must ask for workflows write only when
+// the installation grants it: asked for always, every push through an
+// app made before Kivali asked for workflows would be refused, not
+// just those changing a workflow file. A clone and a fetch never ask
+// for it, and an installation Kivali cannot read asks for contents
+// write alone.
+func TestPushWritesWorkflowsWhenTheInstallationGrantsIt(t *testing.T) {
+	const push = `{"path":"w","url":"acme/widgets","refs":["agent/x"]}`
+	const contentsOnly = `{"permissions":{"contents":"write","metadata":"read"},"repositories":["widgets"]}`
+	for _, c := range []struct {
+		name   string
+		status int
+		perms  string
+		want   string
+	}{
+		{"granted", 200, `{"metadata":"read","contents":"write","workflows":"write"}`, `{"permissions":{"contents":"write","metadata":"read","workflows":"write"},"repositories":["widgets"]}`},
+		{"not granted", 200, `{"metadata":"read","contents":"write"}`, contentsOnly},
+		{"unreadable", 503, ``, contentsOnly},
+	} {
+		g, f := newTest(t)
+		body := `{"message":"Service Unavailable"}`
+		if c.status == 200 {
+			body = installation("all", c.perms, false)
+		}
+		f.route("GET /app/installations/42", c.status, body)
+		job, res, ref := g.gitCall(t, agent(true, "acme/*"), "push", push)
+		if ref != nil || job == nil {
+			t.Fatalf("%s: push = %+v, %+v", c.name, res, ref)
+		}
+		if mints := f.mints(); len(mints) != 1 || mints[0].Body != c.want {
+			t.Errorf("%s: mints = %+v", c.name, mints)
+		}
+		if c.name == "granted" {
+			for _, op := range []string{"clone", "fetch"} {
+				before := len(f.mints())
+				// A reader, whose clone mints no token for the bot user.
+				if job, _, ref := g.gitCall(t, agent(false, "acme/*"), op, `{"path":"w","url":"acme/widgets"}`); ref != nil || job == nil {
+					t.Fatalf("%s: %+v", op, ref)
+				}
+				if m := f.mints()[before:]; len(m) != 1 || m[0].Body != `{"permissions":{"contents":"read","metadata":"read"},"repositories":["widgets"]}` {
+					t.Errorf("%s: mints = %+v", op, m)
+				}
+			}
+		}
+	}
+
+	// A push to a repository under another account is refused before
+	// GitHub is asked anything, the installation included.
+	g, f := newTest(t)
+	f.route("GET /app/installations/42", 200, installation("all", `{"metadata":"read","contents":"write","workflows":"write"}`, false))
+	if _, _, ref := g.gitCall(t, agent(true, "*/*"), "push", `{"path":"w","url":"other/widgets","refs":["agent/x"]}`); ref == nil {
+		t.Error("a push under another account was not refused")
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Errorf("GitHub took %d requests", n)
+	}
+}
+
 // Why this test exists: a job's token is narrowed to the repository
 // the call names, so the daemon cannot be left to read the working
 // copy's origin: a fetch or a push without a url must be refused, in

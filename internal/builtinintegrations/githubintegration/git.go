@@ -76,7 +76,8 @@ func gitPolicy(caller builtinintegrations.Caller, conn builtinintegrations.Conne
 // callGit is a clone's, a fetch's or a push's first request: the call
 // checked (gitops.Check), then a token minted for its job alone
 // (jobToken), narrowed to the call's repository and to reading its
-// contents, or for a push writing them; a repository under another
+// contents, or for a push writing them and, when the installation
+// grants it, its workflow files (jobPermissions); a repository under another
 // account than the installation's is refused first (narrowedName). A
 // refused call mints nothing. A clone for an agent whose access may
 // write also names the app's bot user as the working copy's git
@@ -101,7 +102,7 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 		echoed, _ := clip(repo.Path, 200)
 		return nil, refuse(fmt.Sprintf("A GitHub repository is owner/name, and %s is not one.", echoed), "the repository is not owner/name")
 	}
-	tok, err := g.jobToken(ctx, c, repo.Path, jobPermissions(name))
+	tok, err := g.jobToken(ctx, c, repo.Path, g.jobPermissions(ctx, c, name, repo.Path))
 	if err != nil {
 		var te *tokenError
 		if errors.As(err, &te) {
@@ -123,15 +124,37 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 	return &builtinintegrations.Result{ShellJob: &shelljob.Job{Git: job}, Audit: call.Started()}, nil
 }
 
-// jobPermissions is what the job of the action name may do besides
-// metadata read: write the repository's contents for a push, read them
-// for a clone or a fetch.
-func jobPermissions(name string) permissions {
-	if name == gitops.Push {
-		return perms("contents", "write")
+// jobPermissions is what the job of the action name for the
+// repository owner/name may do besides metadata read: read the
+// repository's contents for a clone or a fetch; for a push, write them,
+// and write its workflow files (.github/workflows) when the
+// installation grants workflows write. An app made before Kivali asked
+// for workflows lacks it until the owner approves it on GitHub, and
+// GitHub gives no token at all for a permission the installation
+// lacks: asking for it regardless would refuse every push, where
+// without it GitHub refuses only a push that changes a workflow file.
+// So a push reads the installation (GET /app/installations/{id}) once
+// its repository is under the installation's account (narrowedName,
+// which refuses any other before GitHub is asked anything), and a
+// failure to read it asks for contents write alone, the mint then
+// answering for GitHub.
+func (g *GitHub) jobPermissions(ctx context.Context, c connection, name, repo string) permissions {
+	if name != gitops.Push {
+		return perms("contents", "read")
 	}
-	return perms("contents", "read")
+	p := perms("contents", "write")
+	if _, err := g.narrowedName(ctx, c, repo); err != nil {
+		return p
+	}
+	if in, err := g.installationOf(ctx, c); err == nil && covers(in.Permissions[workflowsPermission], "write") {
+		p[workflowsPermission] = "write"
+	}
+	return p
 }
+
+// workflowsPermission is GitHub's permission to change a repository's
+// workflow files, which a push needs for a commit that touches one.
+const workflowsPermission = "workflows"
 
 // Complete puts the shell's result in words for the agent and the
 // audit, with the call checked again under the access and the

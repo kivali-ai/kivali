@@ -301,7 +301,7 @@ anything runs, and the page shows it in the Connection block
 "connection": {
   "method": "setup",
   "setup": {
-    "summary": "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues and pull requests, and installs it on the repositories you choose.",
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues, pull requests and workflows, and installs it on the repositories you choose.",
     "hosts": ["github.com"],
     "fields": {
       "account": {"words": "Your personal account, or an organization's name"},
@@ -2817,6 +2817,9 @@ the installation, which an app 2.0.0 made does not have: its
 the owner's Fix gives it on GitHub ([The GitHub
 built-in](#the-github-built-in)).
 Until then GitHub refuses a push's token, and everything else works.
+2.1.0 also needs `workflows: write`, which an app made before Kivali
+asked for it lacks: the same row names it, and until the owner gives
+it GitHub refuses only a push that changes a workflow file.
 
 ### Dispatch
 
@@ -3598,7 +3601,8 @@ GitHub's own pages and nothing copied:
    <the same>, "setup_on_update": true, "public":
    false, "hook_attributes": {"url": "https://example.com/no-webhook",
    "active": false}, "default_permissions": {"metadata": "read",
-   "contents": "write", "issues": "write", "pull_requests": "write"},
+   "contents": "write", "issues": "write", "pull_requests": "write",
+   "workflows": "write"},
    "default_events": []}`. GitHub takes no `hook_attributes` without a
    `url`, an inactive webhook's included, and names the lack "url"
    alone; and no `url` whose host is not reachable over the public
@@ -3683,12 +3687,15 @@ page is read and on the hourly refresh, never for the list or Home
 
 Any other failure is an error, which core shows as its one `checks` row.
 This version needs `needed()`: `contents: write` (a push's token
-writes contents), `issues: write`, `pull_requests: write` and
+writes contents), `issues: write`, `pull_requests: write`,
+`workflows: write` (a push that changes a file under
+`.github/workflows` needs it; GitHub offers it at no lower level) and
 `metadata: read`, which is also what the app is made with. An app 2.0.0
 made has `contents: read`, so its row reads "...lacks permissions this
-version needs: contents: write. Approve them on GitHub.", and the Fix
-sends the owner to the app's own permissions first, since the app does
-not ask for it.
+version needs: contents: write, workflows: write. Approve them on
+GitHub.", and the Fix sends the owner to the app's own permissions
+first, since the app does not ask for them. An app made before Kivali
+asked for `workflows` reads the same, naming `workflows: write` alone.
 
 #### Uninstall
 
@@ -3785,7 +3792,7 @@ permission, and to ask the owner.
 | `compare` | `GET /repos/{o}/{r}/compare/{base}...{head}`: commits and files, no patches | `contents: read` |
 | `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
-| `push` | a shell job | `contents: write`, in the job's own token |
+| `push` | a shell job | `contents: write`, and `workflows: write` when the installation grants it, in the job's own token |
 
 The REST actions' rules are GitHub 1.0.0's:
 
@@ -4058,7 +4065,15 @@ branch holding them.
 Once the check has passed, `callGit` mints the job's token
 (`jobToken`, [Tokens](#tokens)): `repositories: [<name>]`, the call's
 repository alone, and `permissions` `contents: read` for a clone or a
-fetch, `contents: write` for a push, with `metadata: read`. It goes
+fetch, `contents: write` for a push, with `metadata: read`. A push's
+token also has `workflows: write` when the installation grants it,
+which `jobPermissions` reads (`GET /app/installations/{id}`, with the
+JWT) once the repository is under the installation's account: GitHub
+mints no token at all that asks for a permission the installation
+lacks, so an app made before Kivali asked for `workflows` would
+otherwise have every push refused, where without it GitHub refuses
+only a push that changes a workflow file. A failure to read the
+installation asks for `contents: write` alone. It goes
 into the job as `auth: {username: x-access-token, password: <the
 token>}`, and core adds the connection's proxy credential
 ([The connection's proxy credential](#the-connections-proxy-credential)).

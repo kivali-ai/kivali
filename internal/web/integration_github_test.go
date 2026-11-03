@@ -96,7 +96,7 @@ type fakeGitHubAPI struct {
 }
 
 func newFakeGitHubAPI(t *testing.T) *fakeGitHubAPI {
-	f := &fakeGitHubAPI{t: t, perms: map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write"},
+	f := &fakeGitHubAPI{t: t, perms: map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write"},
 		repos: 2, deleteStatus: http.StatusNoContent, grants: make(chan string, 8)}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -184,7 +184,7 @@ func (f *fakeGitHubAPI) serve(w http.ResponseWriter, r *http.Request) {
 		// The app asks for every permission this version needs; its
 		// installation may not have approved them all (perms).
 		answer(http.StatusOK, map[string]any{"id": 1234, "slug": ghSlug, "name": "Kivali Acme", "owner": map[string]string{"login": "acme", "type": "User"},
-			"permissions": map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write"}})
+			"permissions": map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write"}})
 	case path == "GET /app/installations":
 		list := []any{}
 		if f.installed != 0 {
@@ -515,7 +515,7 @@ func TestGitHubRequirementsAndFixes(t *testing.T) {
 	githubInstall(t, srv, f)
 
 	f.set(func(f *fakeGitHubAPI) {
-		f.perms = map[string]string{"metadata": "read", "contents": "write", "issues": "read", "pull_requests": "write"}
+		f.perms = map[string]string{"metadata": "read", "contents": "write", "issues": "read", "pull_requests": "write", "workflows": "write"}
 	})
 	page := githubRequirements(t, srv, clk)
 	if r, _ := requirementOf(page, "permissions"); r.Met || r.Fix != "permissions" || page.Summary.Needs != 1 {
