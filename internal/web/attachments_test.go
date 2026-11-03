@@ -17,7 +17,10 @@ const navAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/a
 // back the stored bytes as a download, whatever the file type and
 // however the browser asked. Markdown included: the web app renders
 // documents itself, so the server never answers an attachment with a
-// page of its own.
+// page of its own. It guards against a file the web view can display
+// (markdown, text, PDF) replacing the web app in Kivali Desktop on
+// macOS, whose WKWebView ignores Content-Disposition and shows any type
+// it can: only application/octet-stream makes it save the file.
 func TestAttachmentDownloadServesTheOriginal(t *testing.T) {
 	srv := newTestServer(t)
 	for _, name := range []string{"notes.md", "notes.txt", "report.pdf"} {
@@ -42,6 +45,9 @@ func TestAttachmentDownloadServesTheOriginal(t *testing.T) {
 			}
 			if cd := rr.Header().Get("content-disposition"); cd != `attachment; filename="`+name+`"` {
 				t.Errorf("content-disposition = %q, want an attachment download named %s", cd, name)
+			}
+			if ct := rr.Header().Get("content-type"); ct != "application/octet-stream" {
+				t.Errorf("content-type = %q, want application/octet-stream, which no web view displays", ct)
 			}
 			// The length is what lets a download show its progress
 			// (Kivali Desktop fetches the file itself and draws a bar

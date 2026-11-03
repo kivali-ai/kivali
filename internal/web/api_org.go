@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -414,10 +413,8 @@ func (s *Server) handleAPIFileOriginal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = rc.Close() }()
-	ct := mime.TypeByExtension(strings.ToLower(filepath.Ext(pf.OriginalName)))
-	w.Header().Set("content-type", cmp.Or(ct, "application/octet-stream"))
+	setDownloadType(w)
 	w.Header().Set("content-disposition", mime.FormatMediaType("attachment", map[string]string{"filename": pf.OriginalName}))
-	w.Header().Set("x-content-type-options", "nosniff")
 	if pf.Size > 0 {
 		// The length lets whatever saves the file show how far it has got.
 		w.Header().Set("content-length", strconv.FormatInt(pf.Size, 10))
