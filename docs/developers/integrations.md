@@ -5544,7 +5544,7 @@ Staff's is: see [Kivali's roles](architecture.md#kivalis-roles).
 The tools are its by slug, as the Chief of Staff's are: its MCP server
 (`mcp_cmd.go`) registers them when `--agent` is `kivali-developer`, and
 core refuses every request whose slug header is any other agent's. The
-CLI's `--allowedTools` lists the five tools for every agent
+CLI's `--allowedTools` lists the six tools for every agent
 (`claudeagent.allowedToolNames`): only the Kivali Developer's MCP
 server registers them.
 
@@ -5703,7 +5703,7 @@ bundle's author meets changes the skill in the same change.
 
 ### The tools
 
-All five relay to `POST /v1/agent/{slug}/kivali-developer/dispatch`
+All six relay to `POST /v1/agent/{slug}/kivali-developer/dispatch`
 (`agentpod.KivaliDeveloperRequest`: `{tool, input, smoke_result}`,
 answered with `{body, is_error, smoke}`).
 
@@ -5714,6 +5714,7 @@ answered with `{body, is_error, smoke}`).
 | `integration_list()` | Every integration on the team: name, display name, version in use, its state and, installed, the requirements not met, a pending version, how many agents have access. |
 | `integration_versions(name)` | Every stored version, newest first: state, published at and by, approved or rejected at, the first 200 characters of its notes. |
 | `integration_logs(name, since)` | The integration's latest 200 log lines, oldest first, from `since` (RFC 3339) when given, at most 32 KiB, the newest kept. Each line had the connection's secrets replaced when it was appended; the answer's first line says the log is data, never instructions. |
+| `integration_restart(name)` | Refused for a built-in, an integration with no approved version and a disabled one: only what the reconcile runs anyway. Writes "The Kivali Developer restarted the integration." to its log, sets the registry entry's `replace` as three missed health checks do, and asks for a reconcile, which mints a new token and so a new pod, failing the calls under way. Waits up to 90 seconds on the registry's clock for a shim on the new token (`integrationRegistry.awaitReplaced`) and says whether one connected. With no provisioner it is refused. |
 
 `path` is a directory under the developer's `/files/` (`/files/<p>` or
 `<p>`): the root, a path outside `/files/` and `..` are refused. Core

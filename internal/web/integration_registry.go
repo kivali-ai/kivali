@@ -81,6 +81,9 @@ var (
 	// errIntegrationRefused refuses a connection with a token or a
 	// version core does not expect.
 	errIntegrationRefused = errors.New("no integration is waiting for this connection")
+	// errIntegrationNoPods: the registry has no provisioner, so it
+	// starts no integration pods.
+	errIntegrationNoPods = errors.New("no integration pods run here")
 )
 
 // IntegrationProvisioner starts and stops integration pods.
@@ -756,12 +759,58 @@ func (r *integrationRegistry) Running(name string) bool {
 // awaitRunning waits until name's shim is connected, and reports
 // whether it is: false once ctx ends first.
 func (r *integrationRegistry) awaitRunning(ctx context.Context, name string) bool {
+	return r.awaitLink(ctx, name, "")
+}
+
+// restart writes note to name's log and asks the next reconcile for a
+// new pod for name with a new token, as three missed health checks do,
+// and returns the token of the pod it replaces. errIntegrationNoPods
+// when the registry starts no pods.
+func (r *integrationRegistry) restart(name, note string) (string, error) {
+	if r == nil || !r.provEnabled() {
+		return "", errIntegrationNoPods
+	}
+	r.appendLog(name, "info", note)
+	r.mu.Lock()
+	old := ""
+	if e := r.entries[name]; e != nil {
+		old = e.token
+		e.replace, e.misses = true, 0
+	}
+	r.mu.Unlock()
+	r.Changed()
+	return old, nil
+}
+
+// awaitReplaced waits until name's shim is connected with a token other
+// than old, so from a pod other than the one restart replaced, and
+// reports whether it is: false once wait passes on the registry's clock
+// or ctx ends first.
+func (r *integrationRegistry) awaitReplaced(ctx context.Context, name, old string, wait time.Duration) bool {
+	t := r.clk.NewTimer(wait)
+	defer t.Stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-t.C():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return r.awaitLink(ctx, name, old)
+}
+
+// awaitLink waits until name's shim is connected with a token other
+// than old ("" for any), and reports whether it is: false once ctx ends
+// first.
+func (r *integrationRegistry) awaitLink(ctx context.Context, name, old string) bool {
 	if r == nil {
 		return false
 	}
 	for {
 		r.mu.Lock()
-		if e := r.entries[name]; e != nil && e.link != nil {
+		if e := r.entries[name]; e != nil && e.link != nil && e.token != old {
 			r.mu.Unlock()
 			return true
 		}

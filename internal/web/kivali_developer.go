@@ -1,7 +1,7 @@
 // Package web (kivali_developer.go) — the Kivali Developer's
 // tools, core's side.
 //
-// The Kivali Developer (agent.KivaliDeveloperSlug) has five
+// The Kivali Developer (agent.KivaliDeveloperSlug) has six
 // integration_* tools, which its MCP server relays here (POST
 // /v1/agent/{slug}/kivali-developer/dispatch). Every request is
 // refused for any other agent, whatever its MCP server registered: the
@@ -20,7 +20,9 @@
 // notes, and files the owner's approval request (store.IntegrationInstall),
 // which lands in Needs you. integration_list, integration_versions and
 // integration_logs read what is installed; no answer carries a
-// connection's secret.
+// connection's secret. integration_restart gives a running bundle's
+// server a new pod, as the health check does, notes it in the
+// integration's log, and waits a while for the new server to connect.
 
 package web
 
@@ -61,7 +63,15 @@ const (
 	// developerNotesExcerpt is how much of a version's notes
 	// integration_versions shows.
 	developerNotesExcerpt = 200
+	// developerRestartWait is how long integration_restart waits for
+	// the new server to connect, inside the MCP server's two minutes
+	// for one call.
+	developerRestartWait = 90 * time.Second
 )
+
+// developerRestartLog is the line integration_restart writes to the
+// integration's log, which the owner reads in Recent logs.
+const developerRestartLog = "The Kivali Developer restarted the integration."
 
 // notDeveloper answers an integration_* call from an agent that is not
 // the Kivali Developer.
@@ -140,6 +150,14 @@ func (s *Server) dispatchKivaliDeveloper(ctx context.Context, slug string, req a
 			return developerError(req.Tool + ": " + err.Error())
 		}
 		return s.developerLogs(in.Name, in.Since)
+	case mcp.IntegrationRestartToolName:
+		var in struct {
+			Name string `json:"name"`
+		}
+		if err := decodeDeveloperInput(req.Input, &in); err != nil {
+			return developerError(req.Tool + ": " + err.Error())
+		}
+		return s.developerRestart(ctx, in.Name)
 	}
 	return developerError(fmt.Sprintf("Kivali has no tool %q.", req.Tool))
 }
@@ -572,4 +590,31 @@ func (s *Server) developerLogs(name, since string) agentpod.KivaliDeveloperRespo
 		body += fmt.Sprintf("(%d older lines left out)\n", keep)
 	}
 	return agentpod.KivaliDeveloperResponse{Body: body + strings.Join(lines[keep:], "\n")}
+}
+
+// developerRestart is integration_restart: a new pod for an approved,
+// enabled bundle's server, then up to developerRestartWait for it to
+// connect. Only what the reconcile would run anyway is restarted, so
+// the call never starts an integration the owner has not.
+func (s *Server) developerRestart(ctx context.Context, name string) agentpod.KivaliDeveloperResponse {
+	it, why := s.installedIntegration(name)
+	if why != "" {
+		return developerError(why)
+	}
+	switch {
+	case it.Builtin:
+		return developerError(fmt.Sprintf("%s ships with Kivali and runs inside it: it has no server of its own to restart.", it.Name))
+	case it.CurrentVersion == "":
+		return developerError(fmt.Sprintf("%s has no approved version, so it is not running.", it.Name))
+	case !it.Enabled:
+		return developerError(fmt.Sprintf("%s is disabled, so it is not running. Only the owner can enable it.", it.Name))
+	}
+	old, err := s.Integrations.restart(it.Name, developerRestartLog)
+	if err != nil {
+		return developerError("Kivali runs no integration servers here, so there is none to restart.")
+	}
+	if s.Integrations.awaitReplaced(ctx, it.Name, old, developerRestartWait) {
+		return agentpod.KivaliDeveloperResponse{Body: fmt.Sprintf("%s is running again in a new pod. integration_logs shows its start.", it.Name)}
+	}
+	return agentpod.KivaliDeveloperResponse{Body: fmt.Sprintf("Kivali is starting %s in a new pod, and its server has not connected after %d seconds. integration_logs shows how its start is going.", it.Name, int(developerRestartWait.Seconds()))}
 }

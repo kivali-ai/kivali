@@ -907,7 +907,9 @@ the version in use; denied, it never runs.
 (with the titles of the requirements not met), `integration_versions`
 every version of one and what became of it, and `integration_logs` the
 running integration's log, its own lines and Kivali's. Read the log
-first.
+first. When its start has scrolled out of the log, or the server is
+stuck, `integration_restart` starts it again in a new pod; then read
+the log from the time you restarted it.
 
 | The log, the page or the agent says | The cause |
 | --- | --- |
