@@ -372,10 +372,14 @@ DACL admitting that account and LocalSystem only, and a connect pending
 before `start` is sent; `Start` then waits up to 30 s for Hyper-V to
 connect and runs `ScanConsole` on the connection for the marker lines
 and `logs/console.log` exactly as on macOS; a tee off the same stream
-answers the first-boot question. `Done` closes when the
-console pipe ends or, as a backstop for a stop that leaves the pipe
-open, a poll of the broker (every 15 s, a state-only query) reports the
-VM Off. `DialAgent` is go-winio's Hyper-V socket dial to the VM's id and
+answers the first-boot question. `Done` closes when the broker reports
+the VM Off: asked every 2 s once the console pipe ends, for up to a
+minute (Hyper-V holds a VM at Stopping for a moment after its console
+ends, and the broker changes a data disk only while the VM is Off), or,
+as a backstop for a stop that leaves the pipe open, by a poll every
+15 s (a state-only query). A start that fails returns only after the
+same wait, since a rollback changes the data disk straight after it.
+`DialAgent` is go-winio's Hyper-V socket dial to the VM's id and
 the vsock service id of port 1024. `RequestPoweroff` and the format
 answer are written to the console under one lock, so they never
 interleave. The VM's configuration, its differencing disk and its data

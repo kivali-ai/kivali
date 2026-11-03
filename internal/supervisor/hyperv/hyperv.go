@@ -89,6 +89,12 @@ const (
 	stateQueryTimeout = time.Minute
 )
 
+// offTimeout bounds the wait for Hyper-V to report a VM Off once its
+// console pipe ended or its start failed. Hyper-V holds such a VM at
+// Stopping for a moment, and the broker changes a data disk only while
+// the VM is Off.
+const offTimeout = time.Minute
+
 // Backend creates Hyper-V machines through a broker client.
 type Backend struct {
 	Client *broker.Client
@@ -392,6 +398,7 @@ func (b Backend) NewMachine(c supervisor.MachineConfig) (supervisor.Machine, err
 		log:          c.ConsoleLog,
 		pollEvery:    statePoll,
 		offPoll:      2 * time.Second,
+		offWait:      offTimeout,
 		leftoverWait: leftoverStopTimeout,
 		events:       make(chan supervisor.ConsoleEvent, 64),
 		done:         make(chan struct{}),
@@ -442,6 +449,7 @@ type machine struct {
 	log       io.Writer
 	pollEvery time.Duration // statePoll; the tests shorten it
 	offPoll   time.Duration // how often waitOff asks; the tests shorten it
+	offWait   time.Duration // offTimeout; the tests shorten it
 	// leftoverWait bounds each clean stop settleLeftover tries:
 	// leftoverStopTimeout; the tests shorten it.
 	leftoverWait time.Duration
@@ -487,6 +495,10 @@ func (m *machine) getID() string {
 // here, as this account, before the VM starts, as one instance with a
 // connect already pending, admitting this account and LocalSystem only:
 // a name already taken means the VM is not started.
+//
+// A start that fails after the broker was asked returns only once the
+// VM is Off: nothing else waits for it, and what follows a failed start
+// (an upgrade's rollback) changes the data disk at once.
 func (m *machine) Start() error {
 	if err := m.settleLeftover(); err != nil {
 		m.markDone()
@@ -502,7 +514,7 @@ func (m *machine) Start() error {
 	st, err := m.client.Start(ctx, m.name)
 	if err != nil {
 		srv.close()
-		m.markDone()
+		m.doneWhenOff()
 		return fmt.Errorf("start the VM: %w", err)
 	}
 	if st.ID != "" {
@@ -513,7 +525,7 @@ func (m *machine) Start() error {
 		// A VM that started but whose console we cannot reach is stopped,
 		// so boot fails cleanly rather than leaving it running unseen.
 		_, _ = m.client.Stop(context.Background(), m.name, false)
-		m.markDone()
+		m.doneWhenOff()
 		return fmt.Errorf("the VM did not connect to its console pipe %s: %w", m.comPipe, err)
 	}
 	m.mu.Lock()
@@ -528,7 +540,7 @@ func (m *machine) Start() error {
 	go func() {
 		supervisor.ScanConsole(io.TeeReader(conn, pw), m.log, m.events)
 		_ = pw.Close()
-		m.markDone()
+		m.doneWhenOff()
 	}()
 	go m.answerFormat(pr)
 	go m.pollState()
@@ -598,15 +610,15 @@ func (m *machine) settleLeftover() error {
 		"Shut it down from Hyper-V Manager, then try again", m.name, err)
 }
 
-// waitOff reports whether the broker reports the VM Off within d,
-// asking every offPoll.
+// waitOff reports whether the broker reports the VM Off, or no such VM,
+// within d, asking every offPoll.
 func (m *machine) waitOff(d time.Duration) bool {
 	deadline := time.Now().Add(d)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), stateQueryTimeout)
 		st, err := m.client.VM(ctx, m.name)
 		cancel()
-		if err == nil && st.State == broker.StateOff {
+		if broker.IsNotFound(err) || (err == nil && st.State == broker.StateOff) {
 			return true
 		}
 		if !time.Now().Before(deadline) {
@@ -760,6 +772,17 @@ func (m *machine) writeConsole(s string) error {
 	}
 	_, err := io.WriteString(conn, s)
 	return err
+}
+
+// doneWhenOff closes Done once the broker reports the VM Off, so whoever
+// Done releases finds its data disk free to change. After offWait it
+// closes Done regardless: the VM is on its way down and a stop must end;
+// the broker still refuses a disk change until the VM is Off.
+func (m *machine) doneWhenOff() {
+	if !m.waitOff(m.offWait) {
+		m.logf("Hyper-V did not report the VM Off within %s", m.offWait)
+	}
+	m.markDone()
 }
 
 // pollState closes Done when the broker reports the VM Off, for a stop

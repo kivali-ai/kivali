@@ -147,7 +147,8 @@ type Machine interface {
 	// buffered and lossy: a marker nobody waits for is dropped once the
 	// buffer is full.
 	Events() <-chan ConsoleEvent
-	// Done is closed once the VM has stopped (or failed).
+	// Done is closed once the VM has stopped (or failed) and its data
+	// disk can be changed. A Start that fails has already waited for that.
 	Done() <-chan struct{}
 	// DialAgent connects to the guest agent, by whatever transport the
 	// backend has: vsock, Hyper-V sockets, or a multiplexed child.
