@@ -73,7 +73,7 @@ use windows as os;
 use windows as shared;
 
 pub use os::{
-    alert, app_is_active, authenticate, contain_keys, guard_frames, is_reopen, mark_app_menus, menu_bar_dark,
+    alert, app_is_active, authenticate, contain_keys, guard_frames, hide_window, is_reopen, mark_app_menus, menu_bar_dark,
     menu_shortcuts, menus_dark, notify_running_instance, on_second_launch, open_terminal, parent_pid, peer_pid,
     press_keys, reduce_motion, start_time, vm_support, wait_exit, watch_loads, APP_MENU, INSTALL_EXITS,
     SECOND_LAUNCH_FOCUSES, THIS_COMPUTER, TRAY_AREA, TRAY_ICONS, UPDATE_COPIES_DATA_DISK, WINDOW_MENU,

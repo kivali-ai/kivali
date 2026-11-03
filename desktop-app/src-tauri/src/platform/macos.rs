@@ -5,16 +5,21 @@
 use super::{cancel_index, tray_set, AlertAnswer, AlertSpec, StartTime, TrayIcons};
 use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2::runtime::Bool;
+use objc2::runtime::{Bool, ProtocolObject};
 use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAlert, NSAlertFirstButtonReturn, NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua,
     NSAppearanceNameDarkAqua, NSApplication, NSControlStateValueOn, NSEvent, NSModalResponse, NSResponder,
-    NSRunningApplication, NSView, NSWindow, NSWorkspace,
+    NSRunningApplication, NSView, NSWindow, NSWindowDidExitFullScreenNotification, NSWorkspace,
 };
-use objc2_foundation::{ns_string, NSArray, NSError, NSString, NSUserDefaults};
+use objc2_foundation::{
+    ns_string, NSArray, NSError, NSNotification, NSNotificationCenter, NSObjectProtocol, NSOperationQueue, NSString,
+    NSUserDefaults,
+};
 use objc2_local_authentication::{LAContext, LAError, LAPolicy};
 use std::cell::Cell;
+use std::ptr::NonNull;
+use std::rc::Rc;
 use std::sync::Mutex;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -182,6 +187,62 @@ pub fn on_second_launch(_dir: &Path, _show: Box<dyn Fn() + Send>) {}
 /// The Dock icon was clicked with no window showing.
 pub fn is_reopen(event: &tauri::RunEvent) -> bool {
     matches!(event, tauri::RunEvent::Reopen { .. })
+}
+
+/// A notification observer's token, as NSNotificationCenter hands it back.
+type Observer = Retained<ProtocolObject<dyn NSObjectProtocol>>;
+
+/// Hides `window`, then runs `hidden`. A window in full screen leaves it
+/// first and is hidden once AppKit says it has left
+/// (`NSWindowDidExitFullScreenNotification`): hidden while in full
+/// screen, its Space stays behind, an empty black screen named after the
+/// app until Kivali quits. Leaving takes the length of the animation, so
+/// `hidden` runs then, not before.
+pub fn hide_window(window: &tauri::Window, hidden: Box<dyn FnOnce() + Send>) {
+    let w = window.clone();
+    let run = move || {
+        let ns = w.ns_window().ok().filter(|_| w.is_fullscreen().unwrap_or(false));
+        let Some(ns) = ns else {
+            let _ = w.hide();
+            hidden();
+            return;
+        };
+        // SAFETY: tauri's NSWindow pointer, alive while `w` is held; the
+        // observer is only matched against it, never sent a message.
+        let ns_window = unsafe { &*(ns as *const NSWindow) };
+        // The observer removes itself the first time it runs: the token
+        // (which holds the block) and the block (which holds the token's
+        // cell) let each other go then.
+        let token: Rc<Cell<Option<Observer>>> = Rc::default();
+        let held = Cell::new(Some((w.clone(), hidden)));
+        let own = token.clone();
+        let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+            if let Some(t) = own.take() {
+                // SAFETY: the token addObserverForName returned.
+                unsafe { NSNotificationCenter::defaultCenter().removeObserver(t.as_ref()) };
+            }
+            if let Some((w, hidden)) = held.take() {
+                let _ = w.hide();
+                hidden();
+            }
+        });
+        // SAFETY: AppKit's notification name; the object is the window
+        // the notification names; on the main queue, the thread the
+        // block's window handle and closure were made on.
+        let t = unsafe {
+            NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+                Some(NSWindowDidExitFullScreenNotification),
+                Some(ns_window),
+                Some(&NSOperationQueue::mainQueue()),
+                &block,
+            )
+        };
+        token.set(Some(t));
+        let _ = w.set_fullscreen(false);
+    };
+    if let Err(e) = window.run_on_main_thread(run) {
+        eprintln!("kivali: cannot hide a window: {e}");
+    }
 }
 
 /// The button index an NSAlert response names: the first button answers

@@ -39,11 +39,9 @@ pub fn set_title(webview: Webview, title: String) -> Res {
 }
 
 #[tauri::command]
-pub fn close_window(webview: Webview, app: AppHandle) -> Res {
+pub fn close_window(webview: Webview) -> Res {
     guard(&webview)?;
-    let window = webview.window();
-    window.hide().map_err(|e| e.to_string())?;
-    windows::sync_dock(&app, Some(window.label()));
+    windows::hide_window(&webview.window());
     Ok(())
 }
 
