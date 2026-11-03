@@ -109,8 +109,13 @@ type Installer struct {
 	ProxyWait time.Duration
 	// Dial opens the connections of that wait. Nil means a net.Dialer.
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
-	// Clock paces that wait. Nil means the system clock.
+	// Clock paces that wait and the pauses between update attempts.
+	// Nil means the system clock.
 	Clock clock.Clock
+	// UpdateAttempts is how many times Install runs apt-get update
+	// while it fetches nothing, updateRetryInterval apart. Zero means
+	// updateAttemptsDefault.
+	UpdateAttempts int
 }
 
 // Install runs `apt-get update`, keeps the names that are exactly a
@@ -125,7 +130,10 @@ type Installer struct {
 //
 // The update waits first for the proxy in Env to accept a connection
 // (awaitProxy): the install runs when the pod starts, which at the
-// server's boot can be before the proxy is reachable.
+// server's boot can be before the proxy is reachable. An update that
+// could not fetch is run again (UpdateAttempts), so a package server
+// or proxy that refuses for a moment does not cost the pod its
+// software until it next starts.
 //
 // An update that fails does not stop the install: the lists already
 // on disk may have the package. Its reason goes with every failure,
@@ -146,11 +154,7 @@ func (in Installer) Install(ctx context.Context, pkgs []string) InstallResult {
 		return res
 	}
 	proxyFailure := in.awaitProxy(ctx)
-	updateStderr, err := in.run(ctx, "update")
-	updateFailure := updateFetchFailure(updateStderr)
-	if err != nil {
-		updateFailure = failureReason(updateStderr, err)
-	}
+	updateFailure := in.update(ctx)
 	if updateFailure != "" && proxyFailure != "" {
 		updateFailure = proxyFailure + "; " + updateFailure
 	}
@@ -187,6 +191,49 @@ func (in Installer) Install(ctx context.Context, pkgs []string) InstallResult {
 		}
 	}
 	return res
+}
+
+// updateAttemptsDefault is Installer.UpdateAttempts when zero: with
+// updateRetryInterval, half a minute of retries.
+const updateAttemptsDefault = 4
+
+// updateRetryInterval is the pause before each further update attempt.
+const updateRetryInterval = 10 * time.Second
+
+// update runs apt-get update until it fetches what it asks for, up to
+// UpdateAttempts times, and returns the last attempt's failure, or ""
+// once one succeeds. A failure is apt-get exiting non-zero or warning
+// that a fetch failed: it exits 0 when a package server refuses it.
+// Each retry is written to Log with its reason.
+func (in Installer) update(ctx context.Context) string {
+	attempts := in.UpdateAttempts
+	if attempts <= 0 {
+		attempts = updateAttemptsDefault
+	}
+	clk := in.Clock
+	if clk == nil {
+		clk = clock.New()
+	}
+	for i := 1; ; i++ {
+		stderr, err := in.run(ctx, "update")
+		failure := updateFetchFailure(stderr)
+		if err != nil {
+			failure = failureReason(stderr, err)
+		}
+		if failure == "" || i >= attempts || ctx.Err() != nil {
+			return failure
+		}
+		if in.Log != nil {
+			_, _ = fmt.Fprintf(in.Log, "agent-shell install-software: apt-get update could not fetch (%s); trying again in %s\n", failure, updateRetryInterval)
+		}
+		t := clk.NewTimer(updateRetryInterval)
+		select {
+		case <-t.C():
+		case <-ctx.Done():
+			t.Stop()
+			return failure
+		}
+	}
 }
 
 // proxyWaitDefault is Installer.ProxyWait when zero.
