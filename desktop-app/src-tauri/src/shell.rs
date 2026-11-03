@@ -1950,7 +1950,7 @@ pub fn set_resources(app: &AppHandle, id: &str, memory_mb: u32, cpus: u32) -> Re
 
 /// The release check, once now and then daily, after a team came up.
 fn after_started(app: &AppHandle, rt: &Runtime) {
-    first_boot_update(app, rt);
+    update_on_start(app, rt);
     check_now_id(app, &rt.id);
     if !rt.check_loop.swap(true, Ordering::SeqCst) {
         let app = app.clone();
@@ -1963,72 +1963,47 @@ fn after_started(app: &AppHandle, rt: &Runtime) {
     }
 }
 
-/// The first start after Kivali Desktop was updated: the VM image the
-/// team just booted bakes a newer Kivali than the team runs
-/// (`Report::baked`), and the team moves to it without being asked, once
-/// the operation that started it has ended (docs/developers/desktop-app.md,
-/// "Updating a team"). Each baked version is tried once per team
-/// (teams.json `first_boot_update`, [`Shell::claim_first_boot_update`]):
-/// an update that fails shows in Settings with Try again, and is not
-/// attempted again at every launch. An attempt that never became an
-/// operation (another operation got in first, or Kivali is quitting) is
-/// given back, so the next start tries again. The supervisor's verdict
-/// already leaves a development build on either side alone; a release
-/// whose upgrade needs steps by hand is shown, not applied; and a team
-/// setup has not finished with is left to setup.
-fn first_boot_update(app: &AppHandle, rt: &Runtime) {
-    let Some(version) = shell(app).claim_first_boot_update(rt) else { return };
-    eprintln!("kivali: {}: Kivali {version} is baked into the VM image; updating on this first start", rt.id);
+/// Every start of a team: when the VM image it just booted bakes a newer
+/// Kivali than it runs (`Report::baked`), as after Kivali Desktop was
+/// updated, the team moves to it without being asked, once the operation
+/// that started it has ended (docs/developers/desktop-app.md, "Updating a
+/// team"). A failed update shows in Settings with Try again, and the next
+/// start tries again. The supervisor's verdict already leaves a
+/// development build on either side alone; a release whose upgrade needs
+/// steps by hand is shown, not applied; and a team setup has not finished
+/// with is left to setup.
+fn update_on_start(app: &AppHandle, rt: &Runtime) {
+    if shell(app).update_wanted_on_start(rt).is_none() {
+        return;
+    }
     let app = app.clone();
     let id = rt.id.clone();
     std::thread::spawn(move || {
         let sh = app.state::<Shell>();
         let Some(rt) = sh.runtime(&id) else { return };
         rt.wait_idle();
+        // Asked again: the operation waited for may have paused or
+        // updated the team.
+        let Some(version) = sh.update_wanted_on_start(&rt) else { return };
+        eprintln!("kivali: {id}: Kivali {version} is baked into the VM image; updating on this start");
         if let Err(e) = update_team_with(&app, &id, true) {
-            eprintln!("kivali: {id}: first-boot update not started: {e}");
-            sh.release_first_boot_update(&id, &version);
+            eprintln!("kivali: {id}: update on start not started: {e}");
         }
     });
 }
 
 impl Shell {
-    /// Whether the team's first start under this VM image should update
-    /// it to the image's Kivali, and the claim of that one attempt: the
-    /// report's baked release is newer and not marked manual steps, the
-    /// team is not provisional, and the version is not the one already
-    /// recorded; it is then recorded (teams.json `first_boot_update`) and
-    /// returned.
-    fn claim_first_boot_update(&self, rt: &Runtime) -> Option<String> {
+    /// The Kivali version a team that just started should update to from
+    /// its VM image: the team runs, the report's baked release is newer
+    /// and not marked manual steps, and the team is not provisional.
+    fn update_wanted_on_start(&self, rt: &Runtime) -> Option<String> {
+        if !rt.is_running() {
+            return None;
+        }
         let baked = rt.report.lock().unwrap().as_ref().and_then(|r| r.baked.clone()).filter(|b| b.newer && !b.manual_steps)?;
-        {
-            let mut teams = self.teams.lock().unwrap();
-            let l = teams.get_mut(&rt.id).and_then(Team::local_mut)?;
-            if l.provisional || l.first_boot_update.as_deref() == Some(baked.version.as_str()) {
-                return None;
-            }
-            l.first_boot_update = Some(baked.version.clone());
-        }
-        if let Err(e) = self.save_teams() {
-            eprintln!("kivali: {}: recording the first-boot update: {e}", rt.id);
-        }
-        Some(baked.version)
-    }
-
-    /// Gives a claimed first-boot update back, when no operation came of
-    /// it, so the next start claims it again.
-    fn release_first_boot_update(&self, id: &str, version: &str) {
-        {
-            let mut teams = self.teams.lock().unwrap();
-            let Some(l) = teams.get_mut(id).and_then(Team::local_mut) else { return };
-            if l.first_boot_update.as_deref() != Some(version) {
-                return;
-            }
-            l.first_boot_update = None;
-        }
-        if let Err(e) = self.save_teams() {
-            eprintln!("kivali: {id}: releasing the first-boot update: {e}");
-        }
+        let teams = self.teams.lock().unwrap();
+        let l = teams.get(&rt.id).and_then(Team::local)?;
+        (!l.provisional).then_some(baked.version)
     }
 }
 
@@ -2847,15 +2822,14 @@ mod tests {
         assert!(!on_disk.get(&a).unwrap().local().unwrap().provisional);
     }
 
-    /// The first-boot update's one attempt: claimed when the VM image bakes
-    /// a newer release, recorded on disk so the next start does not claim
-    /// it again, given back when no operation came of it, and never
-    /// claimed for a provisional team, a release needing steps by hand or
-    /// an image no newer than the team. Without the record every launch
-    /// would retry a failed update; without the release a quit during the
-    /// first boot would use the attempt up with no update run.
+    /// An update from the VM image is wanted on every start until the team
+    /// is on that release: a team whose update failed and rolled back, or
+    /// that was paused through the app update, moves when it next starts
+    /// instead of staying on the old release. Never for a team that is not
+    /// running, a provisional team, a release needing steps by hand or an
+    /// image no newer than the team.
     #[test]
-    fn first_boot_update_is_claimed_once() {
+    fn an_update_is_wanted_at_every_start() {
         use crate::supervisor::wire::BakedRelease;
         let dir = tempfile::tempdir().unwrap();
         let mut teams = TeamsFile::default();
@@ -2869,32 +2843,26 @@ mod tests {
         let rt = sh.runtime(&a).unwrap();
 
         *rt.report.lock().unwrap() = Some(report(None));
-        assert_eq!(sh.claim_first_boot_update(&rt), None);
+        assert_eq!(sh.update_wanted_on_start(&rt), None);
         *rt.report.lock().unwrap() = Some(report(Some(BakedRelease { version: "0.17.0".into(), newer: false, manual_steps: false })));
-        assert_eq!(sh.claim_first_boot_update(&rt), None);
+        assert_eq!(sh.update_wanted_on_start(&rt), None);
         *rt.report.lock().unwrap() = Some(report(Some(BakedRelease { version: "0.18.0".into(), newer: true, manual_steps: true })));
-        assert_eq!(sh.claim_first_boot_update(&rt), None);
+        assert_eq!(sh.update_wanted_on_start(&rt), None);
 
         let newer = Some(BakedRelease { version: "0.18.0".into(), newer: true, manual_steps: false });
         *rt.report.lock().unwrap() = Some(report(newer.clone()));
-        assert_eq!(sh.claim_first_boot_update(&rt).as_deref(), Some("0.18.0"));
-        assert_eq!(sh.claim_first_boot_update(&rt), None);
-        let (on_disk, _) = TeamsFile::load(dir.path(), 0).unwrap();
-        assert_eq!(on_disk.get(&a).unwrap().local().unwrap().first_boot_update.as_deref(), Some("0.18.0"));
+        assert_eq!(sh.update_wanted_on_start(&rt).as_deref(), Some("0.18.0"));
+        // Asked again, as the next start does after a failed update.
+        assert_eq!(sh.update_wanted_on_start(&rt).as_deref(), Some("0.18.0"));
 
-        // Given back: the next start claims it again; a stale release
-        // (another version recorded since) changes nothing.
-        sh.release_first_boot_update(&a, "0.17.9");
-        assert_eq!(sh.claim_first_boot_update(&rt), None);
-        sh.release_first_boot_update(&a, "0.18.0");
-        let (on_disk, _) = TeamsFile::load(dir.path(), 0).unwrap();
-        assert_eq!(on_disk.get(&a).unwrap().local().unwrap().first_boot_update, None);
-        assert_eq!(sh.claim_first_boot_update(&rt).as_deref(), Some("0.18.0"));
+        // A team paused meanwhile waits for its next start.
+        *rt.report.lock().unwrap() = Some(Report { running: false, ..report(newer.clone()) });
+        assert_eq!(sh.update_wanted_on_start(&rt), None);
 
         // A provisional team is setup's.
         let prt = sh.runtime(&p).unwrap();
         *prt.report.lock().unwrap() = Some(report(newer));
-        assert_eq!(sh.claim_first_boot_update(&prt), None);
+        assert_eq!(sh.update_wanted_on_start(&prt), None);
     }
 
     /// The signed-out date: stamped when Claude goes from signed in to signed out,

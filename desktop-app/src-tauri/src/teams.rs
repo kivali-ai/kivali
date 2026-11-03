@@ -112,12 +112,6 @@ pub struct Local {
     /// setup window never opens a team that skipped the sign-in.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub provisional: bool,
-    /// The Kivali version baked into the VM image that the team's first
-    /// start after a Kivali Desktop update moved it to, or tried to
-    /// (`shell::first_boot_update`): each baked version is tried once,
-    /// so a failed update is not attempted again at every launch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub first_boot_update: Option<String>,
 }
 
 fn default_memory() -> u32 {
@@ -393,7 +387,6 @@ impl TeamsFile {
                 call_me: None,
                 signed_out_at: None,
                 provisional: false,
-                first_boot_update: None,
             }),
             paused_at: None,
         });
@@ -557,16 +550,17 @@ mod tests {
         assert_eq!(v, want);
     }
 
-    // The first-boot update's record survives a save and is absent until
-    // set: without it every launch would try a failed update again.
+    // teams.json from a Kivali that recorded its update attempts per team
+    // keeps loading without a repair, or an app update would disturb the
+    // team list, and the record goes with the next save.
     #[test]
-    fn first_boot_update_round_trips() {
-        let (mut f, _) = TeamsFile::parse(EXAMPLE).unwrap();
-        assert!(!f.to_json().contains("first_boot_update"));
-        f.get_mut("plainsong-3f2a").and_then(Team::local_mut).unwrap().first_boot_update = Some("0.17.0".into());
-        let (again, repairs) = TeamsFile::parse(&f.to_json()).unwrap();
+    fn an_older_update_record_is_dropped() {
+        let mut v: Value = serde_json::from_str(EXAMPLE).unwrap();
+        v["teams"][0]["first_boot_update"] = Value::String("0.17.0".into());
+        let (f, repairs) = TeamsFile::parse(&v.to_string()).unwrap();
         assert!(repairs.is_empty(), "{repairs:?}");
-        assert_eq!(again.get("plainsong-3f2a").and_then(Team::local).unwrap().first_boot_update.as_deref(), Some("0.17.0"));
+        assert!(f.get("plainsong-3f2a").is_some());
+        assert!(!f.to_json().contains("first_boot_update"));
     }
 
     #[test]
