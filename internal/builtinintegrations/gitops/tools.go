@@ -10,9 +10,10 @@ import (
 
 // Tools is clone, fetch and push as an agent is given them, unprefixed,
 // worded for in: its display name, the host as it names it, whether a
-// fetch and a push must name the repository, and whether a push may
-// force. They are the same for every caller: the access is checked on
-// each call, against the repository and the refs it names.
+// fetch and a push must name the repository, whether a push may force
+// and whether it takes workflows. The access is checked on each call,
+// against the repository and the refs it names; a built-in lists
+// WorkflowsSwitch only to a caller whose access allows it.
 func Tools(in Integration) []builtinintegrations.Tool {
 	return []builtinintegrations.Tool{
 		{Name: Clone, Description: cloneDescription(in), InputSchema: cloneSchema(in)},
@@ -55,14 +56,22 @@ func pushDescription(in Integration) string {
 		b.WriteString("A push never overwrites the remote's history: a + in front of an entry is refused. ")
 	}
 	b.WriteString("Deleting a remote ref is refused. ")
+	if in.WorkflowsSwitch {
+		b.WriteString("Set workflows to true when the commits you push add, change or delete a file under .github/workflows/; without it the host refuses such a push. ")
+	}
 	if in.NameRepository {
 		fmt.Fprintf(&b, "url is the repository's HTTPS URL on %s, or owner/name. ", in.HostWords)
 	} else {
 		fmt.Fprintf(&b, "url, when given, is the repository's HTTPS URL on %s, or owner/name; empty, the repository is the working copy's origin. ", in.HostWords)
 	}
-	if in.ForceSwitch {
+	switch {
+	case in.ForceSwitch && in.WorkflowsSwitch:
+		b.WriteString("Refused for a repository, a ref, a force push or workflow changes outside your access.")
+	case in.ForceSwitch:
 		b.WriteString("Refused for a repository, a ref or a force push outside your access.")
-	} else {
+	case in.WorkflowsSwitch:
+		b.WriteString("Refused for a repository, a ref or workflow changes outside your access.")
+	default:
 		b.WriteString("Refused for a repository or a ref outside your access.")
 	}
 	return b.String()
@@ -97,6 +106,9 @@ func pushSchema(in Integration) json.RawMessage {
 	}
 	if in.ForceSwitch {
 		props = append(props, property{"force", `{"type":"boolean","description":"optional: overwrite the remote refs even where the push is not a fast-forward"}`})
+	}
+	if in.WorkflowsSwitch {
+		props = append(props, property{"workflows", `{"type":"boolean","description":"optional: true when the commits you push add, change or delete a file under .github/workflows/"}`})
 	}
 	props = append(props, property{"url", urlProperty(in)})
 	if in.NameRepository {

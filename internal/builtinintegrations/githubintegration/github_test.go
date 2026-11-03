@@ -19,8 +19,9 @@ import (
 // exactly what setup may do as the design names it (GitHub's own pages
 // only, one field, the five keeps and no hand-over to a sign-in; no
 // client id or secret, which nothing reads and which the page would
-// list as kept), keep
-// the access form the shipped bundle has, so agents' access carries
+// list as kept), name the hosts a job's log is fetched from, keep
+// the access form the shipped bundle has (with the workflows switch
+// after it, off when absent), so agents' access carries
 // over, and name whoami as Test connection without listing it among
 // the tools, each write one marked as needing the write switch and
 // saying so by the switch's title, so the owner's words for an action
@@ -30,7 +31,7 @@ func TestManifest(t *testing.T) {
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
 		t.Fatalf("findings: %v", f.Texts())
 	}
-	if m.Name != "github" || m.Version != "2.1.0" || m.DisplayName != "GitHub" || len(m.UserConfig) != 0 || m.Kivali.SetupNotes != "" {
+	if m.Name != "github" || m.Version != "2.2.0" || m.DisplayName != "GitHub" || len(m.UserConfig) != 0 || m.Kivali.SetupNotes != "" {
 		t.Errorf("manifest = %+v", m)
 	}
 	c := m.Kivali.Connection
@@ -47,11 +48,13 @@ func TestManifest(t *testing.T) {
 	if want := []string{"app_id", "slug", "private_key", "installation_id", "installation_account"}; !slices.Equal(s.Keeps.Keys(), want) {
 		t.Errorf("keeps = %v, want %v", s.Keeps.Keys(), want)
 	}
-	if !slices.Equal(m.Kivali.Hosts, []string{"api.github.com", "github.com"}) || m.Kivali.Verify != "whoami" || len(m.Kivali.Packages) != 0 {
+	if want := []string{"api.github.com", "github.com", "productionresultssa*.blob.core.windows.net", "actions.githubusercontent.com"}; !slices.Equal(m.Kivali.Hosts, want) || m.Kivali.Verify != "whoami" || len(m.Kivali.Packages) != 0 {
 		t.Errorf("kivali = %+v", m.Kivali)
 	}
 	form := integration.AccessForm(m)
-	if form == nil || len(form.Fields) != 2 ||
+	if form == nil || len(form.Fields) != 3 ||
+		form.Fields[2].Key != "workflows" || form.Fields[2].Kind != integration.FieldSwitch || form.Fields[2].Title != "May change workflows" ||
+		!strings.Contains(form.Fields[2].Description, ".github/workflows") || !strings.Contains(form.Fields[2].Description, "Actions secrets") ||
 		form.Fields[0].Key != "repositories" || form.Fields[0].Kind != integration.FieldList || !form.Fields[0].Required ||
 		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create, comment, push and close" ||
 		!strings.Contains(form.Fields[1].Description, "push branches and tags") ||
@@ -83,6 +86,7 @@ func TestManifest(t *testing.T) {
 	}
 	want := []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 		"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
+		"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log",
 		"clone", "fetch", "push"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v", names)
@@ -144,10 +148,11 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 		write bool
 		want  []string
 	}{
-		{false, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare", "clone", "fetch"}},
+		{false, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare",
+			"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log", "clone", "fetch"}},
 		{true, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 			"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
-			"clone", "fetch", "push"}},
+			"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log", "clone", "fetch", "push"}},
 	} {
 		tools, err := g.Tools(context.Background(), agent(c.write, "acme/*"))
 		if err != nil {

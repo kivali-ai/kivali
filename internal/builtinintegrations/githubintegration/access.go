@@ -12,14 +12,16 @@ import (
 	"github.com/kivali-ai/kivali/internal/gitrepo"
 )
 
-// The access form's fields: the repositories an agent may use, and
+// The access form's fields: the repositories an agent may use;
 // whether it may open, comment on and close issues and pull requests,
 // push and delete branches in them (closing only what the app opened,
 // and deleting only a branch whose own commits are all the app's bot's,
-// actions.go).
+// actions.go); and whether its pushes may change workflow files
+// (.github/workflows), which also needs write.
 const (
 	repositoriesKey = "repositories"
 	writeKey        = "write"
+	workflowsKey    = "workflows"
 )
 
 // access is an agent's access as the owner's form fills it in. A
@@ -27,11 +29,17 @@ const (
 type access struct {
 	repositories []string
 	write        bool
+	workflows    bool
 }
+
+// pushesWorkflows reports whether the access lets a push change
+// workflow files: the workflows switch, with write, since only a
+// writer pushes.
+func (a access) pushesWorkflows() bool { return a.write && a.workflows }
 
 // readAccess reads the stored form: every non-blank string of
 // repositories (gitrepo.Match ignores one that is not a pattern), and
-// write when it is true and nothing else.
+// write and workflows each when it is true and nothing else.
 func readAccess(m map[string]any) access {
 	var a access
 	raw, _ := m[repositoriesKey].([]any)
@@ -41,6 +49,7 @@ func readAccess(m map[string]any) access {
 		}
 	}
 	a.write, _ = m[writeKey].(bool)
+	a.workflows, _ = m[workflowsKey].(bool)
 	return a
 }
 

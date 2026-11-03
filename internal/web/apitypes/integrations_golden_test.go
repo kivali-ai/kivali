@@ -443,7 +443,7 @@ func goldenIntegrationVersionSignIn() IntegrationVersion {
 // asking for the account first, and keep the app's values.
 func goldenIntegrationSetup() *IntegrationSetup {
 	return &IntegrationSetup{
-		Summary: "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues and pull requests, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
+		Summary: "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues, pull requests and workflow files, and read checks and Actions runs, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings.",
 		Hosts:   []string{"github.com"},
 		Fields: []SetupField{
 			{Key: "account", Title: "Account", Words: "An organization's name, or leave it blank for your personal account", Secret: false, SetupOnly: false},

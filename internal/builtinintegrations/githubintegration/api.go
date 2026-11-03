@@ -112,6 +112,21 @@ func (g *GitHub) httpClient() *http.Client {
 	return g.client
 }
 
+// noRedirectClient is a client that follows no redirect, a deadline
+// per request: for a job's log, whose redirect leaves the API for a
+// host its address is signed for (jobLog).
+func (g *GitHub) noRedirectClient() *http.Client {
+	g.noRedirectOnce.Do(func() {
+		g.noRedirect = &http.Client{
+			Timeout: requestTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	})
+	return g.noRedirect
+}
+
 // request is one REST request.
 type request struct {
 	method string
@@ -146,29 +161,9 @@ func (g *GitHub) do(ctx context.Context, r request) ([]byte, http.Header, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	var body io.Reader
-	if r.body != nil {
-		b, err := json.Marshal(r.body)
-		if err != nil {
-			return nil, nil, err
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, r.method, base.String()+r.path, body)
+	req, err := g.newRequest(ctx, base, r)
 	if err != nil {
 		return nil, nil, err
-	}
-	req.Header.Set("Accept", cmp.Or(r.accept, mediaJSON))
-	req.Header.Set("X-GitHub-Api-Version", apiVersion)
-	req.Header.Set("User-Agent", "Kivali")
-	switch {
-	case r.basic != nil:
-		req.SetBasicAuth(r.basic[0], r.basic[1])
-	case r.auth != "":
-		req.Header.Set("Authorization", "Bearer "+r.auth)
-	}
-	if r.body != nil {
-		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := g.httpClient().Do(req)
 	if err != nil {
@@ -191,6 +186,36 @@ func (g *GitHub) do(ctx context.Context, r request) ([]byte, http.Header, error)
 		}
 	}
 	return b, resp.Header, nil
+}
+
+// newRequest is r as an HTTP request to the API at base, with the
+// headers every request carries and its credential.
+func (g *GitHub) newRequest(ctx context.Context, base *url.URL, r request) (*http.Request, error) {
+	var body io.Reader
+	if r.body != nil {
+		b, err := json.Marshal(r.body)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, r.method, base.String()+r.path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", cmp.Or(r.accept, mediaJSON))
+	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	req.Header.Set("User-Agent", "Kivali")
+	switch {
+	case r.basic != nil:
+		req.SetBasicAuth(r.basic[0], r.basic[1])
+	case r.auth != "":
+		req.Header.Set("Authorization", "Bearer "+r.auth)
+	}
+	if r.body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
 }
 
 // getJSON GETs path and decodes its JSON answer into out.

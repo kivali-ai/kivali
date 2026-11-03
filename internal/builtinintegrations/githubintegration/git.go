@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -24,16 +26,20 @@ const tokenUser = "x-access-token"
 
 // gitIntegration is GitHub as its clone, fetch and push name it: on
 // github.com, a fetch and a push naming the repository, since a job's
-// token is narrowed to it, and no force switch: GitHub never
-// force-pushes.
-var gitIntegration = gitops.Integration{Name: Name, DisplayName: "GitHub", HostWords: gitHost, NameRepository: true}
+// token is narrowed to it, no force switch (GitHub never force-pushes),
+// and the workflows switch: GitHub refuses a push that changes a
+// workflow file unless its token may write workflows, which a push asks
+// for only when the agent says its commits do and its access allows it
+// (gitPolicy). An agent is listed workflows only when its access allows
+// it (Tools); any other that gives it is refused for its access.
+var gitIntegration = gitops.Integration{Name: Name, DisplayName: "GitHub", HostWords: gitHost, NameRepository: true, WorkflowsSwitch: true}
 
 // gitTools are clone, fetch and push as the manifest declares them,
 // for the owner: push needs the write switch.
 var gitTools = []integration.Tool{
 	{Name: gitops.Clone, Description: "Clone a repository the agent's access names into its files, with a token for that repository alone; when the access allows writing, its git identity is the GitHub App's bot. Reads only."},
 	{Name: gitops.Fetch, Description: "Fetch new commits and tags into the agent's working copy of a repository its access names, with a token for that repository alone. Reads only."},
-	{Name: gitops.Push, Description: "Push branches and tags to a repository the agent's access names, with a token for that repository alone. Never forced, never deleting; GitHub's branch protection applies." + needsWrite, Access: writeKey},
+	{Name: gitops.Push, Description: "Push branches and tags to a repository the agent's access names, with a token for that repository alone. Never forced, never deleting; GitHub's branch protection applies. Commits that change workflow files (.github/workflows) need the separate workflows switch as well, and the agent saying so." + needsWrite, Access: writeKey},
 }
 
 var (
@@ -48,9 +54,10 @@ func (g *GitHub) Hosts(builtinintegrations.Connection) []string { return []strin
 // gitPolicy is what caller may do through conn with the clone, fetch
 // or push name, and the connection's values: on github.com, the
 // access's repositories to clone and fetch, and with write to push to
-// as well, any branch or tag, never forced. A push without write is
-// refused as every write action is, and a connection setup has not
-// finished refuses every call.
+// as well, any branch or tag, never forced, changing workflow files
+// only with the workflows switch too. A push without write is refused
+// as every write action is, and a connection setup has not finished
+// refuses every call.
 func gitPolicy(caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string) (gitops.Policy, connection) {
 	p := gitops.Policy{Integration: gitIntegration, Host: gitHost}
 	acc := readAccess(caller.Access)
@@ -70,13 +77,15 @@ func gitPolicy(caller builtinintegrations.Caller, conn builtinintegrations.Conne
 	} else {
 		p.Pull = acc.repositories
 	}
+	p.Workflows = acc.pushesWorkflows()
 	return p, c
 }
 
 // callGit is a clone's, a fetch's or a push's first request: the call
 // checked (gitops.Check), then a token minted for its job alone
 // (jobToken), narrowed to the call's repository and to reading its
-// contents, or for a push writing them; a repository under another
+// contents, or for a push writing them, and its workflow files too when
+// the push says it changes them (jobPermissions); a repository under another
 // account than the installation's is refused first (narrowedName). A
 // refused call mints nothing. A clone for an agent whose access may
 // write also names the app's bot user as the working copy's git
@@ -101,10 +110,16 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 		echoed, _ := clip(repo.Path, 200)
 		return nil, refuse(fmt.Sprintf("A GitHub repository is owner/name, and %s is not one.", echoed), "the repository is not owner/name")
 	}
-	tok, err := g.jobToken(ctx, c, repo.Path, jobPermissions(name))
+	tok, err := g.jobToken(ctx, c, repo.Path, jobPermissions(name, call.Workflows()))
 	if err != nil {
 		var te *tokenError
-		if errors.As(err, &te) {
+		switch {
+		case errors.As(err, &te) && call.Workflows() && te.api.Status == http.StatusUnprocessableEntity:
+			// GitHub mints no token at all for a permission the
+			// installation lacks.
+			return failed("GitHub refused the GitHub App a token that may change workflow files in " + repo.Path + " (HTTP 422): " + sentence(te.api.Message) +
+				". The app's installation may lack the workflows permission; ask the owner to approve it on GitHub."), nil
+		case errors.As(err, &te):
 			return failed(te.words()), nil
 		}
 		return nil, err
@@ -124,24 +139,47 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 }
 
 // jobPermissions is what the job of the action name may do besides
-// metadata read: write the repository's contents for a push, read them
-// for a clone or a fetch.
-func jobPermissions(name string) permissions {
-	if name == gitops.Push {
+// metadata read: read the repository's contents for a clone or a
+// fetch; for a push, write them, and write its workflow files as well
+// when workflows (the push said its commits change one, and the access
+// allowed it: gitops.Call.Workflows). A push without it cannot change a
+// workflow file: GitHub refuses it whole.
+func jobPermissions(name string, workflows bool) permissions {
+	switch {
+	case name == gitops.Push && workflows:
+		return perms("contents", "write", workflowsPermission, "write")
+	case name == gitops.Push:
 		return perms("contents", "write")
 	}
 	return perms("contents", "read")
 }
+
+// workflowsPermission is GitHub's permission to change a repository's
+// workflow files, which a push needs for a commit that touches one.
+// GitHub offers it as write alone.
+const workflowsPermission = "workflows"
+
+// workflowRefusal matches GitHub's refusal of a push that changes a
+// workflow file with a token that may not: "refusing to allow a GitHub
+// App to create or update workflow `.github/workflows/x.yml` without
+// `workflows` permission".
+var workflowRefusal = regexp.MustCompile("(?i)without `?workflows`? permission")
 
 // Complete puts the shell's result in words for the agent and the
 // audit, with the call checked again under the access and the
 // connection as they are at the second request (gitops.Complete). A
 // writer's clone that landed without the bot's identity (GitHub did not
 // give the bot user, or the shell could not write it) says commits made
-// there will not read as the app's. It mints no token.
+// there will not read as the app's, and a push GitHub refused for
+// changing a workflow file says what to do (workflowWords). It mints no
+// token.
 func (g *GitHub) Complete(_ context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage, result shelljob.Result) (*builtinintegrations.Result, error) {
 	p, _ := gitPolicy(caller, conn, name)
 	res, err := gitops.Complete(name, args, p, conn.ID, result)
+	if err == nil && res != nil && res.IsError && len(res.Content) > 0 && name == gitops.Push &&
+		result.Git != nil && workflowRefusal.MatchString(result.Git.Error) {
+		res.Content[0] = strings.TrimRight(res.Content[0], " ") + " " + workflowWords(readAccess(caller.Access), args)
+	}
 	if err != nil || res == nil || res.IsError || len(res.Content) == 0 {
 		return res, err
 	}
@@ -149,6 +187,26 @@ func (g *GitHub) Complete(_ context.Context, caller builtinintegrations.Caller, 
 		res.Content[0] += noIdentity
 	}
 	return res, nil
+}
+
+// workflowWords follow the answer of a push GitHub refused for changing
+// a workflow file: push again saying so, when the access allows it and
+// the push did not say so; ask the owner for the switch, when the
+// access does not allow it; or, when the push said so and still was
+// refused, ask the owner to approve the app's workflows permission on
+// GitHub.
+func workflowWords(acc access, args json.RawMessage) string {
+	var a struct {
+		Workflows bool `json:"workflows"`
+	}
+	_ = json.Unmarshal(args, &a)
+	switch {
+	case !acc.pushesWorkflows():
+		return "The commits change a workflow file (.github/workflows), and your access to GitHub does not include changing workflows; ask the owner if your work needs it."
+	case !a.Workflows:
+		return "The commits change a workflow file (.github/workflows): push again with workflows set to true."
+	}
+	return "GitHub refused the GitHub App's token the workflows permission; ask the owner to approve it for the app's installation on GitHub."
 }
 
 // noIdentity follows the answer of a writer's clone that landed without

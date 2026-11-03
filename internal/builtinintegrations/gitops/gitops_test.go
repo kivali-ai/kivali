@@ -308,3 +308,57 @@ func TestNoForceSwitch(t *testing.T) {
 		t.Errorf("a push with a force switch = %q %s", push.Description, push.InputSchema)
 	}
 }
+
+// Why this test exists: workflows is a built-in's word that a push
+// changes workflow files, which its host refuses unless the push's
+// credential may. A built-in without WorkflowsSwitch takes no such
+// argument (Git (Basic)'s host has no such rule), so a call giving it,
+// true or false, reads as arguments that do not read, its words naming
+// what push takes. One with the switch takes it: false goes through as
+// any push, and true needs the policy's Workflows, else it is refused by
+// name; let through, the Call says so, and so does its audit row.
+func TestWorkflowsSwitch(t *testing.T) {
+	for _, args := range []string{
+		`{"path":"w","refs":["agent/x"],"workflows":true}`,
+		`{"path":"w","refs":["agent/x"],"workflows":false}`,
+	} {
+		_, err := Check(Push, json.RawMessage(args), pusher(false))
+		if ref := refusal(t, err); ref.Text != "forge_push takes path and refs, a list of strings, and optionally force (true or false) and url." || ref.Reason != "the arguments do not read" {
+			t.Errorf("%s = %+v", args, ref)
+		}
+	}
+	if push := Tools(forge())[2]; strings.Contains(string(push.InputSchema), "workflows") || strings.Contains(push.Description, "workflows") {
+		t.Errorf("a push without the switch = %q %s", push.Description, push.InputSchema)
+	}
+
+	p := anyRef()
+	p.WorkflowsSwitch = true
+	c, err := Check(Push, json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["main"],"workflows":false}`), p)
+	if err != nil || c.Workflows() {
+		t.Errorf("workflows false = %v, %v", c.Workflows(), err)
+	}
+	_, err = Check(Push, json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["main"],"workflows":true}`), p)
+	if ref := refusal(t, err); ref.Text != "The Hub integration's access for you does not allow pushing changes to workflow files (.github/workflows). Ask the owner if your work needs it." ||
+		ref.Reason != "the access does not allow pushing changes to workflow files" {
+		t.Errorf("not allowed = %+v", ref)
+	}
+	_, err = Check(Push, json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["main"],"workflows":"yes"}`), p)
+	if ref := refusal(t, err); ref.Text != "hub_push takes path, url and refs, a list of strings, and optionally workflows (true or false)." {
+		t.Errorf("not a boolean = %+v", ref)
+	}
+	p.Workflows = true
+	c, err = Check(Push, json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["main"],"workflows":true}`), p)
+	if err != nil || !c.Workflows() || c.Started() != "started: acme/widgets, push of refs/heads/main, changing workflow files" {
+		t.Errorf("allowed = %v %q, %v", c.Workflows(), c.Started(), err)
+	}
+	if push := Tools(p.Integration)[2]; !strings.Contains(string(push.InputSchema), `"workflows"`) ||
+		!strings.Contains(push.Description, "Set workflows to true when the commits you push add, change or delete a file under .github/workflows/") ||
+		!strings.HasSuffix(push.Description, "Refused for a repository, a ref or workflow changes outside your access.") {
+		t.Errorf("a push with the switch = %q %s", push.Description, push.InputSchema)
+	}
+	both := forge()
+	both.WorkflowsSwitch = true
+	if got := pushTakes(both); got != "forge_push takes path and refs, a list of strings, and optionally force (true or false), workflows (true or false) and url." {
+		t.Errorf("pushTakes = %q", got)
+	}
+}

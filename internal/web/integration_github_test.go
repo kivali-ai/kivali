@@ -96,7 +96,7 @@ type fakeGitHubAPI struct {
 }
 
 func newFakeGitHubAPI(t *testing.T) *fakeGitHubAPI {
-	f := &fakeGitHubAPI{t: t, perms: map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write"},
+	f := &fakeGitHubAPI{t: t, perms: map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "read"},
 		repos: 2, deleteStatus: http.StatusNoContent, grants: make(chan string, 8)}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
@@ -184,7 +184,7 @@ func (f *fakeGitHubAPI) serve(w http.ResponseWriter, r *http.Request) {
 		// The app asks for every permission this version needs; its
 		// installation may not have approved them all (perms).
 		answer(http.StatusOK, map[string]any{"id": 1234, "slug": ghSlug, "name": "Kivali Acme", "owner": map[string]string{"login": "acme", "type": "User"},
-			"permissions": map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write"}})
+			"permissions": map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "read"}})
 	case path == "GET /app/installations":
 		list := []any{}
 		if f.installed != 0 {
@@ -515,7 +515,7 @@ func TestGitHubRequirementsAndFixes(t *testing.T) {
 	githubInstall(t, srv, f)
 
 	f.set(func(f *fakeGitHubAPI) {
-		f.perms = map[string]string{"metadata": "read", "contents": "write", "issues": "read", "pull_requests": "write"}
+		f.perms = map[string]string{"metadata": "read", "contents": "write", "issues": "read", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "read"}
 	})
 	page := githubRequirements(t, srv, clk)
 	if r, _ := requirementOf(page, "permissions"); r.Met || r.Fix != "permissions" || page.Summary.Needs != 1 {
@@ -636,7 +636,7 @@ func githubV1(t *testing.T, srv *Server, mem *secrets.Memory) store.IntegrationC
 // Why this test exists: a team upgraded from GitHub 1.0.0 holds a
 // connection to the owner's own app that 2.x cannot use. It must not
 // read installed (agents' calls would fail, with Needs you saying
-// nothing), nor be deleted at boot: the version in use becomes 2.1.0
+// nothing), nor be deleted at boot: the version in use becomes 2.2.0
 // with 1.0.0 superseded, the record and Secret stay as they are, and
 // GitHub reads available with one row saying to set it up again. The
 // install then takes the record over at its first Keep: every 1.0.0
@@ -648,7 +648,7 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 	srv.BuiltinIntegrations.Lookup("github").(*githubintegration.GitHub).TokenURL = f.srv.URL + "/login/oauth/access_token"
 	old := githubV1(t, srv, mem)
 	vs, _ := srv.Store.IntegrationVersions("github")
-	if len(vs) != 2 || vs[0].Version != "2.1.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
+	if len(vs) != 2 || vs[0].Version != "2.2.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
 		t.Fatalf("versions = %+v", vs)
 	}
 	page := githubPage(t, srv)

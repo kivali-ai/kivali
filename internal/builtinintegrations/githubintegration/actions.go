@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -57,7 +58,12 @@ const needsWrite = " Only when the agent's access may create, comment, push and 
 
 // actions is every REST action: the manifest's tools are these in this
 // order, less the ownerOnly one, then clone, fetch and push (git.go).
-var actions = []action{
+// The CI actions (ci.go) follow the others.
+var actions = slices.Concat(repoActions, ciActions)
+
+// repoActions are the REST actions on a repository's issues, pull
+// requests, branches and commits, and whoami.
+var repoActions = []action{
 	{
 		name:             actionListRepositories,
 		description:      "List the GitHub repositories your access includes, one per line, with whether each is private, when it was last updated and its description.",
