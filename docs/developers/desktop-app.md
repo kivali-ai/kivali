@@ -380,10 +380,8 @@ because the command-line supervisor uses it without the shell.
   paused; also, when known, when Claude signed out (`signed_out_at`,
   D4: stamped by the watch loop on a signed-in to signed-out change,
   cleared by any sign-in), `provisional: true` while the setup that
-  made it has not finished ("The flows"), and `first_boot_update`, the
-  baked Kivali version the team's first start after an app update moved
-  it to or tried to ("Updating a team"; each is tried once). A team
-  **elsewhere** has only its origin.
+  made it has not finished ("The flows"). A team **elsewhere** has only
+  its origin.
 - New ids are the name's ASCII letters and digits, lower-cased,
   non-alphanumerics folded to single dashes, at most 16 characters,
   then four random hex digits (`plainsong-3f2a`; `team-<hex>` when
@@ -1345,19 +1343,15 @@ its first stage is "Checking the update" and short
 follows; the rest is the same journal, snapshot and rollback. The feed's
 What's new attaches only when the feed names that same release.
 
-**After an app update**, the team's first start brings the new Kivali:
-`after_started` (`shell::first_boot_update`), on every start and on a
-team adopted at launch, reads `Report.baked`, and when it is newer and
-not marked `manual_steps` runs the update from the image without asking,
-once the operation that started the team has ended (`Runtime::wait_idle`),
-as the Update… op with its stages, notifications and failure banner. It
-is tried once per baked version per team: `first_boot_update` in
-teams.json is written to that version before the update starts
-(`Shell::claim_first_boot_update`), so a failed update (or a crash during
-it, which the supervisor's journal recovers) shows the banner with Try
-again… and is not attempted again at every launch; an attempt that never
-became an operation (another operation got in first, Kivali quitting) is
-given back (`release_first_boot_update`), so the next start tries again.
+**After an app update**, a team's next start brings the new Kivali,
+whenever that start comes: `after_started` (`shell::update_on_start`), on
+every start and on a team adopted at launch, reads `Report.baked`, and
+while it is newer and not marked `manual_steps` runs the update from the
+image without asking, once the operation that started the team has ended
+(`Runtime::wait_idle`), as the Update… op with its stages, notifications
+and failure banner. Nothing records an attempt, so a failed update (or a
+crash during it, which the supervisor's journal recovers) shows the banner
+with Try again…, and the team's next start tries again.
 Quit waits for a running update as it does for any operation. The supervisor's verdict keeps a development build on either
 side out of it (a local build never moves a real team, and a dev team keeps
 its dev chart; Restart serves it), and a team setup has not finished with
