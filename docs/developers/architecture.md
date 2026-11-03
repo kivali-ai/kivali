@@ -307,7 +307,13 @@ The proxy serves five kinds of request, told apart by
   software install at start, and a shell command that runs before its
   runtime has handed the shell its credential. The host must match the
   allowlist, a file the server writes from `/data/allowed_egress.yaml`
-  (Org → Network) into a shared emptyDir; the proxy hot-reloads it. A
+  (Org → Network) into a shared emptyDir; the proxy hot-reloads it.
+  The emptyDir is empty when the server's pod starts and the
+  `kivali-egress` Service publishes the pod before it is ready, so the
+  proxy listens only once that file exists (`--allowlist-wait`, two
+  minutes, after which it listens with an empty list): listening
+  earlier, it would refuse `deb.debian.org` to agent shells installing
+  their software at start. A
   pattern covers its name and every subdomain; one with `*` or `[...]`
   after an optional leading `*.` is a per-label glob (`path.Match` on
   each label, so a wildcard never crosses a dot). The default, written

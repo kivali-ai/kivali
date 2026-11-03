@@ -5,7 +5,9 @@
 // server pod, sharing an emptyDir with the server for its two files:
 // the allowlist (allowlist.go) and the agents file (agents.go), both
 // hot-reloaded. Agent pods set HTTP_PROXY / HTTPS_PROXY to the Service
-// in front of this process.
+// in front of this process. It listens once the server has written the
+// allowlist, or once --allowlist-wait has passed without it
+// (startup.go).
 //
 // Each request is in one of five modes, decided by its
 // Proxy-Authorization:
@@ -87,10 +89,14 @@ func main() {
 	budgetDay := flag.Int64("budget-day", 4194304, "bytes an agent may send out in open mode per rolling 24 hours")
 	enforce := flag.Bool("enforce-budget", false, "refuse over-budget agents; otherwise count and log only")
 	maxPerSource := flag.Int("max-conns-per-source", 256, "connections one source IP may hold open at once")
+	allowlistWait := flag.Duration("allowlist-wait", defaultAllowlistWait, "how long to wait at start for the allowlist file before listening without it")
 	flag.Parse()
 
 	clk := clock.New()
 
+	if !awaitFile(*allowlistPath, *allowlistWait, clk) {
+		log.Printf("no allowlist at %s after %s; listening with none", *allowlistPath, *allowlistWait)
+	}
 	var allow Allowlist
 	if err := allow.Load(*allowlistPath); err != nil {
 		log.Fatalf("load allowlist: %v", err)
