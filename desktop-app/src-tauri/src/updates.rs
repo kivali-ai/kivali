@@ -293,7 +293,7 @@ mod tests {
         BakedRelease { version: version.into(), newer, manual_steps: false }
     }
 
-    // Guards the first-boot update's offer: the VM image's release
+    // Guards the offer of an update from the VM image: its release
     // stands in for the feed's whether the feed was reached, failed or
     // named something older, and steps aside only for a feed release
     // above it. A baked Kivali the supervisor judged not newer (a dev

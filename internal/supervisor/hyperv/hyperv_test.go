@@ -355,9 +355,13 @@ func newMachine(t *testing.T, client *broker.Client, format bool) (*machine, *by
 	if err != nil {
 		t.Fatalf("NewMachine: %v", err)
 	}
-	// The guest, which runs as this account, is admitted to the console
-	// pipe as this account is (Hyper-V connects as LocalSystem).
-	return mAny.(*machine), &log, host.DirKey(abs)
+	// A test that ends with the console open leaves doneWhenOff asking a
+	// broker that has gone, so that wait is cut short here. The guest,
+	// which runs as this account, is admitted to the console pipe as this
+	// account is (Hyper-V connects as LocalSystem).
+	m := mAny.(*machine)
+	m.offWait = 100 * time.Millisecond
+	return m, &log, host.DirKey(abs)
 }
 
 func waitEvent(t *testing.T, m *machine, want supervisor.EventKind) {
@@ -480,7 +484,7 @@ func TestDoneWaitsForOffAfterThePipeEnds(t *testing.T) {
 	fb := &fakeBroker{id: "d1e2f3a4-0000-0000-0000-0000000000b1", state: broker.StateRunning}
 	client := serveBroker(t, fb)
 	m, _, key := newMachine(t, client, false)
-	m.offPoll = time.Millisecond
+	m.offPoll, m.offWait = time.Millisecond, offTimeout
 	g := startGuest(t, broker.ComPipe(key), false, false)
 	if err := m.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -536,7 +540,7 @@ func TestFailedStartReturnsOnceTheVMIsOff(t *testing.T) {
 	fb := &fakeBroker{id: "d1e2f3a4-0000-0000-0000-0000000000b3", state: broker.StateOff, startStatus: http.StatusInternalServerError, offAfter: 4}
 	client := serveBroker(t, fb)
 	m, _, _ := newMachine(t, client, false)
-	m.offPoll = time.Millisecond
+	m.offPoll, m.offWait = time.Millisecond, offTimeout
 	err := m.Start()
 	if err == nil || !strings.Contains(err.Error(), "not enough memory") {
 		t.Fatalf("Start = %v, want the broker's refusal", err)
