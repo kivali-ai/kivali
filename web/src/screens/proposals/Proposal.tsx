@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useHref, useNavigate, useParams } from 'react-router';
 import { ApiError, apiGet, apiPostForm } from '../../api/client';
 import type { AttachmentRef, NeedActionResponse, PersonRef, Proposal as ProposalData, ProposalDoc, ProposalMove, ProposalSummary } from '../../api/types.gen';
+import { attachmentAction, useOpenAttachment } from '../../app/attachments';
 import { useFrameChrome } from '../../app/chrome';
 import { AgentAvatar, Badge, Banner, Button, Card, DocDiff, EmptyState, Icon, Prose, Skeleton, Text, TextField, BREAKPOINT_TABBAR, mediaQuery } from '../../ds';
 import { agentIdentity, identityColorFor } from '../../lib/agentIdentity';
@@ -234,14 +235,16 @@ function DocBlock({ doc }: { doc: ProposalDoc }) {
 }
 
 function Attached({ items }: { items: readonly AttachmentRef[] }) {
+  const open = useOpenAttachment();
   if (items.length === 0) return null;
   return (
     <ul className="app-proposal-attachments" aria-label="Attachments">
       {items.map((a) => {
         const size = formatSize(a.size_bytes);
+        const { icon, title } = attachmentAction(a);
         return (
           <li key={a.url + a.name}>
-            <Button size="sm" variant="secondary" icon={<Icon name="download" />} title={'Download ' + a.name} onClick={() => window.open(a.url, '_blank', 'noopener')}>
+            <Button size="sm" variant="secondary" icon={<Icon name={icon} />} title={title} onClick={() => open(a)}>
               {size ? a.name + ' · ' + size : a.name}
             </Button>
           </li>

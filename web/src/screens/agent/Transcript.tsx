@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from 'react';
 import { Link, useHref, useNavigate } from 'react-router';
 import { apiGet } from '../../api/client';
+import { attachmentAction, useOpenAttachment } from '../../app/attachments';
 import type { AttachmentRef, ChatParty, ToolCallDetail, TranscriptRow } from '../../api/types.gen';
 import {
   Badge,
@@ -55,24 +56,16 @@ export const MarkdownBody = memo(function MarkdownBody({ md }: { md: string }) {
   return html ? <Prose html={html} className="app-chat-prose" /> : null;
 });
 
-function isMarkdownName(name: string): boolean {
-  return /\.(md|markdown|mdown|mkd)$/i.test(name.trim());
-}
-
-function openAttachment(a: AttachmentRef): void {
-  // Markdown opens rendered in a new tab; anything else downloads in place.
-  if (isMarkdownName(a.name)) window.open(a.url, '_blank', 'noopener');
-  else window.location.assign(a.url);
-}
-
 export function Attachments({ items }: { items: readonly AttachmentRef[] | undefined }) {
+  const open = useOpenAttachment();
   if (!items || items.length === 0) return null;
   return (
     <div className="app-chat-attachments">
       {items.map((a, i) => {
         const size = fileSize(a.size_bytes);
+        const { icon, title } = attachmentAction(a);
         return (
-          <Button key={a.url + i} variant="secondary" size="sm" icon={<Icon name="download" />} title={'Download ' + a.name} onClick={() => openAttachment(a)}>
+          <Button key={a.url + i} variant="secondary" size="sm" icon={<Icon name={icon} />} title={title} onClick={() => open(a)}>
             {size ? a.name + ' · ' + size : a.name}
           </Button>
         );

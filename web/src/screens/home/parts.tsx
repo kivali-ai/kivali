@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { AttachmentRef, PersonRef } from '../../api/types.gen';
+import { attachmentAction, useOpenAttachment } from '../../app/attachments';
 import { AgentAvatar, Button, Icon, PersonAvatar, Prose, Skeleton } from '../../ds';
 import { agentIdentity } from '../../lib/agentIdentity';
 import type { Identify } from '../../lib/agentIdentity';
@@ -32,10 +33,6 @@ export function Body({ markdown }: { markdown: string }) {
   return <Prose html={html} />;
 }
 
-function download(url: string): void {
-  window.open(url, '_blank', 'noopener');
-}
-
 /** Placeholder rows while a list loads: an avatar tile and two lines, shaped like the rows that replace them. */
 export function RowSkeletons({ count = 3 }: { count?: number }) {
   return (
@@ -53,15 +50,17 @@ export function RowSkeletons({ count = 3 }: { count?: number }) {
   );
 }
 
-/** Attachments as secondary sm buttons with a download icon: "hosting-quote.pdf · 84 KB". */
+/** Attachments as secondary sm buttons: "hosting-quote.pdf · 84 KB". Markdown opens as a document; the rest download. */
 export function Attachments({ items }: { items: readonly AttachmentRef[] }) {
+  const open = useOpenAttachment();
   if (items.length === 0) return null;
   return (
     <div className="app-home-files">
       {items.map((a) => {
         const size = formatSize(a.size_bytes);
+        const { icon, title } = attachmentAction(a);
         return (
-          <Button key={a.url + a.name} variant="secondary" size="sm" icon={<Icon name="download" />} title={'Download ' + a.name} onClick={() => download(a.url)}>
+          <Button key={a.url + a.name} variant="secondary" size="sm" icon={<Icon name={icon} />} title={title} onClick={() => open(a)}>
             {size ? a.name + ' · ' + size : a.name}
           </Button>
         );
