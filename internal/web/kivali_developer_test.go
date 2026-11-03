@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -272,6 +273,7 @@ func TestKivaliDeveloperToolsAreTheDevelopersOnly(t *testing.T) {
 		mcp.IntegrationListToolName:     `{}`,
 		mcp.IntegrationVersionsToolName: `{"name":"echo"}`,
 		mcp.IntegrationLogsToolName:     `{"name":"echo"}`,
+		mcp.IntegrationRestartToolName:  `{"name":"echo"}`,
 	} {
 		if res := callTool(t, dana, name, args); !res.IsError || res.Content[0] != notDeveloper {
 			t.Errorf("dana's %s = %+v", name, res)
@@ -417,5 +419,121 @@ func TestKivaliDeveloperReadsWhatIsInstalled(t *testing.T) {
 	}
 	if res := callTool(t, tools, mcp.IntegrationLogsToolName, `{"name":"crm","since":"yesterday"}`); !res.IsError || !strings.HasPrefix(res.Content[0], `since "yesterday" is not an RFC 3339 time`) {
 		t.Errorf("bad since = %+v", res)
+	}
+}
+
+// Why this test exists: integration_restart is the Kivali Developer's
+// one way to make a server start again, to see its start in the log or
+// to clear a stuck one. It must give the server a new pod even when the
+// old one still answers (a new token, so the old shim cannot come back
+// as the new one), tell the developer whether the new server connected
+// within its wait rather than answering before it knows, and leave a
+// line in the log the owner reads. It must never start what the owner
+// has not: a disabled integration, one with no approved version, or a
+// built-in, which has no pod.
+func TestKivaliDeveloperRestartsAnIntegration(t *testing.T) {
+	srv, _ := newTurnServer(t)
+	intTeam(t, srv)
+	hireDeveloper(t, srv)
+	prov := newFakeIntegrationProv()
+	reg, clk := withIntegrationRegistry(srv, prov)
+	tools := developerTools(t, srv, developerSlug, nil)
+	intInstalled(t, srv, "crm", "1.0.0")
+	first := attachShim(t, srv, "crm", toolTexts(nil))
+	before := prov.pod("crm").token
+	prov.takeCalls()
+	// The install's own changes asked for reconciles too; only the
+	// restart's is waited for below.
+	drainKick := func() {
+		select {
+		case <-reg.kickCh:
+		default:
+		}
+	}
+	drainKick()
+
+	restart := func() <-chan *mcp.ToolResult {
+		out := make(chan *mcp.ToolResult, 1)
+		go func() {
+			res, err := tools[mcp.IntegrationRestartToolName].Handler(context.Background(), json.RawMessage(`{"name":"crm"}`))
+			if err != nil {
+				res = &mcp.ToolResult{IsError: true, Content: []string{err.Error()}}
+			}
+			out <- res
+		}()
+		select {
+		case <-reg.kickCh:
+		case <-time.After(failsafeWait):
+			t.Fatal("no reconcile asked for")
+		}
+		return out
+	}
+	result := func(ch <-chan *mcp.ToolResult) *mcp.ToolResult {
+		t.Helper()
+		select {
+		case res := <-ch:
+			return res
+		case <-time.After(failsafeWait):
+			t.Fatal("integration_restart did not answer")
+			return nil
+		}
+	}
+
+	// The new pod's shim connects: the answer says it runs again.
+	ch := restart()
+	attachShim(t, srv, "crm", toolTexts(nil))
+	res := result(ch)
+	if res.IsError || res.Content[0] != "crm is running again in a new pod. integration_logs shows its start." {
+		t.Errorf("restart = %+v", res)
+	}
+	if got := prov.takeCalls(); !reflect.DeepEqual(got, []string{"start crm 1.0.0"}) || prov.pod("crm").token == before {
+		t.Errorf("pod calls = %v, token kept %v", got, prov.pod("crm").token == before)
+	}
+	select {
+	case <-first.link.closed:
+	case <-time.After(failsafeWait):
+		t.Error("the old pod's link is still open")
+	}
+	rows, _ := srv.Store.ReadIntegrationLogTail("crm", 5)
+	if len(rows) != 1 || rows[0].Message != developerRestartLog || rows[0].Level != "info" {
+		t.Errorf("log = %+v", rows)
+	}
+
+	// No shim connects within the wait: the answer says so.
+	ch = restart()
+	if err := reg.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	clk.BlockUntil(1)
+	clk.Advance(developerRestartWait)
+	res = result(ch)
+	if res.IsError || res.Content[0] != "Kivali is starting crm in a new pod, and its server has not connected after 90 seconds. integration_logs shows how its start is going." {
+		t.Errorf("restart with no shim = %+v", res)
+	}
+
+	intUpload(t, srv, intBundle(t, "blog", "1.0.0"))
+	intInstalled(t, srv, "wiki", "1.0.0")
+	intPost(t, srv, intBase+"/wiki/disable")
+	writeBuiltinIntegration(t, srv, "maps")
+	drainKick()
+	for name, want := range map[string]string{
+		"nope": "No integration called nope is installed.",
+		"blog": "blog has no approved version, so it is not running.",
+		"wiki": "wiki is disabled, so it is not running. Only the owner can enable it.",
+		"maps": "maps ships with Kivali and runs inside it: it has no server of its own to restart.",
+	} {
+		if res := callTool(t, tools, mcp.IntegrationRestartToolName, `{"name":"`+name+`"}`); !res.IsError || res.Content[0] != want {
+			t.Errorf("restart %s = %+v", name, res)
+		}
+	}
+	select {
+	case <-reg.kickCh:
+		t.Error("a refused restart asked for a reconcile")
+	default:
+	}
+
+	withIntegrationRegistry(srv, nil)
+	if res := callTool(t, tools, mcp.IntegrationRestartToolName, `{"name":"crm"}`); !res.IsError || res.Content[0] != "Kivali runs no integration servers here, so there is none to restart." {
+		t.Errorf("restart with no pods = %+v", res)
 	}
 }

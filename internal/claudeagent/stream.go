@@ -486,6 +486,7 @@ func allowedToolNames(tools []provider.Tool) []string {
 		"integration_list",
 		"integration_versions",
 		"integration_logs",
+		"integration_restart",
 	)
 	for i, n := range names {
 		names[i] = cliToolName(n)

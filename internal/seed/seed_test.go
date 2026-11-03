@@ -262,7 +262,7 @@ func TestKivaliDeveloperRoleNamesItsToolsAndLimits(t *testing.T) {
 	if !builtinskills.Has(skill) || !strings.Contains(role, "`/files/skills/"+skill+"/SKILL.md`") {
 		t.Errorf("the role does not point at /files/skills/%s/SKILL.md, a skill Kivali ships", skill)
 	}
-	for _, tool := range []string{"integration_validate", "integration_publish", "integration_list", "integration_versions", "integration_logs"} {
+	for _, tool := range []string{"integration_validate", "integration_publish", "integration_list", "integration_versions", "integration_logs", "integration_restart"} {
 		if !strings.Contains(role, "`"+tool+"`") {
 			t.Errorf("the role does not name `%s`", tool)
 		}
