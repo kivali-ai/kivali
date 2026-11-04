@@ -3483,7 +3483,7 @@ no hook and nothing the working copy configures:
   and sha256, through a temporary file under `lfs/tmp` renamed into
   place. A file that does not arrive leaves the clone or the fetch as
   it landed, the rest kept, and `lfs_error` names the first. Neither
-  touches the working tree: the agent's own git-lfs checks the files out
+  touches the working tree: the git-lfs in the shell image ([deployment.md](deployment.md)) checks the files out
   (`git lfs checkout`).
 - **Reading and writing.** Through an `os.Root` at the working copy's
   `.git`, so no link under it leads a read or a write out of the

@@ -102,19 +102,31 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 ARG AGENT_SHELL_EXTRA_PACKAGES=""
 
 # Toolkit: bash and coreutils; python3 + pip + venv; the everyday
-# utilities (git, jq, ripgrep, fd-find, curl, wget, tar/zip/unzip,
-# less); pandoc (document conversion), poppler-utils (PDF text, page
-# images and metadata: pdftotext, pdftoppm, pdfinfo) and imagemagick
-# (raster images).
+# utilities (git, git-lfs, jq, ripgrep, fd-find, curl, wget,
+# tar/zip/unzip, less); pandoc (document conversion), poppler-utils
+# (PDF text, page images and metadata: pdftotext, pdftoppm, pdfinfo)
+# and imagemagick (raster images).
 # ca-certificates underpins outbound HTTPS.
 #
 # fd-find ships its binary as `fdfind` on Debian (collision with the
 # `fd` debugger). Symlink to `fd` so agent commands match upstream
 # documentation.
+#
+# git-lfs's filters are set for every user in /etc/gitconfig, with
+# smudge skipped: `git add` of an LFS-tracked file writes its pointer
+# and keeps its content in .git/lfs/objects, and a checkout leaves
+# pointers in place rather than downloading. The daemon moves LFS
+# files with the connection's token (internal/agentshell/gitlfs.go);
+# the shell has none, so a download from here would fail and fail the
+# checkout with it. `git lfs checkout` puts the files the daemon
+# fetched into the working tree. The image installs no hook; git-lfs
+# adds its own to a repository it is used in, and those run only for
+# the agent's own git commands, never for the daemon's.
 RUN set -eu; \
-    packages="bash ca-certificates coreutils git python3 python3-pip python3-venv jq ripgrep fd-find curl wget tar zip unzip less pandoc poppler-utils imagemagick"; \
+    packages="bash ca-certificates coreutils git git-lfs python3 python3-pip python3-venv jq ripgrep fd-find curl wget tar zip unzip less pandoc poppler-utils imagemagick"; \
     apt-get update; \
     apt-get install -y --no-install-recommends $packages ${AGENT_SHELL_EXTRA_PACKAGES}; \
+    git lfs install --system --skip-smudge --skip-repo; \
     ln -s /usr/bin/fdfind /usr/local/bin/fd; \
     mkdir -p /etc/kivali; \
     printf '%s\n' $packages ${AGENT_SHELL_EXTRA_PACKAGES} | sort -u > /etc/kivali/agent-shell-packages; \

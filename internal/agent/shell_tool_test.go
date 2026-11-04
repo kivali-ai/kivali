@@ -10,8 +10,8 @@ import (
 )
 
 func TestShellToolNamesTheReportedPackages(t *testing.T) {
-	d := ShellToolWithPackages(ShellSoftware{Packages: []string{"bash", "fd-find", "git", "imagemagick", "poppler-utils", "python3-pip", "ripgrep"}}).Description
-	want := "Installed packages: bash, fd-find (fd), git, imagemagick (magick, convert), poppler-utils (pdftotext, pdftoppm, pdfinfo), python3-pip (pip3), ripgrep (rg)."
+	d := ShellToolWithPackages(ShellSoftware{Packages: []string{"bash", "fd-find", "git", "git-lfs", "imagemagick", "poppler-utils", "python3-pip", "ripgrep"}}).Description
+	want := "Installed packages: bash, fd-find (fd), git, git-lfs (git lfs), imagemagick (magick, convert), poppler-utils (pdftotext, pdftoppm, pdfinfo), python3-pip (pip3), ripgrep (rg)."
 	if !strings.Contains(d, want) {
 		t.Errorf("description lacks %q:\n%s", want, d)
 	}
