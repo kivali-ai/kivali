@@ -1096,8 +1096,11 @@ to 5 minutes, for containerd to list every one: k3s imports the image's
 tarballs (`agent/images`) as it starts, alongside the node coming up. A
 listed ref is taken as the image's, since release tags are immutable
 (a mutable tag never reaches this path: a development build is refused).
-Nothing is downloaded, so the room check counts only the snapshot and
-`minFreeBytes`, and there is no second check. From the journal on it is
+Nothing is downloaded, so the host's room check counts only the snapshot
+and `minFreeBytes`, and there is no second one; the data disk's room
+(journal step 1) is checked before the wait and again after it, both
+with no image cost, since k3s, not the upgrade, imported the images
+(short of it, nothing was changed). From the journal on it is
 the same upgrade: the chart is placed from the image at apply (as a first
 install's is), and a failure rolls back to the snapshot. `GET
 /v1/status`'s `baked` says ahead of time whether it would apply.
@@ -1121,6 +1124,33 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    ("updating this team needs 9.4 GB free on drive C:, and only 6.1 GB
    is free. Free up 3.3 GB there, then update it again; nothing was
    changed"), worded as the move of the data disk is.
+
+   Then room inside the guest, on the data disk (`df -P -k
+   /var/lib/kivali`), where containerd keeps the images (kubelet's
+   imagefs) and kubelet its pods (nodefs). kubelet's default hard
+   eviction thresholds are `imagefs.available<15%` and
+   `nodefs.available<10%`; one filesystem holds both, so the floor is
+   15% of the disk (9.6 GB of 64 GiB). Below it the node is tainted
+   `node.kubernetes.io/disk-pressure`, pods are evicted and none is
+   scheduled, and image garbage collection deletes every image no
+   running container uses that is not pinned. The upgrade needs the
+   floor, 1 GiB for the new release to start in, and three times the
+   bundle's download size for the import (containerd keeps the layers
+   and unpacks each beside them). Short of it: "updating this team needs
+   15.6 GB free on its data disk (4.5 GB for the new release's images,
+   plus the room Kubernetes keeps free), and only 8.1 GB is free. Free
+   up 7.5 GB of the team's files, then update it again; nothing was
+   changed". A disk `df` cannot read is not refused.
+
+   A server pod waiting on an image it cannot get (`ErrImagePull` and
+   the rest of `fatalWaiting`) fails the deployment check, except when
+   that image is the installed release's own server image and containerd
+   no longer lists it: the disk filled and image garbage collection
+   deleted it, the org cannot start on it again, and the upgrade, which
+   brings the new release's images, goes ahead (logging why).
+
+   Once everything above passed, the installed release's images are
+   pinned (see "Pinned images" below).
 2. Download chart and bundle into `downloads/<version>/`, verify SHA-256
    (a file appears under its name only once verified), read the chart's
    `Chart.yaml` (its version must equal release.json's `version`, or the
@@ -1134,7 +1164,13 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    Once the images are imported (which grows the data disk), the room
    beside the data disk is checked again as in 1, the org still
    running; short of it, the upgrade stops there and deletes the
-   downloads.
+   downloads. So is the data disk's room inside the guest, measured now
+   with the images in: the floor and 1 GiB. Short of it, the upgrade
+   also removes the images it just imported (`ctr images rm --sync`,
+   only those containerd did not list before), which would otherwise
+   hold the running org under the floor, and says the team is still
+   running as before. Then both releases' images are pinned, before the
+   snapshot, so the restored disk of a rollback has them pinned too.
 3. Journal `{from, to, step: prepared, snapshot, started}`.
 4. `quiescing`: delete agent pods with a wait, clean shutdown.
 5. `snapshotting`: remove any stale snapshot, the Host's `Snapshot` of
@@ -1176,17 +1212,53 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    a server that answers 404 (a release from before `/readyz/agents`)
    is not waited for. The wait is the `starting-agents` stage, and each
    change in M or N is its progress, M of N.
-8. `committed` (and `kivali` = to), delete the snapshot and
-   `downloads/<version>/`, clear the journal.
+8. `committed` (and `kivali` = to), pin only the new release's images,
+   delete the snapshot and `downloads/<version>/`, clear the journal.
 
 Rollback (failure in 6 or 7): step `rolling-back`, stop the VM, swap the
 snapshot over the data disk with the Host's durable `Rename` (on Windows
 the broker's `POST /v1/vhd/restore`; the snapshot's deletion likewise
 goes through `DELETE /v1/vhd/snapshot`), clear the journal,
-delete the downloads, boot and wait for the old chart. If the rename
-succeeded but the restored disk then fails to boot, the error says the
-disk was restored to the old release and starting it failed; it is not
-reported as a failed rollback.
+boot and wait for the old chart, pin only the old release's images,
+delete the downloads. If the rename succeeded but the restored disk then
+fails to boot or serve, the error says the disk was restored to the old
+release and starting it failed; it is not reported as a failed rollback.
+
+Every wait for the server (`waitServing`: install, `up`, restart, the
+upgrade's step 7 and the rollback's start) treats a full data disk as a
+failed start and says so ("the team's data disk is too full to run on:
+Kubernetes evicted the server (…) (8.1 GB free of 64.0 GB; Kubernetes
+stops the team below 9.6 GB free). Free up 2.5 GB of the team's files,
+then start it again"). It deletes the server pods that already ended
+(an earlier start's evicted pod) first. While the rollout is not done,
+each poll also looks for the node's `node.kubernetes.io/disk-pressure`
+taint, an evicted server pod (`status.reason` `Evicted`) and free space
+under the floor, and fails at once on any: a node under pressure
+schedules nothing, so the wait would only run out its 10 minutes. After
+`/readyz` answers 200 it looks once more, since a node that comes up
+under pressure answers once and evicts the server seconds later
+(kubelet's eviction manager acts on its next pass; free space under the
+floor is that pass's verdict ahead of time).
+
+### Pinned images
+
+A release's images exist only in the VM: they are imported from the
+release's bundle or the VM image's tarballs as `docker.io/library/
+kivali:<tag>` and the like, and nothing can pull them again. kubelet's
+image garbage collection (and its eviction under imagefs pressure)
+skips an image containerd reports as pinned, which is the label
+`io.cri-containerd.pinned=pinned`. `pinImages` sets that label on the
+images it keeps (`ctr images label`) and clears it from every other
+Kivali image (`kivali`, `kivali-egress-proxy`, `kivali-agent-shell`,
+`kivali-browser` at any tag), so images of releases no longer needed
+are left to the garbage collection. The installed release's images are
+the ones the HelmChart manifest's values name (server and egress proxy)
+plus the agent shell and browser at the server's tag, those containerd
+lists. The upgrade keeps the installed release's at its preflight, both
+releases' from step 2, the new release's once committed and the old
+release's once rolled back. With the installed release unknown (a
+manifest that cannot be read) nothing is changed. A failure to label is
+logged and does not stop the upgrade.
 
 On `up` with a journal (before the data disk is moved, on Windows: a
 journal an earlier version wrote names a snapshot beside the data disk

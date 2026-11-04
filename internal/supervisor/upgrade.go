@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -160,18 +161,45 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	if gs.State != guestapi.StateReady || !gs.NodeReady {
 		return fmt.Errorf("preflight: the VM is not healthy (state %s, node ready %v)", gs.State, gs.NodeReady)
 	}
+	// The images in containerd before the upgrade, and the installed
+	// release's among them: the release a rollback starts.
+	have, err := containerdImages(ctx, g)
+	if err != nil {
+		logf("the images in the VM: %v", err)
+	}
+	oldServer, oldRefs := installedRefs(ctx, g, have)
 	if err := deploymentState(ctx, g, "", "", nil); err != nil {
-		return fmt.Errorf("preflight: the org is not healthy: %w", err)
+		// An org whose own images are gone from the VM (the disk filled
+		// and kubelet deleted them) cannot start on them again; the new
+		// release brings its own, so the upgrade is the way forward.
+		var pull *imagePullError
+		if !errors.As(err, &pull) || have == nil || oldServer == "" || have[oldServer] {
+			return fmt.Errorf("preflight: the org is not healthy: %w", err)
+		}
+		logf("the org cannot start: its image %s is no longer in the VM (%v); the upgrade brings the new release's images", oldServer, err)
 	}
 	if err := s.upgradeRoom(pending, nothingChanged, logf); err != nil {
 		return err
 	}
+	var importCost uint64
+	if !o.Baked {
+		importCost = importFactor * uint64(rel.Images[s.platform()].Size)
+	}
+	if err := s.guestRoom(ctx, g, importCost, nothingChanged, logf); err != nil {
+		return err
+	}
+	pinImages(ctx, g, oldRefs, logf)
 
 	// 2. Fetch, verify and import (or find the VM image's). The org
 	// keeps running.
 	var sg staged
 	if o.Baked {
 		if sg, err = s.stageBaked(ctx, g, gs, baked, logf); err != nil {
+			return err
+		}
+		// k3s imported the VM image's images as it started, not the
+		// upgrade.
+		if err := s.guestRoom(ctx, g, 0, nothingChanged, logf); err != nil {
 			return err
 		}
 	} else {
@@ -182,7 +210,17 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 			s.dropDownloads(sg, logf)
 			return err
 		}
+		if err := s.guestRoom(ctx, g, 0, stillRunning, logf); err != nil {
+			// The images just imported would hold the disk under the
+			// floor, where kubelet starts evicting the running org.
+			removeImages(ctx, g, added(sg.images.Refs, have), logf)
+			s.dropDownloads(sg, logf)
+			return err
+		}
 	}
+	// Both releases' images are pinned before the snapshot: the one a
+	// rollback starts, and the one the upgrade starts.
+	pinImages(ctx, g, append(slices.Clone(oldRefs), sg.images.Refs...), logf)
 
 	// 3. Journal.
 	setStage(ctx, StageSnapshot)
@@ -253,6 +291,13 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 		logf("upgrade failed: %v", err)
 		_ = s.update(func(st *State) { st.Upgrade.Error = err.Error() })
 		restored, rerr := s.rollbackLocked(ctx, logf)
+		if restored {
+			// The restored disk has both releases' images pinned; the
+			// failed release's are left to the garbage collection.
+			if g, err := s.running(); err == nil {
+				pinImages(ctx, g, oldRefs, logf)
+			}
+		}
 		s.dropDownloads(sg, logf)
 		switch {
 		case rerr != nil && restored:
@@ -273,6 +318,11 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 			logf("stop: %v", serr)
 		}
 		return fmt.Errorf("the upgrade to %s could not be recorded (%w); the org was stopped, and the next start rolls back to %s", sg.meta.Version, err, from)
+	}
+	// Committed, the old release is no rollback target any more: its
+	// images are left to the garbage collection.
+	if g, err := s.running(); err == nil {
+		pinImages(ctx, g, sg.images.Refs, logf)
 	}
 	if err := s.removeSnapshot(ctx, snap); err != nil {
 		logf("delete snapshot: %v", err)

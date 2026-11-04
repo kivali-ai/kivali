@@ -129,6 +129,7 @@ desktop-app/
       cli.rs               --version, --check
       teams.rs             teams.json: reading, repairing, writing
       shell.rs             state: one Runtime per team here; the flows; the watch loop; quit
+      startqueue.rs        resumes one at a time; the one retry after a refusal for memory
       view.rs              team state (C9), phrases, operation stages, the memory rule
       windows.rs           setup, settings and the team windows; the navigation pin
       signin.rs            a team window's sign-in: login rewrite, the loopback return listener
@@ -1154,6 +1155,28 @@ confirm runs `pause_and_resume`:
 pause the other team, then resume this one. A start that failed for
 memory says so on C7 and in Settings, with "Pause X and resume".
 
+**One start at a time.** The estimate can have room for two teams that
+the hypervisor cannot power on together: Hyper-V's Dynamic Memory backs
+a VM's whole startup memory at power-on, and only gives back what the
+guest does not use once it has booted. So every resume (at launch,
+after an app update's installer could not start, Resume, Try again,
+"Pause X and resume") takes a place in one queue (`startqueue.rs`) and
+runs `up` only once the resume ahead of it has ended, however it
+ended. While it waits, its operation runs: the team shows as waking
+up, counts for its memory, and its lines say which team it waits for.
+A start the hypervisor refuses for memory (Hyper-V's "Not enough
+memory in the system to start the virtual machine",
+`startqueue::out_of_memory`) is tried once more a minute later
+(`startqueue::SETTLE`), still in its turn; refused again, the team
+couldn't start with failure `host-memory`, whose `reason` says this
+computer didn't have enough free memory to start it
+(`view::no_memory_reason`), with Try again. Any other failure is not
+tried again. Virtualization.framework reserves no memory at power-on,
+so on macOS a start is not refused this way; the queue is the same on
+both. The tests drive the queue's clock (`startqueue::Clock`) rather
+than waiting. Quit closes the queue: resumes still waiting give up and
+are recorded in `running_at_quit` with the teams that run.
+
 ## The flows
 
 **First launch** (no teams) opens the setup window on
@@ -1425,7 +1448,8 @@ login item; build the menu bar and the tray; then, off the main thread,
 adopt each team's left-behind supervisor and refresh its status (a
 running team gets its credential checked and its release check
 started), resume every team in `running_at_quit` that is not running
-(each through the memory check), and start the watch loop. Unless
+(each through the memory check, one after another in that order: "One
+start at a time"), and start the watch loop. Unless
 started with `--autostart`, the `last_open` team's window opens (setup
 when there are no teams). An update's relaunch keeps the arguments of
 the process it replaces, `--autostart` included (macOS: `app.restart()`
@@ -1442,9 +1466,10 @@ alert, a sheet on the window in front on macOS) when `ask_before_quit`
 is set and a team here is running or busy: "Quit Kivali? Plainsong and
 Home pause until you open Kivali again." with Quit, Cancel and, on
 macOS, a "Don't ask again" checkbox that turns `ask_before_quit` off
-(Settings → General turns it back on). Quitting then waits for every
-running operation, records the teams that run as `running_at_quit`
-(stamping their `paused_at`), and stops every team's supervisor in
+(Settings → General turns it back on). Quitting then ends the resumes
+still waiting their turn, waits for every running operation, records
+the teams that run, and those whose resume was waiting, as
+`running_at_quit` (stamping their `paused_at`), and stops every team's supervisor in
 parallel: an owned one RPC-first as above, one it does not own with
 `down` without `exit`. A team whose VM runs stops as its Pause
 operation (`Runtime::pause_for_exit`), so while it stops its window

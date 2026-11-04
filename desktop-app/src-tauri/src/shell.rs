@@ -9,6 +9,7 @@ use crate::downloads;
 use crate::ownersignin;
 use crate::platform;
 use crate::signin::PendingSignin;
+use crate::startqueue::{self, Ended, StartQueue, Starter, Ticket};
 use crate::supervisor::sidecar::{self, Sidecar, STOP_TIMEOUTS};
 use crate::supervisor::wire::{
     BakedRelease, CheckReport, CredentialStatus, OrgState, Progress, Report, SetupInfo, SetupRequest, SetupResult, StageProgress, Status,
@@ -508,6 +509,8 @@ pub struct Shell {
     /// A new team's machine, booting since "Create a team" was chosen and
     /// waiting for `create_team` to name its owner (`prepare_team`).
     prepared: Mutex<Option<Prepared>>,
+    /// Resumes, one at a time (startqueue.rs).
+    pub starts: Arc<StartQueue>,
 }
 
 /// See [`Shell::prepared`].
@@ -534,6 +537,10 @@ const VM_FAILURE: &str = "vm";
 /// (`Shell::follow_status`): moving the port takes `kivali-supervisor up
 /// --port`, outside Kivali.
 const PORT_FAILURE: &str = "port:";
+
+/// A team's recorded failure when this computer refused its VM the
+/// memory to start, twice ([`startqueue::start_in_turn`]).
+const HOST_MEMORY_FAILURE: &str = "host-memory";
 
 /// The supervisor's words when a report says the VM runs but the team's
 /// recorded port could not be bound (`forward_error`).
@@ -742,6 +749,7 @@ impl Shell {
             quitting: AtomicBool::new(false),
             loops: AtomicBool::new(false),
             prepared: Mutex::new(None),
+            starts: StartQueue::new(Box::new(startqueue::SystemClock)),
         };
         let here: Vec<(String, PathBuf, bool)> = {
             let t = shell.teams.lock().unwrap();
@@ -844,6 +852,7 @@ impl Shell {
                         ))
                     }
                     None if failure.as_deref() == Some(VM_FAILURE) => view::vm_reason(platform::vm_support()),
+                    None if failure.as_deref() == Some(HOST_MEMORY_FAILURE) => Some(view::no_memory_reason(&t.name)),
                     None if failure.as_deref().is_some_and(|f| f.starts_with(PORT_FAILURE)) => {
                         failure.as_deref().and_then(|f| f.strip_prefix(PORT_FAILURE)).map(str::to_string)
                     }
@@ -1628,10 +1637,62 @@ pub fn resume_team(app: &AppHandle, id: &str) -> Result<(), String> {
             return Err(format!("memory:{other}"));
         }
     }
-    run_op(app, rt, OpKind::Resume, move |app, sh, rt, progress| {
-        progress(label("Starting the Kivali supervisor"));
-        boot(app, sh, rt, req, progress)
-    })
+    let ticket = sh.starts.join(id);
+    run_op(app, rt, OpKind::Resume, move |app, sh, rt, progress| boot_in_turn(app, sh, rt, req, &ticket, progress))
+}
+
+/// A resume's boot, in its turn among the teams starting here
+/// (startqueue.rs). A start refused for memory twice records
+/// [`HOST_MEMORY_FAILURE`].
+fn boot_in_turn(app: &AppHandle, sh: &Shell, rt: &Runtime, req: UpRequest, ticket: &Ticket, progress: &mut dyn FnMut(Progress)) -> Result<(), String> {
+    let mut s = Resume { app, sh, rt, req, progress };
+    match startqueue::start_in_turn(ticket, &mut s) {
+        Ended::Started => Ok(()),
+        Ended::Failed(e) => Err(e),
+        Ended::NoMemory(e) => {
+            *rt.failure.lock().unwrap() = Some(HOST_MEMORY_FAILURE.into());
+            Err(e)
+        }
+        Ended::Closed => Err("Kivali is quitting.".into()),
+    }
+}
+
+/// A resume as [`startqueue::start_in_turn`] drives it.
+struct Resume<'a> {
+    app: &'a AppHandle,
+    sh: &'a Shell,
+    rt: &'a Runtime,
+    req: UpRequest,
+    progress: &'a mut dyn FnMut(Progress),
+}
+
+impl Starter for Resume<'_> {
+    fn waiting(&mut self, ahead: &str) {
+        (self.progress)(label(&waiting_line(self.sh.team(ahead).map(|t| t.name).as_deref())));
+    }
+
+    fn retrying(&mut self) {
+        (self.progress)(label(&retrying_line()));
+    }
+
+    fn start(&mut self) -> Result<(), String> {
+        (self.progress)(label("Starting the Kivali supervisor"));
+        boot(self.app, self.sh, self.rt, self.req.clone(), self.progress)
+    }
+}
+
+/// A queued resume's line while team `ahead` starts.
+fn waiting_line(ahead: Option<&str>) -> String {
+    format!("Waiting for {} to start first", ahead.unwrap_or("another team"))
+}
+
+/// A resume's line when its start was refused for memory and waits to try again.
+fn retrying_line() -> String {
+    format!(
+        "{} didn't have the memory free to start it. Trying again in {}",
+        view::capitalized(platform::THIS_COMPUTER),
+        view::about(startqueue::SETTLE.as_secs_f64())
+    )
 }
 
 /// Resume where nobody is asked first (launch, the team page's Try again): a team
@@ -1664,8 +1725,9 @@ pub fn pause_and_resume(app: &AppHandle, pause: &str, resume: &str) -> Result<()
         sh.set_paused_at(&rt.id);
         sh.set_running_at_quit(&rt.id, false);
         let rid = resume_id.clone();
+        let ticket = sh.starts.join(&rid);
         std::thread::spawn(move || {
-            let r = run_op(&app2, r, OpKind::Resume, move |app, sh, rt, progress| boot(app, sh, rt, req, progress));
+            let r = run_op(&app2, r, OpKind::Resume, move |app, sh, rt, progress| boot_in_turn(app, sh, rt, req, &ticket, progress));
             if let Err(e) = r {
                 eprintln!("kivali: {rid}: {e}");
             }
@@ -2426,12 +2488,14 @@ pub fn launch(app: &AppHandle) {
 /// pauses ([`Runtime::pause_for_exit`]). Returns the teams that ran.
 pub(crate) fn pause_all_for_exit(app: &AppHandle) -> Vec<String> {
     let sh = shell(app);
+    // Resumes still waiting their turn give up, and resume next launch.
+    let queued = sh.starts.close();
     discard_prepared(&sh);
     let rts = sh.runtimes();
     for rt in &rts {
         rt.wait_idle();
     }
-    let running: Vec<String> = rts.iter().filter(|r| r.is_running()).map(|r| r.id.clone()).collect();
+    let running = with_queued(rts.iter().filter(|r| r.is_running()).map(|r| r.id.clone()).collect(), queued);
     {
         let mut t = sh.teams.lock().unwrap();
         t.running_at_quit = running.clone();
@@ -2464,11 +2528,23 @@ pub(crate) fn resume_after_failed_install(app: &AppHandle, running: &[String]) {
     for rt in sh.runtimes() {
         rt.reopen();
     }
+    sh.starts.reopen();
     for id in running {
         if let Err(e) = resume_or_record(app, id) {
             eprintln!("kivali: {id}: resuming after the app update: {e}");
         }
     }
+}
+
+/// The teams that run, then those whose resume was still waiting its
+/// turn ([`StartQueue::close`]): both resume at the next launch.
+fn with_queued(mut running: Vec<String>, queued: Vec<String>) -> Vec<String> {
+    for id in queued {
+        if !running.contains(&id) {
+            running.push(id);
+        }
+    }
+    running
 }
 
 /// Quit (a dialog asks first when a team here is running and the setting says to).
@@ -2539,6 +2615,7 @@ fn do_quit(app: &AppHandle) {
 /// The system is ending the app without Quit (logout, shutdown): stop
 /// every supervisor this shell owns.
 pub fn on_exit(sh: &Shell) {
+    let queued = sh.starts.close();
     let mut rts = sh.runtimes();
     if let Some(p) = sh.prepared.lock().unwrap().take() {
         drop(p.go);
@@ -2547,7 +2624,7 @@ pub fn on_exit(sh: &Shell) {
     // As at Quit: the teams running now resume at the next launch (a
     // logout's login item, say). Quit has already recorded them.
     if !sh.quitting.load(Ordering::SeqCst) {
-        let running: Vec<String> = rts.iter().filter(|r| r.is_running()).map(|r| r.id.clone()).collect();
+        let running = with_queued(rts.iter().filter(|r| r.is_running()).map(|r| r.id.clone()).collect(), queued);
         let stamp = now_rfc3339();
         {
             let mut t = sh.teams.lock().unwrap();
@@ -3010,6 +3087,44 @@ mod tests {
         assert_eq!(rt.state().0, TeamState::Failed);
         // A report with no running VM never names a port failure.
         assert_eq!(port_failure(&Report { forward_error: Some("port 8080".into()), ..Default::default() }), None);
+    }
+
+    /// A start refused for memory twice shows couldn't start, saying this
+    /// computer did not have the memory free, with Try again; a team
+    /// waiting its turn shows as waking up, counted as starting.
+    #[test]
+    fn a_start_refused_for_memory_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut teams = TeamsFile::default();
+        let a = teams.add_here("Home", Kind::Personal, "a@example.com", &mut || 1);
+        let b = teams.add_here("Plainsong", Kind::Work, "b@example.com", &mut || 2);
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), teams, None);
+        let rt = sh.runtime(&a).unwrap();
+        *rt.failure.lock().unwrap() = Some(HOST_MEMORY_FAILURE.into());
+        let v = sh.team_view(&sh.team(&a).unwrap());
+        assert_eq!((v.state, v.phrase.as_str(), v.pause_first.as_deref()), (TeamState::Failed, "couldn't start", None));
+        assert_eq!(v.reason, Some(view::no_memory_reason("Home")));
+
+        // Queued behind Home: a resume operation, waiting.
+        let queued = sh.runtime(&b).unwrap();
+        *queued.op.lock().unwrap() = Some(TeamOp::new(OpKind::Resume, 0));
+        queued.op_progress(&label(&waiting_line(Some("Home"))));
+        let v = sh.team_view(&sh.team(&b).unwrap());
+        assert_eq!((v.state, v.phrase.as_str()), (TeamState::Starting, "waking up"));
+        assert_eq!(v.op.unwrap().lines, ["Waiting for Home to start first"]);
+        assert!(retrying_line().starts_with(&view::capitalized(platform::THIS_COMPUTER)));
+    }
+
+    /// Quit while resumes wait their turn: those teams resume at the
+    /// next launch too, after the ones that ran, each once.
+    #[test]
+    fn queued_resumes_count_as_running_at_quit() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(with_queued(ids(&["a"]), ids(&["b", "a", "c"])), ids(&["a", "b", "c"]));
+        let dir = tempfile::tempdir().unwrap();
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), TeamsFile::default(), None);
+        let _waiting = (sh.starts.join("a"), sh.starts.join("b"));
+        assert_eq!(sh.starts.close(), ids(&["a", "b"]));
     }
 
     /// A team whose recorded port another program holds: the supervisor
