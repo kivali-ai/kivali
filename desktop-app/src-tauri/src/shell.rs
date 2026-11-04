@@ -9,7 +9,7 @@ use crate::downloads;
 use crate::ownersignin;
 use crate::platform;
 use crate::signin::PendingSignin;
-use crate::startqueue::{self, Ended, StartQueue, Starter, Ticket};
+use crate::startqueue::{self, Ended, StartQueue, Starter, Ticket, Turn};
 use crate::supervisor::sidecar::{self, Sidecar, STOP_TIMEOUTS};
 use crate::supervisor::wire::{
     BakedRelease, CheckReport, CredentialStatus, OrgState, Progress, Report, SetupInfo, SetupRequest, SetupResult, StageProgress, Status,
@@ -654,6 +654,9 @@ pub struct TeamView {
     /// A team here: the memory the shell would let it use beside the
     /// teams running now (`view::memory_free_mb`; the memory dialog's "2 GB free").
     pub memory_free_mb: Option<u64>,
+    /// A team here whose resume waits its turn, or waits to try again
+    /// (startqueue.rs): it shows as starting, and Pause ends that start.
+    pub queued: bool,
     /// Downloads from the team's window, oldest first (downloads.rs):
     /// what its downloads card draws.
     pub downloads: Vec<downloads::DownloadView>,
@@ -907,6 +910,7 @@ impl Shell {
                     files: facts.as_ref().map(|f| f.files),
                     signed_in_as: facts.map(|f| f.email),
                     memory_free_mb: Some(view::memory_free_mb(hostinfo::memory_mb(), running_mb)),
+                    queued: self.starts.waiting(&t.id),
                     downloads: self.downloads.lock().unwrap().view(&t.id),
                 }
             }
@@ -947,6 +951,7 @@ impl Shell {
                     files: facts.as_ref().map(|f| f.files),
                     signed_in_as: facts.map(|f| f.email),
                     memory_free_mb: None,
+                    queued: false,
                     downloads: self.downloads.lock().unwrap().view(&t.id),
                 }
             }
@@ -1330,10 +1335,15 @@ pub fn prepare_team(app: &AppHandle) -> Result<(), String> {
         *slot = Some(Prepared { id, rt: rt.clone(), go });
         (rt, first, wait)
     };
+    let ticket = sh.starts.join_fixed(&rt.id);
     run_op(app, rt, OpKind::Create, move |app, sh, rt, progress| {
+        wait_turn(sh, &ticket, progress)?;
         progress(label("Starting the Kivali supervisor"));
         rt.ensure_supervisor(sh.vm_dir.as_deref())?;
         rt.supervisor.up(&first, progress).map_err(sup_err)?;
+        // The machine runs: the next start's turn comes while setup asks
+        // for the owner.
+        drop(ticket);
         match wait.recv() {
             Ok(Some(req)) => boot(app, sh, rt, req, progress),
             _ => Err("setup was not finished".into()),
@@ -1456,7 +1466,9 @@ pub fn create_team(app: &AppHandle, t: NewTeam) -> Result<String, String> {
     rt.provisional.store(true, Ordering::SeqCst);
     sh.runtimes.lock().unwrap().insert(id.clone(), rt.clone());
     let req = sh.up_request(&id).ok_or("the new team has no folder")?;
+    let ticket = sh.starts.join_fixed(&id);
     run_op(app, rt, OpKind::Create, move |app, sh, rt, progress| {
+        wait_turn(sh, &ticket, progress)?;
         progress(label("Starting the Kivali supervisor"));
         boot(app, sh, rt, req, progress)
     })?;
@@ -1654,6 +1666,20 @@ fn boot_in_turn(app: &AppHandle, sh: &Shell, rt: &Runtime, req: UpRequest, ticke
             Err(e)
         }
         Ended::Closed => Err("Kivali is quitting.".into()),
+        // Pause ended it before its VM powered on; the Pause that did so
+        // records the team as paused.
+        Ended::Cancelled => Ok(()),
+    }
+}
+
+/// Waits for `ticket`'s turn among the starts here, saying which team's
+/// start runs meanwhile: an update, which stops and boots the VM again,
+/// and a new team's first boot power a VM on as a resume does.
+fn wait_turn(sh: &Shell, ticket: &Ticket, progress: &mut dyn FnMut(Progress)) -> Result<(), String> {
+    match ticket.wait_turn(&mut |ahead| progress(label(&waiting_line(sh.team(ahead).map(|t| t.name).as_deref())))) {
+        Turn::Go => Ok(()),
+        Turn::Closed => Err("Kivali is quitting.".into()),
+        Turn::Cancelled => Err("The start was ended.".into()),
     }
 }
 
@@ -1672,7 +1698,8 @@ impl Starter for Resume<'_> {
     }
 
     fn retrying(&mut self) {
-        (self.progress)(label(&retrying_line()));
+        let name = self.sh.team(&self.rt.id).map(|t| t.name).unwrap_or_default();
+        (self.progress)(label(&retrying_line(&name)));
     }
 
     fn start(&mut self) -> Result<(), String> {
@@ -1686,10 +1713,12 @@ fn waiting_line(ahead: Option<&str>) -> String {
     format!("Waiting for {} to start first", ahead.unwrap_or("another team"))
 }
 
-/// A resume's line when its start was refused for memory and waits to try again.
-fn retrying_line() -> String {
+/// Team `name`'s resume line when its start was refused for memory and
+/// waits to try again, worded as the failure after the retry is
+/// ([`view::no_memory_reason`]).
+fn retrying_line(name: &str) -> String {
     format!(
-        "{} didn't have the memory free to start it. Trying again in {}",
+        "{} didn't have enough free memory to start {name}. Trying again in {}",
         view::capitalized(platform::THIS_COMPUTER),
         view::about(startqueue::SETTLE.as_secs_f64())
     )
@@ -1737,7 +1766,20 @@ pub fn pause_and_resume(app: &AppHandle, pause: &str, resume: &str) -> Result<()
 }
 
 pub fn pause_team(app: &AppHandle, id: &str) -> Result<(), String> {
-    let rt = shell(app).runtime(id).ok_or_else(no_team_here)?;
+    let sh = shell(app);
+    let rt = sh.runtime(id).ok_or_else(no_team_here)?;
+    // A resume still waiting its turn, or waiting to try again, holds the
+    // team's operation: it is ended, and the Pause runs once it has.
+    if sh.starts.cancel(id) {
+        let (app, id) = (app.clone(), id.to_string());
+        std::thread::spawn(move || {
+            rt.wait_idle();
+            if let Err(e) = pause_team(&app, &id) {
+                eprintln!("kivali: {id}: pausing after its start was ended: {e}");
+            }
+        });
+        return Ok(());
+    }
     run_op(app, rt, OpKind::Pause, |_app, sh, rt, progress| {
         *rt.failure.lock().unwrap() = None;
         if rt.supervisor.is_listening() {
@@ -1785,9 +1827,12 @@ pub fn update_team(app: &AppHandle, id: &str) -> Result<(), String> {
 /// Updates the team to the feed's release, or with `baked` to the Kivali
 /// baked into its VM image.
 fn update_team_with(app: &AppHandle, id: &str, baked: bool) -> Result<(), String> {
-    let rt = shell(app).runtime(id).ok_or_else(no_team_here)?;
+    let sh = shell(app);
+    let rt = sh.runtime(id).ok_or_else(no_team_here)?;
+    let ticket = sh.starts.join_fixed(id);
     let id = id.to_string();
     run_op_with(app, rt, OpKind::Update, baked, move |app, sh, rt, progress| {
+        wait_turn(sh, &ticket, progress)?;
         let before = rt.status().and_then(|s| s.kivali);
         let name = sh.team(&id).map(|t| t.name).unwrap_or_default();
         match rt.supervisor.upgrade(baked, progress) {
@@ -2681,7 +2726,7 @@ mod tests {
         for k in [
             "id", "name", "kind", "place", "url", "device", "state", "activity", "phrase", "reason", "pause_first", "op", "version", "dev",
             "update", "ai", "owner", "memory_mb", "cpus", "disk_used_bytes", "disk_size_bytes", "public_url", "paused_since", "last_reached",
-            "provisional", "agents", "working", "files", "signed_in_as", "memory_free_mb", "downloads",
+            "provisional", "agents", "working", "files", "signed_in_as", "memory_free_mb", "queued", "downloads",
         ] {
             assert!(t.get(k).is_some(), "team lacks {k}");
         }
@@ -3112,7 +3157,10 @@ mod tests {
         let v = sh.team_view(&sh.team(&b).unwrap());
         assert_eq!((v.state, v.phrase.as_str()), (TeamState::Starting, "waking up"));
         assert_eq!(v.op.unwrap().lines, ["Waiting for Home to start first"]);
-        assert!(retrying_line().starts_with(&view::capitalized(platform::THIS_COMPUTER)));
+        assert_eq!(
+            retrying_line("Home"),
+            format!("{} didn't have enough free memory to start Home. Trying again in {}", view::capitalized(platform::THIS_COMPUTER), view::about(60.0))
+        );
     }
 
     /// Quit while resumes wait their turn: those teams resume at the

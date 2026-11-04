@@ -56,7 +56,7 @@ Each team on your computer keeps the same local port for good, so anything that 
 
 Your computer does not have the team's memory free while another team runs. Choose to pause the other team, or lower this team's memory under **This Mac** (**This PC**) (it applies the next time the team resumes).
 
-When several teams resume, as when Kivali opens, they start one after another; a team waiting its turn shows as waking up. If a team still couldn't start because your computer didn't have enough free memory, Kivali tries it once more a minute later. If that fails too, close other apps or pause another team, then choose **Try again**.
+When several teams resume, as when Kivali opens, they start one after another; a team waiting its turn shows as waking up, and **Pause** stops it from starting. If a team still couldn't start because your computer didn't have enough free memory, Kivali tries it once more a minute later. If that fails too, close other apps or pause another team, then choose **Try again**.
 
 ### "Claude isn't signed in", or a notification that a team needs you
 

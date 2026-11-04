@@ -167,6 +167,9 @@ export interface Team {
   /** A team on this computer: the memory the shell would let it use beside
    *  the teams running now (the memory dialog's "this Mac has 2 GB free"); null elsewhere. */
   memory_free_mb: number | null;
+  /** A team here whose resume waits its turn, or waits to try again
+   *  (src-tauri/src/startqueue.rs): it shows as starting, and Pause ends that start. */
+  queued: boolean;
   /** Downloads from the team's window, oldest first (src-tauri/src/downloads.rs):
    *  what its downloads card (#/downloads/<id>) draws. */
   downloads: Download[];

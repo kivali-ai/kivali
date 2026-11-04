@@ -1098,9 +1098,9 @@ listed ref is taken as the image's, since release tags are immutable
 (a mutable tag never reaches this path: a development build is refused).
 Nothing is downloaded, so the host's room check counts only the snapshot
 and `minFreeBytes`, and there is no second one; the data disk's room
-(journal step 1) is checked before the wait and again after it, both
-with no image cost, since k3s, not the upgrade, imported the images
-(short of it, nothing was changed). From the journal on it is
+(journal step 1) is checked once, at the preflight, with no image cost,
+since k3s imported the images as it started, not the upgrade (short of
+it, nothing was changed). From the journal on it is
 the same upgrade: the chart is placed from the image at apply (as a first
 install's is), and a failure rolls back to the snapshot. `GET
 /v1/status`'s `baked` says ahead of time whether it would apply.
@@ -1134,13 +1134,21 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    `node.kubernetes.io/disk-pressure`, pods are evicted and none is
    scheduled, and image garbage collection deletes every image no
    running container uses that is not pinned. The upgrade needs the
-   floor, 1 GiB for the new release to start in, and three times the
-   bundle's download size for the import (containerd keeps the layers
-   and unpacks each beside them). Short of it: "updating this team needs
-   15.6 GB free on its data disk (4.5 GB for the new release's images,
-   plus the room Kubernetes keeps free), and only 8.1 GB is free. Free
-   up 7.5 GB of the team's files, then update it again; nothing was
-   changed". A disk `df` cannot read is not refused.
+   floor, 1 GiB for the new release to start in, and twice the bundle's
+   download size for the import: containerd keeps the layers as the
+   bundle holds them and unpacks each beside them, and layers the
+   installed release shares cost nothing. That is an estimate; the check
+   after the import (step 2) measures what the import took. Short of it:
+   "updating this team needs 13.6 GB free on its data disk (3.0 GB for
+   the new release's images, plus the room Kubernetes keeps free), and
+   only 8.1 GB is free. Free up 5.5 GB of the team's files, then update
+   it again; nothing was changed". A disk `df` cannot read is not
+   refused.
+
+   The deployment check comes after the server pods that already ended
+   are deleted (`kubectl delete pod --field-selector=status.phase=Failed`):
+   a pod an earlier start left evicted is history, and the room check
+   says whether the disk is short now.
 
    A server pod waiting on an image it cannot get (`ErrImagePull` and
    the rest of `fatalWaiting`) fails the deployment check, except when
@@ -1167,7 +1175,8 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    downloads. So is the data disk's room inside the guest, measured now
    with the images in: the floor and 1 GiB. Short of it, the upgrade
    also removes the images it just imported (`ctr images rm --sync`,
-   only those containerd did not list before), which would otherwise
+   only those containerd did not list before; when that list could not
+   be read, those at another tag than the installed release's), which would otherwise
    hold the running org under the floor, and says the team is still
    running as before. Then both releases' images are pinned, before the
    snapshot, so the restored disk of a rollback has them pinned too.
@@ -1228,17 +1237,22 @@ Every wait for the server (`waitServing`: install, `up`, restart, the
 upgrade's step 7 and the rollback's start) treats a full data disk as a
 failed start and says so ("the team's data disk is too full to run on:
 Kubernetes evicted the server (…) (8.1 GB free of 64.0 GB; Kubernetes
-stops the team below 9.6 GB free). Free up 2.5 GB of the team's files,
-then start it again"). It deletes the server pods that already ended
-(an earlier start's evicted pod) first. While the rollout is not done,
+stops the team below 9.6 GB free). It runs again once 2.5 GB more of
+the disk is free"). The message gives the amount and asks for no step:
+with the server evicted, nothing in the team can be reached to free it.
+It deletes the server pods that already ended (an earlier start's
+evicted pod) first. The deployment check fails at once on a server pod
+evicted for disk (`status.reason` `Evicted`, a message naming
+`ephemeral-storage`, which imagefs and nodefs pressure evict for; a pod
+evicted for memory is not the disk's). While the rollout is not done,
 each poll also looks for the node's `node.kubernetes.io/disk-pressure`
-taint, an evicted server pod (`status.reason` `Evicted`) and free space
-under the floor, and fails at once on any: a node under pressure
-schedules nothing, so the wait would only run out its 10 minutes. After
-`/readyz` answers 200 it looks once more, since a node that comes up
-under pressure answers once and evicts the server seconds later
-(kubelet's eviction manager acts on its next pass; free space under the
-floor is that pass's verdict ahead of time).
+taint and free space under the floor (`diskPressure`), and fails at
+once on either: a node under pressure schedules nothing, so the wait
+would only run out its 10 minutes. After `/readyz` answers 200 it looks
+once more at all three, since a node that comes up under pressure
+answers once and evicts the server seconds later (kubelet's eviction
+manager acts on its next pass; free space under the floor is that
+pass's verdict ahead of time).
 
 ### Pinned images
 
@@ -1247,11 +1261,13 @@ release's bundle or the VM image's tarballs as `docker.io/library/
 kivali:<tag>` and the like, and nothing can pull them again. kubelet's
 image garbage collection (and its eviction under imagefs pressure)
 skips an image containerd reports as pinned, which is the label
-`io.cri-containerd.pinned=pinned`. `pinImages` sets that label on the
-images it keeps (`ctr images label`) and clears it from every other
-Kivali image (`kivali`, `kivali-egress-proxy`, `kivali-agent-shell`,
-`kivali-browser` at any tag), so images of releases no longer needed
-are left to the garbage collection. The installed release's images are
+`io.cri-containerd.pinned=pinned`. `pinImages` reads every image's
+labels once (`ctr images ls`: the reference first, the labels last),
+then sets that label on the images it keeps (`ctr images label`) and
+clears it from every other Kivali image (`kivali`,
+`kivali-egress-proxy`, `kivali-agent-shell`, `kivali-browser` at any
+tag), labelling only those whose label differs, so images of releases
+no longer needed are left to the garbage collection. The installed release's images are
 the ones the HelmChart manifest's values name (server and egress proxy)
 plus the agent shell and browser at the server's tag, those containerd
 lists. The upgrade keeps the installed release's at its preflight, both

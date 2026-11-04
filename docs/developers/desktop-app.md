@@ -1161,9 +1161,20 @@ a VM's whole startup memory at power-on, and only gives back what the
 guest does not use once it has booted. So every resume (at launch,
 after an app update's installer could not start, Resume, Try again,
 "Pause X and resume") takes a place in one queue (`startqueue.rs`) and
-runs `up` only once the resume ahead of it has ended, however it
-ended. While it waits, its operation runs: the team shows as waking
-up, counts for its memory, and its lines say which team it waits for.
+runs `up` only once the start ahead of it has ended, however it
+ended. So does anything else that powers a VM on: an update (Update…,
+and the update a start runs when the VM image bakes a newer Kivali),
+which stops the VM and boots it again, holds its place for the whole
+update, and a new team's first boot (Create a team, and the machine
+prepared for setup, whose place ends once its VM runs, not when setup
+names the owner). While it waits, its operation runs: the team shows
+as waking up, counts for its memory, and its lines say which team it
+waits for. A resume waiting its turn, or waiting to try again, is
+`queued` in the team's view, and Pause is offered for it (the Team
+menu, and the Overview's status row): Pause ends that start
+(`StartQueue::cancel`) and pauses the team once its operation has
+ended. A resume whose VM is powering on, an update and a new team's
+boot are not ended this way.
 A start the hypervisor refuses for memory (Hyper-V's "Not enough
 memory in the system to start the virtual machine",
 `startqueue::out_of_memory`) is tried once more a minute later
@@ -1538,7 +1549,8 @@ on Windows inside each team window, below):
 - **Team**, present only while a team window is in front (or was last,
   while it is still showing), acting on that team: Pause Plainsong…
   (E1) / Resume Plainsong / Try starting Plainsong again, for a team
-  here and not while it is starting · Plainsong settings… · Open in
+  here and not while it is starting (Pause, though, while its resume
+  waits its turn) · Plainsong settings… · Open in
   browser ⇧⌘B.
 - **Window**: Minimize · Zoom · Bring all to front; macOS lists the
   open team windows itself.
@@ -1573,7 +1585,8 @@ commands are on their pages, in the tray and in Settings.
 - **View**: Reload Ctrl+R · Actual size Ctrl+0 · Zoom in Ctrl+= (also
   Ctrl+Shift+=) · Zoom out Ctrl+-.
 - **Team**: Pause Plainsong… (E1) / Resume Plainsong / Try starting
-  Plainsong again, for a team here and not while it is starting ·
+  Plainsong again, for a team here and not while it is starting
+  (Pause, though, while its resume waits its turn) ·
   Plainsong settings… · Open in browser Ctrl+Shift+B. Refilled in place
   when the team changes (taking the menu bar off and putting it back
   would resize the webviews twice).
@@ -1812,7 +1825,7 @@ welcome screen.
 | Key | What |
 | --- | --- |
 | `app_version`, `platform` | this app's version; `macos`, `windows` or `linux` |
-| `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 4 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere), `downloads` (the window's downloads, oldest first: `id`, `name`, `folder`, `state`, `received`, `total`, `error`; "Downloads") |
+| `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 4 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere), `queued` (a team here whose resume waits its turn or waits to try again, which Pause ends; "One start at a time"), `downloads` (the window's downloads, oldest first: `id`, `name`, `folder`, `state`, `received`, `total`, `error`; "Downloads") |
 | `host` | this computer's memory and CPUs, and `vm_support`: whether a team's VM can run here (`ready`, `hyperv_off`, `windows_home`, `virtualization_off`, `in_vm`; `platform::vm_support`) |
 | `web_memory_mb` | the least memory a team needs for a web task (`teams::WEB_TASK_MEMORY_MB`); the memory select warns below it |
 | `settings` | `start_at_login`, `ask_before_quit` |

@@ -168,6 +168,9 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 		logf("the images in the VM: %v", err)
 	}
 	oldServer, oldRefs := installedRefs(ctx, g, have)
+	// A server pod an earlier start left evicted is history: the room
+	// check below says whether the disk is short now.
+	dropFailedServerPods(ctx, g, logf)
 	if err := deploymentState(ctx, g, "", "", nil); err != nil {
 		// An org whose own images are gone from the VM (the disk filled
 		// and kubelet deleted them) cannot start on them again; the new
@@ -194,12 +197,10 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 	// keeps running.
 	var sg staged
 	if o.Baked {
-		if sg, err = s.stageBaked(ctx, g, gs, baked, logf); err != nil {
-			return err
-		}
 		// k3s imported the VM image's images as it started, not the
-		// upgrade.
-		if err := s.guestRoom(ctx, g, 0, nothingChanged, logf); err != nil {
+		// upgrade: the preflight's room check, with no import cost, is the
+		// one.
+		if sg, err = s.stageBaked(ctx, g, gs, baked, logf); err != nil {
 			return err
 		}
 	} else {
@@ -213,7 +214,7 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 		if err := s.guestRoom(ctx, g, 0, stillRunning, logf); err != nil {
 			// The images just imported would hold the disk under the
 			// floor, where kubelet starts evicting the running org.
-			removeImages(ctx, g, added(sg.images.Refs, have), logf)
+			removeImages(ctx, g, added(sg.images.Refs, have, oldServer), logf)
 			s.dropDownloads(sg, logf)
 			return err
 		}

@@ -77,6 +77,7 @@ function team(o: Partial<Team> & Pick<Team, "id" | "name">): Team {
     files: null,
     signed_in_as: null,
     memory_free_mb: 8192,
+    queued: false,
     downloads: [],
     ...o,
   };

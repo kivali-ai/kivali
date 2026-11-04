@@ -245,7 +245,9 @@ export function statusRow(
       };
       const op = team.op;
       const sub = op?.running ? [op.stage, op.remaining].filter(Boolean).join(" · ") || null : null;
-      return { cls, word: words[team.activity ?? "waking"] ?? "Starting", sub, action: null, actionLabel: null, restart: false };
+      // A resume waiting its turn has not powered the VM on: Pause ends it.
+      const action = team.queued ? "pause" : null;
+      return { cls, word: words[team.activity ?? "waking"] ?? "Starting", sub, action, actionLabel: action && "Pause…", restart: false };
     }
   }
 }

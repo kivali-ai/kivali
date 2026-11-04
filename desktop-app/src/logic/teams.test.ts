@@ -179,6 +179,10 @@ describe("Settings rows", () => {
   it("status row per state", () => {
     const snap = snapshot();
     expect(statusRow(team(), snap, now)).toMatchObject({ word: "Running", sub: "Agents can work", action: "pause", actionLabel: "Pause…", restart: false });
+    // Starting: no button, except Pause for a resume still waiting its turn.
+    const waking = { state: "starting", activity: "waking" } as const;
+    expect(statusRow(team(waking), snap, now)).toMatchObject({ word: "Waking up", action: null, actionLabel: null });
+    expect(statusRow(team({ ...waking, queued: true }), snap, now)).toMatchObject({ word: "Waking up", action: "pause", actionLabel: "Pause…" });
     expect(statusRow(team({ ai: { provider: "claude", signed_in: false, email: null, billing: null, terminal_open: false, signin: "idle", signed_out_at: null } }), snap, now).sub).toBe(
       "Claude isn’t signed in",
     );
