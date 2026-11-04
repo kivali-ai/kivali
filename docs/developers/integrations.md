@@ -3300,7 +3300,7 @@ or the daemon's words, cut to 1000 bytes.
 process with go-git v5 (`github.com/go-git/go-git/v5`). The body is a
 `GitRequest` (64 KiB at most), the answer a `GitResponse`
 (`{repository, updated, updated_total, error, duration_ms,
-timed_out, connection_id, identity}`, the connection the request's, echoed, and identity whether a clone's identity was written). The answer is bounded so it always fits the agent's
+timed_out, connection_id, identity, lfs_files, lfs_bytes, lfs_error}`, the connection the request's, echoed, identity whether a clone's identity was written, and the `lfs_` fields what [Git LFS](#git-lfs-in-the-daemon) moved). The answer is bounded so it always fits the agent's
 next request to core, whose body is capped at 16 MiB: `updated` lists
 at most 200 refs (`GitUpdatedMax`), by name, `updated_total` counts
 every ref that moved, and `error` is cut to 4 KiB (`GitErrorMaxBytes`)
@@ -3438,6 +3438,64 @@ bound.
   daemon), answers every request with why
   (`ServerConfig.GitUnavailable`, [architecture.md](architecture.md#the-agent-shell-daemons-user)).
 
+##### Git LFS in the daemon
+
+A request with `lfs` (`{"hosts": [...]}`; GitHub's jobs carry it, Git
+(Basic)'s do not) has the daemon move the Git LFS files its commits
+name itself (`internal/agentshell/gitlfs.go`), with no git-lfs program,
+no hook and nothing the working copy configures:
+
+- **Where it asks.** The batch API at the job's own checked URL plus
+  `/info/lfs/objects/batch`, with the token as basic auth. `lfs.url`,
+  `.lfsconfig` and the rest of the working copy's configuration are
+  never read: one edited line there would send the token anywhere.
+- **Where a file's content goes.** The address the API names for it
+  (`actions.upload`, `actions.verify`, `actions.download`), which must
+  be https (http only where the daemon allows it for git, in tests),
+  carry no user info, and be on the repository's host or one of
+  `lfs.hosts`; anything else is refused, naming the host ("the
+  repository's LFS API keeps files on <host>, which is not a host this
+  connection's LFS files go to; tell the owner"). It is sent with the
+  headers the API names for it, less the transport's and the proxy's
+  own, and no credential of the job's; an error names its host alone,
+  since the address is signed. The core side admits the same hosts on
+  the connection's proxy credential (`HostsOf`). Every request goes
+  through the daemon's bare proxy URL with the job's proxy credential,
+  never a proxy from the environment, and follows no redirect. Only the
+  `basic` transfer is made.
+- **A push** reads, before any ref moves (after the moves are checked),
+  the pointers of each pushed tip's tree and those the pushed commits
+  add or change against their first parent, walked from each tip back
+  to a commit the remote's advertised refs name, at most 1,000 commits.
+  It asks the API which of those files the host lacks and uploads
+  each, then its verify when the API names one. A file it uploads must
+  be in `.git/lfs/objects/<aa>/<bb>/<oid>`, a regular file of the
+  pointer's size whose sha256 is the oid, or the push stops with
+  nothing moved: "LFS: <path> is an LFS file whose content is not in
+  the working copy's .git/lfs/objects, and the host does not have it;
+  no ref was pushed" (or "...does not match its pointer"). A file the
+  host already has needs no local copy. Pushing a branch the host has
+  already uploads what the host still lacks of its tip.
+- **A clone** downloads the files HEAD's tree names, and **a fetch**
+  those of the tips of every ref its refspecs write (up to date or
+  not), into `.git/lfs/objects`, skipping one held at the right size. A
+  file is kept only once all of it has arrived, at the pointer's size
+  and sha256, through a temporary file under `lfs/tmp` renamed into
+  place. A file that does not arrive leaves the clone or the fetch as
+  it landed, the rest kept, and `lfs_error` names the first. Neither
+  touches the working tree: the agent's own git-lfs checks the files out
+  (`git lfs checkout`).
+- **Reading and writing.** Through an `os.Root` at the working copy's
+  `.git`, so no link under it leads a read or a write out of the
+  working copy.
+- **Pointers.** A blob smaller than 1,024 bytes that reads as the LFS
+  spec's pointer: the version line `version
+  https://git-lfs.github.com/spec/v1` first, `oid sha256:<64 lower-case
+  hex>`, `size <decimal>`, each line ending in a newline. Links and
+  submodules are passed over.
+- **Bounds.** At most 1,000 files and 5 GiB an operation, inside the
+  operation's own timeout.
+
 `ServerConfig.GitInsecureHTTP` lets the tests' git server, `git
 http-backend` under `net/http/cgi` on `httptest`, be reached over
 `http://`; nothing else sets it, and anything but `https` is refused.
@@ -3530,7 +3588,8 @@ row. `Git.Verify` exists only because `builtinintegrations.Integration`
 requires it, and answers an error. The `Git` struct's one field,
 `InsecureHTTP`, is a test hook; the tests never reach a real host.
 
-Not supported: SSH remotes, Git LFS (a clone holds the pointers),
+Not supported: SSH remotes, Git LFS through Git (Basic) (a clone holds
+the pointers; GitHub moves LFS files, [Git LFS in the daemon](#git-lfs-in-the-daemon)),
 submodules (not cloned), and deleting a remote ref.
 
 ### The GitHub built-in
@@ -4109,6 +4168,16 @@ workflows permission; ask the owner to approve it on GitHub." It goes
 into the job as `auth: {username: x-access-token, password: <the
 token>}`, and core adds the connection's proxy credential
 ([The connection's proxy credential](#the-connections-proxy-credential)).
+Every job also carries `lfs: {hosts: lfsHosts}`
+(`github-cloud.githubusercontent.com`, where GitHub's LFS API sends a
+download, and `github-cloud.s3.amazonaws.com`, for an upload), so the
+daemon moves the LFS files the job's commits name through
+`https://github.com/<owner>/<name>.git/info/lfs` with the same token
+([Git LFS in the daemon](#git-lfs-in-the-daemon)); `Hosts` names
+github.com and those two, which the proxy credential admits. The
+agent's answers say how many LFS files went up or came down
+(`lfs_files`, `lfs_bytes`) and which did not download (`lfs_error`),
+and the push, clone and fetch descriptions say what happens to them.
 The token is in nothing else: the first request's result holds no
 content and its audit reason is `Call.Started()`; nothing on the job's
 path logs it, and the daemon takes it out of what it answers

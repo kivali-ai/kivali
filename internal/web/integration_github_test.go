@@ -857,7 +857,11 @@ func TestGitHubShellJobGetsTheConnectionsProxyCredential(t *testing.T) {
 	rec, data := githubSecret(t, srv, mem)
 	secret := data[builtinintegrations.ProxySecretKey]
 	proxy, registered := srv.Store.EgressScopedCredentials()[builtinintegrations.ProxyUser("github", rec.ID)]
-	if secret == "" || !registered || proxy.Hash != egresscred.Hash(secret) || !slices.Equal(proxy.Hosts, []string{"github.com"}) ||
+	// The credential admits github.com and the hosts GitHub keeps LFS
+	// files on, and the daemon is told those same LFS hosts.
+	lfsHosts := []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
+	admitted := slices.Sorted(slices.Values(proxy.Hosts))
+	if secret == "" || !registered || proxy.Hash != egresscred.Hash(secret) || !slices.Equal(admitted, slices.Sorted(slices.Values(append([]string{"github.com"}, lfsHosts...)))) ||
 		slices.Contains(rec.SecretKeys, builtinintegrations.ProxySecretKey) || data["private_key"] == "" {
 		t.Errorf("proxy credential = %+v registered %v, record %+v", proxy, registered, rec)
 	}
@@ -867,7 +871,7 @@ func TestGitHubShellJobGetsTheConnectionsProxyCredential(t *testing.T) {
 	if j := shell.jobs[0]; j.Op != "clone" || j.URL != "https://github.com/acme/widgets.git" || j.Host != "github.com" ||
 		j.Auth != (agentshell.GitAuth{Username: "x-access-token", Password: "ghs_faketoken0001"}) ||
 		j.Proxy != (agentshell.GitProxy{Username: builtinintegrations.ProxyUser("github", rec.ID), Password: secret}) ||
-		!slices.Equal(j.AllowedRepositories, []string{"acme/*"}) {
+		!slices.Equal(j.AllowedRepositories, []string{"acme/*"}) || j.LFS == nil || !slices.Equal(j.LFS.Hosts, lfsHosts) {
 		t.Errorf("job = %+v", j)
 	}
 	var minted []string

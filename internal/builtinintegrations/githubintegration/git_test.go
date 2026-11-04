@@ -60,7 +60,14 @@ func TestCloneMintsATokenForTheRepositoryAlone(t *testing.T) {
 	if res.Audit != "started: Acme/Widgets" || len(res.Content) != 0 || strings.Contains(res.Audit, tok) {
 		t.Errorf("result = %+v", res)
 	}
-	if hosts := g.Hosts(testConn()); !slices.Equal(hosts, []string{"github.com"}) {
+	// The job moves LFS files through GitHub's own LFS API, to the hosts
+	// GitHub keeps them on and no others; the proxy credential admits
+	// those and github.com alone.
+	storage := []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
+	if job.LFS == nil || !slices.Equal(job.LFS.Hosts, storage) {
+		t.Errorf("lfs = %+v", job.LFS)
+	}
+	if hosts := g.Hosts(testConn()); !slices.Equal(hosts, append([]string{"github.com"}, storage...)) {
 		t.Errorf("hosts = %v", hosts)
 	}
 
@@ -241,5 +248,34 @@ func TestCompleteOfAPushAfterWriteWasTurnedOff(t *testing.T) {
 	}
 	if n := len(f.requests()); n != 0 {
 		t.Errorf("Complete made %d requests", n)
+	}
+}
+
+// Why this test exists: an agent learns that GitHub's clone, fetch and
+// push move Git LFS files only from their descriptions: that a push
+// uploads them first and pushes nothing when one is missing, and that a
+// clone or a fetch leaves them in .git/lfs/objects for git lfs checkout.
+func TestGitToolsSayWhatHappensToLFSFiles(t *testing.T) {
+	tools, err := New().Tools(context.Background(), agent(true, "acme/*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, tl := range tools {
+		switch tl.Name {
+		case "push":
+			seen++
+			if !strings.Contains(tl.Description, pushLFS) {
+				t.Errorf("push: %q", tl.Description)
+			}
+		case "clone", "fetch":
+			seen++
+			if !strings.Contains(tl.Description, fetchLFS) {
+				t.Errorf("%s: %q", tl.Name, tl.Description)
+			}
+		}
+	}
+	if seen != 3 {
+		t.Errorf("saw %d of clone, fetch and push", seen)
 	}
 }

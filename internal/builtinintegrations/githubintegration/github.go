@@ -221,6 +221,11 @@ func (g *GitHub) Tools(_ context.Context, caller builtinintegrations.Caller) ([]
 		if t.Name == gitops.Clone && acc.write {
 			t.Description += cloneIdentity
 		}
+		if t.Name == gitops.Push {
+			t.Description += pushLFS
+		} else {
+			t.Description += fetchLFS
+		}
 		t.Description += ownerDecides
 		out = append(out, t)
 	}
@@ -230,6 +235,14 @@ func (g *GitHub) Tools(_ context.Context, caller builtinintegrations.Caller) ([]
 // cloneIdentity follows github_clone's description for an agent whose
 // access may write: the working copy's git identity is the app's bot.
 const cloneIdentity = " The working copy's git identity is the owner's GitHub App's bot, so commits you make there are authored as the app's bot unless you change the identity."
+
+// pushLFS and fetchLFS follow github_push's, and github_clone's and
+// github_fetch's, descriptions: what happens to the Git LFS files the
+// commits name.
+const (
+	pushLFS  = " Git LFS files the pushed commits name go up first, from the working copy's .git/lfs/objects; when one the host lacks is not there, nothing is pushed."
+	fetchLFS = " Git LFS files the fetched branches name are downloaded into .git/lfs/objects; git lfs checkout in the working copy puts them in its files."
+)
 
 // Choices: GitHub's access form lists no options live.
 func (g *GitHub) Choices(context.Context, builtinintegrations.Connection, string) ([]string, error) {

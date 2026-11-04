@@ -821,6 +821,8 @@ type (
 	GitProxy = shelljob.GitProxy
 	// GitIdentity is the git identity a clone's working copy is given.
 	GitIdentity = shelljob.GitIdentity
+	// GitLFS has a git operation move the LFS files its commits name.
+	GitLFS = shelljob.GitLFS
 	// GitResult is a GitJob's outcome.
 	GitResult = shelljob.GitResult
 	// GitRefUpdate is one ref a git operation moved.

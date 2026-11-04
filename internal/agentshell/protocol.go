@@ -199,6 +199,20 @@ type GitRequest struct {
 	Proxy               GitProxy     `json:"proxy"`
 	TimeoutSeconds      int          `json:"timeout_seconds,omitempty"`
 	ConnectionID        string       `json:"connection_id,omitempty"`
+	LFS                 *GitLFS      `json:"lfs,omitempty"`
+}
+
+// GitLFS has a git operation move the Git LFS files its commits name,
+// through the repository's LFS API at the operation's own URL plus
+// /info/lfs, with the request's token (gitlfs.go): a push uploads the
+// ones the host lacks before any ref moves, and a clone or a fetch
+// downloads the ones its refs' tips name into .git/lfs/objects. Hosts
+// are the only hosts, besides the repository's own, that the LFS API
+// may send the daemon to for a file's content; that content is sent
+// and read with only the headers the API names for it, never the
+// token. Nil moves no LFS file, as for a host without LFS.
+type GitLFS struct {
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // GitIdentity is the git identity a clone's working copy is given: its
@@ -234,7 +248,11 @@ type GitProxy struct {
 // GitUpdatedMax refs, by name, and UpdatedTotal counts every ref that
 // moved; Error is at most GitErrorMaxBytes. Identity says a clone's
 // working copy was given the request's Identity; a clone whose identity
-// could not be written has landed all the same, without it.
+// could not be written has landed all the same, without it. LFSFiles
+// and LFSBytes count the LFS files the operation moved (a push's
+// uploaded, a clone's or a fetch's downloaded). LFSError is why a clone
+// or a fetch that landed did not get its LFS files; a push whose LFS
+// files did not go up moved no ref, and says why in Error.
 type GitResponse struct {
 	Repository   string         `json:"repository,omitempty"`
 	Updated      []GitRefUpdate `json:"updated,omitempty"`
@@ -244,6 +262,9 @@ type GitResponse struct {
 	TimedOut     bool           `json:"timed_out,omitempty"`
 	ConnectionID string         `json:"connection_id,omitempty"`
 	Identity     bool           `json:"identity,omitempty"`
+	LFSFiles     int            `json:"lfs_files,omitempty"`
+	LFSBytes     int64          `json:"lfs_bytes,omitempty"`
+	LFSError     string         `json:"lfs_error,omitempty"`
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the

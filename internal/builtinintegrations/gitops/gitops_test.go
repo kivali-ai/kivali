@@ -362,3 +362,44 @@ func TestWorkflowsSwitch(t *testing.T) {
 		t.Errorf("pushTakes = %q", got)
 	}
 }
+
+// Why this test exists: the agent learns what happened to a commit's
+// LFS files only from the answer. A push says how many went up, before
+// the refs, even when the refs were up to date; a clone or a fetch says
+// how many came down and where they are (git lfs checkout puts them in
+// the working tree), and, when some did not, which and that the working
+// copy holds pointers for them. Each is in the audit row too.
+func TestCompleteTellsTheLFSFiles(t *testing.T) {
+	p := anyRef()
+	push := json.RawMessage(`{"path":"w","url":"acme/widgets","refs":["main"]}`)
+	res, err := Complete(Push, push, p, "", shelljob.Result{Git: &shelljob.GitResult{
+		Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/main", Old: "1111111aaaa", New: "2222222bbbb"}}, LFSFiles: 2, LFSBytes: 3_400_000}})
+	if err != nil || res.IsError || !strings.HasPrefix(res.Content[0], "Uploaded 2 LFS files (3.4 MB) before the refs. Pushed refs/heads/main to acme/widgets.") ||
+		!strings.HasSuffix(res.Audit, ", uploaded 2 LFS files") {
+		t.Errorf("push = %+v, %v", res, err)
+	}
+	res, _ = Complete(Push, push, p, "", shelljob.Result{Git: &shelljob.GitResult{LFSFiles: 1, LFSBytes: 512}})
+	if !strings.HasPrefix(res.Content[0], "Uploaded 1 LFS file (512 bytes) before the refs. Nothing to push:") || !strings.HasSuffix(res.Audit, ", uploaded 1 LFS file") {
+		t.Errorf("up to date = %+v", res)
+	}
+
+	clone := json.RawMessage(`{"url":"acme/widgets","path":"w"}`)
+	res, _ = Complete(Clone, clone, p, "", shelljob.Result{Git: &shelljob.GitResult{
+		Updated: []shelljob.GitRefUpdate{{Ref: "refs/heads/main", New: "1111111aaaa"}}, LFSFiles: 3, LFSBytes: 12_000}})
+	if res.IsError || !strings.Contains(res.Content[0], "\n\nDownloaded 3 LFS files (12.0 kB) into .git/lfs/objects; git lfs checkout in the working copy puts them in its files.") ||
+		!strings.HasSuffix(res.Audit, ", downloaded 3 LFS files") {
+		t.Errorf("clone = %+v", res)
+	}
+	fetch := json.RawMessage(`{"path":"w","url":"acme/widgets"}`)
+	res, _ = Complete(Fetch, fetch, p, "", shelljob.Result{Git: &shelljob.GitResult{LFSError: "lost.step: the repository's LFS API refused it (404): Object does not exist on the server"}})
+	if res.IsError || !strings.HasSuffix(res.Content[0], "\n\nNot every LFS file downloaded, so the working copy holds pointers in place of those files: lost.step: the repository's LFS API refused it (404): Object does not exist on the server") ||
+		!strings.Contains(res.Audit, ", LFS: lost.step") {
+		t.Errorf("fetch = %+v", res)
+	}
+	if got := byteWords(999); got != "999 bytes" {
+		t.Errorf("byteWords(999) = %q", got)
+	}
+	if got := byteWords(5 << 30); got != "5.4 GB" {
+		t.Errorf("byteWords(5 GiB) = %q", got)
+	}
+}
