@@ -340,4 +340,35 @@ describe('the task page: following a running task', () => {
     expect(page().getByRole('status')).toHaveTextContent('Needs help');
     expect(screen.getByText('The agent pod went away')).toBeInTheDocument();
   });
+
+  const NO_RESULT = 'No result was recorded: the turn ended before this call came back.';
+  const inFlight: TranscriptRow = { kind: 'tool_use', ts: STARTED + 1000, tool_use_id: 'toolu_search', name: 'WebSearch', input: '{"query":"flaky tests"}', status: 'running', started_ts: STARTED + 1000 };
+
+  // Guards against a call the task is still waiting on reading as failed. Every read of a running task's page
+  // holds its latest call with no result, and a slow one (a web search) sat there marked Failed, saying the turn
+  // had ended, until the task's next row brought the result and it flipped to Done.
+  it('shows a call the running task is waiting on as running, and done once its result lands', async () => {
+    let body = running([...firstRows, inFlight]);
+    const h = renderTabs(PATH, { routes: { ['GET ' + API]: () => body } });
+    const name = await screen.findByText('WebSearch');
+    const call = name.closest('details') as HTMLElement;
+    expect(within(call).getAllByText('Waiting for output').length).toBeGreaterThan(0);
+    expect(within(call).queryByText('Failed')).toBeNull();
+    expect(within(call).queryByText(NO_RESULT)).toBeNull();
+
+    body = running([...firstRows, { ...inFlight, status: 'done', output: 'Two results.', ended_ts: STARTED + 3000 }]);
+    act(() => h.streams[0]?.emit('chat_message', { role: 'tool', content: 'Two results.' }, 2));
+    expect(await screen.findByText('Two results.')).toBeInTheDocument();
+    expect(screen.queryByText('Failed')).toBeNull();
+  });
+
+  // The other half of the same rule: once the task has ended no result can come, so the call must not go on
+  // animating. A task stopped or cut off mid-call is where "the turn ended" is true.
+  it('says a call never came back once the task has ended without its result', async () => {
+    renderTabs(PATH, { routes: { ['GET ' + API]: { ...subagentTranscript, rows: [...firstRows, inFlight] } } });
+    const name = await screen.findByText('WebSearch');
+    const call = name.closest('details') as HTMLElement;
+    expect(within(call).getByText(NO_RESULT)).toBeInTheDocument();
+    expect(within(call).queryByText('Waiting for output')).toBeNull();
+  });
 });
