@@ -375,6 +375,15 @@ pub fn vm_reason(v: crate::platform::VmSupport) -> Option<String> {
     }
 }
 
+/// Why team `name` couldn't start when this computer refused its VM the
+/// memory, after the one retry (startqueue.rs).
+pub fn no_memory_reason(name: &str) -> String {
+    format!(
+        "{} didn't have enough free memory to start {name}. Close other apps or pause another team, then try again.",
+        capitalized(crate::platform::THIS_COMPUTER)
+    )
+}
+
 pub fn gb(mb: u64) -> String {
     let g = mb as f64 / 1024.0;
     if (g - g.round()).abs() < 0.05 {
@@ -393,6 +402,14 @@ mod tests {
         assert_eq!(capitalized("this PC"), "This PC");
         assert_eq!(capitalized("this Mac"), "This Mac");
         assert_eq!(capitalized(""), "");
+    }
+
+    #[test]
+    fn the_memory_reason_names_this_computer_and_the_team() {
+        let r = no_memory_reason("Home");
+        assert!(r.starts_with(&capitalized(crate::platform::THIS_COMPUTER)), "{r}");
+        assert!(r.contains("enough free memory to start Home."), "{r}");
+        assert!(r.ends_with('.') && !r.contains('!'), "{r}");
     }
 
     #[test]

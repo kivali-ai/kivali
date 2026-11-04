@@ -15,6 +15,7 @@ pub mod paths;
 pub mod platform;
 mod shell;
 mod signin;
+mod startqueue;
 pub mod supervisor;
 mod teamapi;
 pub mod teams;

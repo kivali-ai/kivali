@@ -483,6 +483,10 @@ type podList struct {
 			Name string `json:"name"`
 		} `json:"metadata"`
 		Status struct {
+			// Reason is Evicted for a pod kubelet evicted (its phase is
+			// then Failed), with Message saying for what.
+			Reason            string `json:"reason"`
+			Message           string `json:"message"`
 			ContainerStatuses []struct {
 				Name         string `json:"name"`
 				Image        string `json:"image"`
@@ -515,6 +519,13 @@ var fatalWaiting = map[string]bool{
 	"ErrImageNeverPull": true,
 	"InvalidImageName":  true,
 }
+
+// imagePullError is a server pod that cannot get its image
+// (fatalWaiting).
+type imagePullError struct{ err error }
+
+func (e *imagePullError) Error() string { return e.err.Error() }
+func (e *imagePullError) Unwrap() error { return e.err }
 
 // deploymentState checks the server deployment once. chartVersion and
 // image, when set, must match (the helm.sh/chart label and the kivali
@@ -568,14 +579,14 @@ func deploymentState(ctx context.Context, g Guest, chartVersion, image string, h
 			for _, p := range pl.Items {
 				for _, c := range p.Status.ContainerStatuses {
 					if w := c.State.Waiting; w != nil && fatalWaiting[w.Reason] {
-						return permanent(fmt.Errorf("pod %s container %s: %s: %s", p.Metadata.Name, c.Name, w.Reason, w.Message))
+						return permanent(&imagePullError{fmt.Errorf("pod %s container %s: %s: %s", p.Metadata.Name, c.Name, w.Reason, w.Message)})
 					} else if w != nil {
 						waiting = append(waiting, fmt.Sprintf("%s/%s %s (restarts %d)", p.Metadata.Name, c.Name, w.Reason, c.RestartCount))
 					}
 				}
 				for _, c := range p.Status.InitContainerStatuses {
 					if w := c.State.Waiting; w != nil && fatalWaiting[w.Reason] {
-						return permanent(fmt.Errorf("pod %s init container %s: %s: %s", p.Metadata.Name, c.Name, w.Reason, w.Message))
+						return permanent(&imagePullError{fmt.Errorf("pod %s init container %s: %s: %s", p.Metadata.Name, c.Name, w.Reason, w.Message)})
 					}
 				}
 			}
@@ -801,9 +812,19 @@ func (s *Supervisor) waitServing(ctx context.Context, chartVersion, image string
 		what = "the server deployment to roll out at chart " + chartVersion
 	}
 	logf("waiting for %s", what)
+	dropFailedServerPods(ctx, g, logf)
 	hw := newHelmWatch()
 	if err := poll(ctx, s.o.Clock, deployTimeout, pollInterval, what, func(ctx context.Context) error {
-		return deploymentState(ctx, g, chartVersion, image, hw)
+		err := deploymentState(ctx, g, chartVersion, image, hw)
+		if err == nil || errors.As(err, new(permanentError)) {
+			return err
+		}
+		// A node under disk pressure schedules nothing, so the rollout
+		// would only wait out its timeout.
+		if derr := diskPressure(ctx, g); derr != nil {
+			return permanent(derr)
+		}
+		return err
 	}); err != nil {
 		return err
 	}
@@ -830,5 +851,8 @@ func (s *Supervisor) waitServing(ctx context.Context, chartVersion, image string
 		return err
 	}
 	logf("%s answers 200", url)
-	return nil
+	// A node that came up under disk pressure answers once, then evicts
+	// the server; a disk below kubelet's floor is that, before kubelet
+	// has acted on it.
+	return diskPressure(ctx, g)
 }

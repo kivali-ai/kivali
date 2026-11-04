@@ -208,6 +208,63 @@ type fakeBackend struct {
 	compactDone    func()
 	// compactProgress is what each compaction reports as it runs.
 	compactProgress [][2]int64
+	// guestSize and guestAvail are the data disk's filesystem as df in
+	// the guest reports it; importCost is what each image import takes
+	// from guestAvail. Under mu.
+	guestSize, guestAvail, importCost uint64
+	// diskTaint taints the node for disk pressure; evicted lists an
+	// evicted server pod. Under mu.
+	diskTaint, evicted bool
+	// pinned are the images containerd has labelled pinned; removed
+	// records every image `ctr images rm` deleted. Under mu.
+	pinned  map[string]bool
+	removed []string
+	// requireImages makes the server deployment need its image in
+	// containerd: without it, the pod waits in ErrImagePull.
+	requireImages bool
+	// pending makes the server deployment at these tags not ready, with
+	// nothing in its pod to say why (a pod no node will take).
+	pending map[string]bool
+	// onBoot, when set, is called as boot n (1-based) starts, before k3s
+	// imports the baked images.
+	onBoot func(n int)
+}
+
+// collectImages is kubelet's image garbage collection on a disk under
+// pressure: every image not pinned goes. Not under mu.
+func (h *fakeBackend) collectImages() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for r := range h.imported {
+		if !h.pinned[r] {
+			delete(h.imported, r)
+		}
+	}
+}
+
+// hasServerImage reports whether the server image the manifest values
+// name is in containerd, or the deployment does not need it there
+// (requireImages unset).
+func (h *fakeBackend) hasServerImage(vals map[string]any) bool {
+	image, ok := vals["image"].(map[string]any)
+	if !ok || !h.requireImages {
+		return true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.imported[guestapi.NormalizeRef(fmt.Sprintf("%s:%s", image["repository"], image["tag"]))]
+}
+
+// pinnedImages are the images labelled pinned, sorted.
+func (h *fakeBackend) pinnedImages() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var refs []string
+	for r := range h.pinned {
+		refs = append(refs, r)
+	}
+	sort.Strings(refs)
+	return refs
 }
 
 // compaction is one CompactDataDisk: the disk's path, whether every
@@ -308,6 +365,10 @@ func newFakeBackend() *fakeBackend {
 		imported:   map[string]bool{},
 		broken:     map[string]bool{},
 		helmBroken: map[string]bool{},
+		pinned:     map[string]bool{},
+		pending:    map[string]bool{},
+		guestSize:  DataDiskSize,
+		guestAvail: 50 << 30,
 		baked: []string{
 			"docker.io/library/kivali:v0.15.0",
 			"docker.io/library/kivali-egress-proxy:v0.15.0",
@@ -417,6 +478,12 @@ func (m *fakeMachine) Start() error {
 	if fatal != "" {
 		return failBoot(fatal)
 	}
+	m.vm.mu.Lock()
+	onBoot, n := m.vm.onBoot, len(m.vm.boots)
+	m.vm.mu.Unlock()
+	if onBoot != nil {
+		onBoot(n)
+	}
 	// k3s imports every tarball in agent/images (the root disk's baked
 	// images) as it starts.
 	m.vm.mu.Lock()
@@ -520,6 +587,7 @@ func (g fakeGuest) ImportImages(_ context.Context, r io.Reader) (guestapi.Import
 	for _, ref := range refs {
 		g.m.vm.imported[ref] = true
 	}
+	g.m.vm.guestAvail -= min(g.m.vm.importCost, g.m.vm.guestAvail)
 	g.m.vm.mu.Unlock()
 	return guestapi.ImportResult{Output: strings.Join(refs, "\n")}, nil
 }
@@ -663,6 +731,38 @@ func (g fakeGuest) Exec(ctx context.Context, spec guestapi.ExecSpec, stdin io.Re
 		return 0, nil
 	case a[0] == "cp":
 		return 0, g.setFile(rel(a[2]), "chart baked "+path.Base(a[1]))
+	case a[0] == "df":
+		g.m.vm.mu.Lock()
+		size, avail := g.m.vm.guestSize, g.m.vm.guestAvail
+		g.m.vm.mu.Unlock()
+		_, _ = fmt.Fprintf(stdout, "Filesystem           1024-blocks    Used Available Capacity Mounted on\n/dev/vdb %d %d %d %d%% %s\n",
+			size>>10, (size-avail)>>10, avail>>10, (size-avail)*100/size, a[3])
+		return 0, nil
+	case len(a) == 8 && strings.Join(a[:6], " ") == "k3s ctr -n k8s.io images label":
+		key, v, _ := strings.Cut(a[7], "=")
+		if key != pinnedLabel {
+			return 1, nil
+		}
+		g.m.vm.mu.Lock()
+		defer g.m.vm.mu.Unlock()
+		if !g.m.vm.imported[a[6]] {
+			_, _ = fmt.Fprintf(stderr, "ctr: image %q: not found", a[6])
+			return 1, nil
+		}
+		g.m.vm.pinned[a[6]] = v == pinnedValue
+		if v == "" {
+			delete(g.m.vm.pinned, a[6])
+		}
+		return 0, nil
+	case len(a) > 7 && strings.Join(a[:7], " ") == "k3s ctr -n k8s.io images rm --sync":
+		g.m.vm.mu.Lock()
+		defer g.m.vm.mu.Unlock()
+		for _, r := range a[7:] {
+			delete(g.m.vm.imported, r)
+			delete(g.m.vm.pinned, r)
+			g.m.vm.removed = append(g.m.vm.removed, r)
+		}
+		return 0, nil
 	case strings.Join(a[:3], " ") == "k3s ctr -n":
 		g.m.vm.mu.Lock()
 		var refs []string
@@ -778,7 +878,7 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 			ref += g.m.vm.renderSuffix
 		}
 		ready := int32(1)
-		if g.m.vm.broken[fmt.Sprint(image["tag"])] {
+		if g.m.vm.broken[fmt.Sprint(image["tag"])] || g.m.vm.pending[fmt.Sprint(image["tag"])] || !g.m.vm.hasServerImage(vals) {
 			ready = 0
 		}
 		g.m.vm.mu.Lock()
@@ -814,11 +914,31 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 		if image, ok := vals["image"].(map[string]any); ok && g.m.vm.broken[fmt.Sprint(image["tag"])] {
 			statuses = append(statuses, map[string]any{"name": "kivali", "state": map[string]any{
 				"waiting": map[string]string{"reason": "ImagePullBackOff", "message": "pull access denied"}}})
+		} else if ok && !g.m.vm.hasServerImage(vals) {
+			statuses = append(statuses, map[string]any{"name": "kivali", "state": map[string]any{
+				"waiting": map[string]string{"reason": "ErrImagePull", "message": "dial tcp: lookup registry-1.docker.io: no such host"}}})
 		}
-		return 0, json.NewEncoder(stdout).Encode(map[string]any{"items": []any{map[string]any{
+		items := []any{map[string]any{
 			"metadata": map[string]string{"name": "kivali-1"},
 			"status":   map[string]any{"containerStatuses": statuses},
-		}}})
+		}}
+		vm.mu.Lock()
+		if vm.evicted {
+			items = append(items, map[string]any{
+				"metadata": map[string]string{"name": "kivali-0"},
+				"status":   map[string]any{"phase": "Failed", "reason": "Evicted", "message": "The node was low on resource: ephemeral-storage."},
+			})
+		}
+		vm.mu.Unlock()
+		return 0, json.NewEncoder(stdout).Encode(map[string]any{"items": items})
+	case joined == "get node kivali -o json":
+		vm.mu.Lock()
+		var taints []any
+		if vm.diskTaint {
+			taints = append(taints, map[string]string{"key": "node.kubernetes.io/disk-pressure", "effect": "NoSchedule"})
+		}
+		vm.mu.Unlock()
+		return 0, json.NewEncoder(stdout).Encode(map[string]any{"spec": map[string]any{"taints": taints}})
 	case strings.Contains(joined, "delete pod"), strings.Contains(joined, "rollout restart"):
 		return 0, nil
 	case strings.Contains(joined, "exec") && strings.HasSuffix(joined, "claude auth status --json"):
