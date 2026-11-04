@@ -472,7 +472,7 @@ func (c *lfsClient) batch(ctx context.Context, op string, objs []lfsObject) ([]l
 // on the repository's host or one of the job's LFS hosts.
 func (c *lfsClient) transferURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
-	if err != nil || u.User != nil || u.Host == "" || (u.Scheme != "https" && !(c.insecure && u.Scheme == "http")) {
+	if err != nil || u.User != nil || u.Host == "" || (u.Scheme != "https" && (!c.insecure || u.Scheme != "http")) {
 		return nil, errors.New("the repository's LFS API named a transfer address the daemon does not use")
 	}
 	h := strings.ToLower(u.Hostname())
