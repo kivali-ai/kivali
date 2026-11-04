@@ -556,7 +556,39 @@ func Complete(name string, args json.RawMessage, p Policy, connectionID string, 
 		fmt.Fprintf(&b, "\n\nUpdated (%d):", total)
 		writeRefLines(&b, updated, total)
 	}
-	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: repo + ": " + auditRefs(updated, total)}, nil
+	audit := repo + ": " + auditRefs(updated, total)
+	if r := result.Git; r.LFSFiles > 0 {
+		fmt.Fprintf(&b, "\n\nDownloaded %s (%s) into .git/lfs/objects; git lfs checkout in the working copy puts them in its files.", lfsFiles(r.LFSFiles), byteWords(r.LFSBytes))
+		audit += ", downloaded " + lfsFiles(r.LFSFiles)
+	}
+	if r := result.Git; r.LFSError != "" {
+		words := clip(r.LFSError, errorMax)
+		fmt.Fprintf(&b, "\n\nNot every LFS file downloaded, so the working copy holds pointers in place of those files: %s", words)
+		audit += ", LFS: " + words
+	}
+	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: audit}, nil
+}
+
+// lfsFiles is n LFS files, in words.
+func lfsFiles(n int) string {
+	if n == 1 {
+		return "1 LFS file"
+	}
+	return fmt.Sprintf("%d LFS files", n)
+}
+
+// byteWords is n bytes in words: "512 bytes", "3.4 MB".
+func byteWords(n int64) string {
+	const unit = 1000
+	if n < unit {
+		return fmt.Sprintf("%d bytes", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit && exp < 3; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "kMGT"[exp])
 }
 
 // writeRefLines writes a line for each of the first answerRefsMax of
@@ -609,16 +641,23 @@ func pushed(repo string, c Call, r *shelljob.GitResult) *builtinintegrations.Res
 		verb = "force-pushed"
 	}
 	updated, total := pushedRefs(c.dsts, r)
+	// LFS files go up before the refs, so they are told first.
+	uploaded, uploadedAudit := "", ""
+	if r.LFSFiles > 0 {
+		uploaded = fmt.Sprintf("Uploaded %s (%s) before the refs. ", lfsFiles(r.LFSFiles), byteWords(r.LFSBytes))
+		uploadedAudit = ", uploaded " + lfsFiles(r.LFSFiles)
+	}
 	if total == 0 {
 		return &builtinintegrations.Result{
-			Content: []string{fmt.Sprintf("Nothing to push: %s already has %s as the working copy does.", repo, joinNames(c.dsts, len(c.dsts), answerRefsMax))},
-			Audit:   repo + ": up to date, " + auditNames(c.dsts, len(c.dsts)),
+			Content: []string{uploaded + fmt.Sprintf("Nothing to push: %s already has %s as the working copy does.", repo, joinNames(c.dsts, len(c.dsts), answerRefsMax))},
+			Audit:   repo + ": up to date, " + auditNames(c.dsts, len(c.dsts)) + uploadedAudit,
 		}
 	}
 	var b strings.Builder
+	b.WriteString(uploaded)
 	fmt.Fprintf(&b, "%s %s to %s.\n", strings.ToUpper(verb[:1])+verb[1:], joinNames(newMarked(updated), total, answerRefsMax), repo)
 	writeRefLines(&b, updated, total)
-	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: repo + ": " + verb + " " + auditNames(refNames(updated), total)}
+	return &builtinintegrations.Result{Content: []string{b.String()}, Audit: repo + ": " + verb + " " + auditNames(refNames(updated), total) + uploadedAudit}
 }
 
 // ranThroughReplacedConnection is the answer to a call whose job ran

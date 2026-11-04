@@ -117,6 +117,9 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		TimeoutSeconds:      g.TimeoutSeconds,
 		ConnectionID:        g.ConnectionID,
 	}
+	if g.LFS != nil {
+		req.LFS = &agentshell.GitLFS{Hosts: g.LFS.Hosts}
+	}
 	res, err := shell.Git(ctx, req)
 	if err != nil {
 		msg := agentshell.GitScrubber(req, "")(err.Error())
@@ -133,6 +136,9 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		TimedOut:     res.TimedOut,
 		ConnectionID: res.ConnectionID,
 		Identity:     res.Identity,
+		LFSFiles:     res.LFSFiles,
+		LFSBytes:     res.LFSBytes,
+		LFSError:     res.LFSError,
 	}
 	for _, u := range res.Updated {
 		out.Updated = append(out.Updated, agentpod.GitRefUpdate{Ref: u.Ref, Old: u.Old, New: u.New})

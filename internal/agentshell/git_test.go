@@ -104,6 +104,9 @@ type testGitServer struct {
 	// receivePacks counts the requests of a push's receive-pack (its
 	// advertisement and the push itself).
 	receivePacks atomic.Int32
+	// lfs is the repositories' LFS API and storage (testLFS, which
+	// checks the token on the batch API itself); always there.
+	lfs *testLFS
 
 	mu     sync.Mutex
 	served map[string]int
@@ -111,7 +114,7 @@ type testGitServer struct {
 
 func newTestGitServer(t *testing.T) *testGitServer {
 	t.Helper()
-	s := &testGitServer{root: t.TempDir(), entered: make(chan struct{}), arrivals: make(chan struct{}, 16), served: map[string]int{}}
+	s := &testGitServer{root: t.TempDir(), entered: make(chan struct{}), arrivals: make(chan struct{}, 16), served: map[string]int{}, lfs: newTestLFS()}
 	backend := cgi.Handler{
 		Path: gitCLI(t),
 		Args: []string{"http-backend"},
@@ -122,6 +125,9 @@ func newTestGitServer(t *testing.T) *testGitServer {
 	}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.requests.Add(1)
+		if s.lfs.serve(w, r) {
+			return
+		}
 		if strings.HasSuffix(r.URL.Path, "/git-receive-pack") || r.URL.Query().Get("service") == "git-receive-pack" {
 			s.receivePacks.Add(1)
 		}

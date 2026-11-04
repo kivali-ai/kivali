@@ -99,6 +99,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		Proxy:          agentpod.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
 		TimeoutSeconds: 900,
 		ConnectionID:   "1a2b3c4d",
+		LFS:            &agentpod.GitLFS{Hosts: []string{"github-cloud.githubusercontent.com"}},
 	}
 	c := &recordingCaller{resps: []*agentpod.IntegrationCallResponse{
 		{ShellJob: &agentpod.IntegrationShellJob{Git: job}},
@@ -106,7 +107,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 	}}
 	shell := &recordingShell{res: &agentshell.GitResponse{
 		Repository: "acme/widgets", DurationMs: 1200, UpdatedTotal: 901,
-		ConnectionID: "1a2b3c4d", Identity: true,
+		ConnectionID: "1a2b3c4d", Identity: true, LFSFiles: 3, LFSBytes: 4096, LFSError: "big.step did not download",
 		Updated: []agentshell.GitRefUpdate{{Ref: "refs/remotes/origin/main", New: "abc"}},
 	}}
 	tools := IntegrationTools(c, shell, []agentpod.IntegrationTool{{Name: "git_clone"}}, nil)
@@ -123,6 +124,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		Proxy:          agentshell.GitProxy{Username: "integration-git.1a2b3c4d", Password: "proxy-secret-value"},
 		TimeoutSeconds: 900,
 		ConnectionID:   "1a2b3c4d",
+		LFS:            &agentshell.GitLFS{Hosts: []string{"github-cloud.githubusercontent.com"}},
 	}
 	if len(shell.jobs) != 1 {
 		t.Fatalf("jobs = %+v", shell.jobs)
@@ -135,7 +137,7 @@ func TestIntegrationToolsRunTheShellJob(t *testing.T) {
 		t.Fatalf("requests = %+v", c.reqs)
 	}
 	r := c.reqs[1].ShellJobResult.Git
-	if r == nil || r.Repository != "acme/widgets" || r.ConnectionID != "1a2b3c4d" || r.DurationMs != 1200 || r.UpdatedTotal != 901 || !r.Identity || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
+	if r == nil || r.Repository != "acme/widgets" || r.ConnectionID != "1a2b3c4d" || r.DurationMs != 1200 || r.UpdatedTotal != 901 || !r.Identity || r.LFSFiles != 3 || r.LFSBytes != 4096 || r.LFSError != "big.step did not download" || len(r.Updated) != 1 || r.Updated[0] != (agentpod.GitRefUpdate{Ref: "refs/remotes/origin/main", New: "abc"}) {
 		t.Errorf("result sent = %+v", r)
 	}
 

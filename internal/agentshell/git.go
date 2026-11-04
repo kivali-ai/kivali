@@ -48,6 +48,9 @@ package agentshell
 //     branch moves only forward, by the daemon's own walk through
 //     objects checked against their names (checkPushMoves). The push is
 //     atomic, so a host that refuses one ref takes none.
+//   - A job with LFS moves the Git LFS files its commits name too, by
+//     the same URL rules (gitlfs.go): a push uploads them before any ref
+//     moves, a clone or a fetch downloads them into .git/lfs/objects.
 //   - The proxy is always given in code (ProxyOptions), the daemon's own
 //     bare proxy URL with the job's credential, so go-git never reads a
 //     proxy from the environment. With no proxy in the daemon's
@@ -269,6 +272,7 @@ func escapedScrubber(secret string) *egresscred.Scrubber {
 func (r *GitResponse) scrub(s func(string) string) {
 	r.Repository = s(r.Repository)
 	r.Error = s(r.Error)
+	r.LFSError = clipUTF8(s(r.LFSError), GitErrorMaxBytes)
 	for i := range r.Updated {
 		r.Updated[i].Ref = s(r.Updated[i].Ref)
 	}
@@ -479,6 +483,11 @@ func gitClone(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir s
 	if req.Identity != nil && writeGitIdentity(r, *req.Identity) == nil {
 		res.Identity = true
 	}
+	if req.LFS != nil {
+		if head, err := r.Head(); err == nil {
+			res.LFSFiles, res.LFSBytes, res.LFSError = fetchLFS(ctx, cfg, req, r, repo, dir, []plumbing.Hash{head.Hash()})
+		}
+	}
 	return res
 }
 
@@ -561,8 +570,49 @@ func gitFetch(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir s
 	case err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate):
 		res.Error = "fetch: " + err.Error()
 	}
-	res.Updated = refUpdates(before, refSnapshot(r))
+	after := refSnapshot(r)
+	res.Updated = refUpdates(before, after)
+	// Up to date or not, the files the fetched refs' tips name are
+	// fetched: a working copy may lack them from before.
+	if req.LFS != nil && res.Error == "" {
+		res.LFSFiles, res.LFSBytes, res.LFSError = fetchLFS(ctx, cfg, req, r, repo, dir, fetchedTips(specs, after))
+	}
 	return res
+}
+
+// fetchedTips is the commits of after's refs that specs write: the
+// tips a fetch's LFS files come from.
+func fetchedTips(specs []config.RefSpec, after map[string]string) []plumbing.Hash {
+	var out []plumbing.Hash
+	names := make([]string, 0, len(after))
+	for name := range after {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		for _, s := range specs {
+			if refSpecWrites(s, name) {
+				out = append(out, plumbing.NewHash(after[name]))
+				break
+			}
+		}
+	}
+	return out
+}
+
+// refSpecWrites reports whether s writes the ref name: its destination
+// is name, or a pattern with one * that name fills.
+func refSpecWrites(s config.RefSpec, name string) bool {
+	str := strings.TrimPrefix(string(s), "+")
+	_, dst, ok := strings.Cut(str, ":")
+	if !ok || dst == "" {
+		return false
+	}
+	before, after, glob := strings.Cut(dst, "*")
+	if !glob {
+		return name == dst
+	}
+	return len(name) > len(before)+len(after) && strings.HasPrefix(name, before) && strings.HasSuffix(name, after)
 }
 
 // pushSpec is one refspec of a push as the daemon checked it: what
@@ -620,6 +670,16 @@ func gitPush(ctx context.Context, cfg ServerConfig, req GitRequest, host, dir st
 	if err := checkPushMoves(ctx, r, specs, before); err != nil {
 		res.Error = err.Error()
 		return res
+	}
+	// The LFS files go up first, so the host never takes a pointer
+	// whose file it lacks; one that does not go up stops the push.
+	if req.LFS != nil {
+		n, b, err := pushLFS(ctx, cfg, req, r, repo, dir, specs, before)
+		res.LFSFiles, res.LFSBytes = n, b
+		if err != nil {
+			res.Error = "LFS: " + err.Error() + "; no ref was pushed"
+			return res
+		}
 	}
 	remote, err := r.CreateRemoteAnonymous(&config.RemoteConfig{Name: gitAnonymousRemote, URLs: []string{repo.URL()}})
 	if err != nil {

@@ -256,7 +256,7 @@ Every clone, fetch and push is in **Recent calls**, with the repository and the 
 
 ## GitHub
 
-**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, read their checks and GitHub Actions runs and logs, close the issues and pull requests the app opened, and clone, fetch and push the repositories, as a private GitHub App its setup makes on your account or an organization's. It runs inside Kivali and reaches only `api.github.com`, `github.com` and the hosts GitHub keeps Actions logs on (`productionresultssa*.blob.core.windows.net` and `actions.githubusercontent.com`); an agent's clones, fetches and pushes run in its own sandbox and reach only `github.com`.
+**GitHub** ships with Kivali. It lets agents read and open issues, comments and pull requests in your GitHub repositories, read their checks and GitHub Actions runs and logs, close the issues and pull requests the app opened, and clone, fetch and push the repositories, as a private GitHub App its setup makes on your account or an organization's. It runs inside Kivali and reaches only `api.github.com`, `github.com` and the hosts GitHub keeps Actions logs on (`productionresultssa*.blob.core.windows.net` and `actions.githubusercontent.com`); an agent's clones, fetches and pushes run in its own sandbox and reach only `github.com` and the hosts GitHub keeps Git LFS files on (`github-cloud.githubusercontent.com` and `github-cloud.s3.amazonaws.com`).
 
 ### Connect it
 
@@ -318,6 +318,12 @@ Clone, Fetch and Push work as [Git (Basic)](#what-agents-can-do)'s do: the worki
 
 A push's token may also change workflow files only when the agent has **May change workflows** and says that this push's commits add, change or delete one. The agent's tools tell it so only when its access has the switch. Every other push's token cannot, so GitHub refuses a push that changes a workflow file without the agent meaning it to, and the agent is told to push again saying so, or to ask you when its access does not allow it. Such a push's row in **Recent calls** says it changes workflow files.
 
+Clone, Fetch and Push also move the Git LFS files the commits name, with the same token, through the repository's own LFS storage on GitHub; Kivali does this itself, not with git-lfs, and nothing in the working copy changes where it sends them:
+
+- **Push** uploads the files GitHub lacks before any branch or tag moves, from the working copy's `.git/lfs/objects`, where git-lfs keeps them. If one GitHub lacks is not there, or does not match its pointer, nothing is pushed, and the agent is told which file. Pushing a branch GitHub already has still uploads any of its files GitHub lacks.
+- **Clone** and **Fetch** download the files their branches name into `.git/lfs/objects`, keeping each only once it has arrived whole and matches its pointer. The working copy's files stay pointers until the agent runs `git lfs checkout`, which needs git-lfs in its shell (install it as [software](using-kivali.md#installing-software-for-an-agent) if it is not there). A file that does not download leaves the clone or fetch as it landed, and the agent is told which.
+- At most 1,000 files and 5 GB a call. The answer and **Recent calls** say how many went up or came down.
+
 Each action is in **Recent calls**: one that opens, comments, closes or deletes names what it made, closed or deleted, and a clone, fetch or push has two rows, one when it starts and one when it ends, as for Git (Basic). A call for a repository the agent's access does not name, or for one under another account than the one the app is installed on, is refused before anything reaches GitHub, and the agent is told to ask you. [Git (Basic)](#git-basic) does not handle `github.com`: GitHub's repositories are this integration's.
 
 ### Not supported
@@ -325,7 +331,7 @@ Each action is in **Recent calls**: one that opens, comments, closes or deletes 
 - GitHub Enterprise Server and other hosts than `github.com`.
 - Force-pushing, and deleting a tag on GitHub.
 - Closing an issue or pull request the app did not open, and deleting a branch that holds a commit someone other than the app made.
-- SSH addresses, Git LFS files and submodules, as for [Git (Basic)](#not-supported). A clone stops after 15 minutes, a fetch or a push after 10.
+- SSH addresses and submodules, as for [Git (Basic)](#not-supported). A clone stops after 15 minutes, a fetch or a push after 10.
 - Anything the app's permissions do not cover, such as changing the repository's settings, merging pull requests or approving reviews.
 - Rerunning or cancelling workflow runs, downloading their artifacts, and reading commit statuses (the older way some CI services report, besides checks).
 

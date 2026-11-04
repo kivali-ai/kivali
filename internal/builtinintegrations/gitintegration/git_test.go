@@ -197,7 +197,8 @@ func TestTools(t *testing.T) {
 // owner/name (case kept, no user info), the access's patterns for the
 // daemon's own check, the bound, the token under x-access-token, the
 // connection it runs through (which the second request
-// reads back), and no proxy credential (core adds the connection's).
+// reads back), no proxy credential (core adds the connection's) and
+// no LFS: Git (Basic) moves no LFS files.
 func TestCallBuildsTheJob(t *testing.T) {
 	g := New()
 	res, err := g.Call(context.Background(), dana("acme/*"), testConn("git.example.com"), "clone",

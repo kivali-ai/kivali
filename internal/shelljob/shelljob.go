@@ -71,6 +71,18 @@ type GitJob struct {
 	Proxy               GitProxy     `json:"proxy"`
 	TimeoutSeconds      int          `json:"timeout_seconds,omitempty"`
 	ConnectionID        string       `json:"connection_id,omitempty"`
+	LFS                 *GitLFS      `json:"lfs,omitempty"`
+}
+
+// GitLFS has the job move the Git LFS files its commits name, through
+// the repository's LFS API with the job's token: a push uploads them
+// before any ref moves, a clone or a fetch downloads them into
+// .git/lfs/objects (agentshell.GitLFS). Hosts are the hosts besides the
+// repository's own where the LFS API may keep a file's content, which
+// the connection's proxy credential admits too. Nil, as for Git
+// (Basic), moves none.
+type GitLFS struct {
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // GitIdentity is the git identity a clone's working copy is given: its
@@ -106,7 +118,10 @@ type Result struct {
 // daemon's first 200 refs by name; UpdatedTotal counts every ref that
 // moved. Identity says a clone's working copy was given the job's
 // Identity: false for a clone without one, and for one whose identity
-// could not be written though the clone landed.
+// could not be written though the clone landed. LFSFiles and LFSBytes
+// count the LFS files moved (a push's uploaded, a clone's or a fetch's
+// downloaded); LFSError is why a clone or a fetch that landed did not
+// get them.
 type GitResult struct {
 	Repository   string         `json:"repository,omitempty"`
 	Updated      []GitRefUpdate `json:"updated,omitempty"`
@@ -116,6 +131,9 @@ type GitResult struct {
 	TimedOut     bool           `json:"timed_out,omitempty"`
 	ConnectionID string         `json:"connection_id,omitempty"`
 	Identity     bool           `json:"identity,omitempty"`
+	LFSFiles     int            `json:"lfs_files,omitempty"`
+	LFSBytes     int64          `json:"lfs_bytes,omitempty"`
+	LFSError     string         `json:"lfs_error,omitempty"`
 }
 
 // GitRefUpdate is one ref a git operation moved: its name and the

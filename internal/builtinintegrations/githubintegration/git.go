@@ -47,9 +47,18 @@ var (
 	_ builtinintegrations.HostsOf             = (*GitHub)(nil)
 )
 
-// Hosts is github.com, which a clone, a fetch or a push reaches: what
-// the connection's scoped proxy credential admits.
-func (g *GitHub) Hosts(builtinintegrations.Connection) []string { return []string{gitHost} }
+// Hosts is github.com, which a clone, a fetch or a push reaches, and
+// the hosts GitHub keeps LFS files on (lfsHosts): what the connection's
+// scoped proxy credential admits.
+func (g *GitHub) Hosts(builtinintegrations.Connection) []string {
+	return append([]string{gitHost}, lfsHosts...)
+}
+
+// lfsHosts are where GitHub's LFS API sends a clone, a fetch or a push
+// for a file's content, at an address it signs for that file: the
+// daemon goes nowhere else for one (agentshell.GitLFS), and sends it no
+// token of Kivali's.
+var lfsHosts = []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
 
 // gitPolicy is what caller may do through conn with the clone, fetch
 // or push name, and the connection's values: on github.com, the
@@ -125,6 +134,9 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 		return nil, err
 	}
 	job := call.Job(shelljob.GitAuth{Username: tokenUser, Password: tok}, conn.ID)
+	// The job moves the LFS files its commits name with the same token,
+	// through the repository's own LFS API.
+	job.LFS = &shelljob.GitLFS{Hosts: lfsHosts}
 	// A writer's clone is given the app's bot as its identity, so what
 	// the agent commits there is the bot's (bot.go), which is what lets
 	// it delete such a branch. The token comes first: a call the token's
