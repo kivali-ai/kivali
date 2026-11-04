@@ -55,11 +55,24 @@ pub struct Line {
     closed: bool,
 }
 
+/// Where a place's start is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    /// Its turn has not come.
+    Waiting,
+    /// Its VM is powering on.
+    Starting,
+    /// Refused for memory, it waits [`SETTLE`] to try again.
+    Settling,
+}
+
 struct Place {
     n: u64,
     id: String,
-    /// Its turn came and its start began.
-    began: bool,
+    stage: Stage,
+    /// A resume, which Pause may end before its VM powers on.
+    cancellable: bool,
+    cancelled: bool,
 }
 
 /// One start at a time, in the order they joined.
@@ -76,6 +89,17 @@ pub struct Ticket {
     n: u64,
 }
 
+/// What a wait in the queue came to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Turn {
+    /// The start may power its VM on.
+    Go,
+    /// The queue closed (quitting).
+    Closed,
+    /// Pause ended the start ([`StartQueue::cancel`]).
+    Cancelled,
+}
+
 impl StartQueue {
     pub fn new(clock: Box<dyn Clock>) -> Arc<StartQueue> {
         Arc::new(StartQueue { line: Mutex::new(Line::default()), turn: Condvar::new(), clock })
@@ -85,21 +109,51 @@ impl StartQueue {
         self.line.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// A place at the back for team `id`'s start.
-    pub fn join(self: &Arc<Self>, id: &str) -> Ticket {
+    fn push(self: &Arc<Self>, id: &str, cancellable: bool) -> Ticket {
         let mut line = self.lock();
         let n = line.next;
         line.next += 1;
-        line.places.push_back(Place { n, id: id.to_string(), began: false });
+        line.places.push_back(Place { n, id: id.to_string(), stage: Stage::Waiting, cancellable, cancelled: false });
         Ticket { queue: self.clone(), n }
     }
 
+    /// A place at the back for team `id`'s resume.
+    pub fn join(self: &Arc<Self>, id: &str) -> Ticket {
+        self.push(id, true)
+    }
+
+    /// A place at the back for anything else that powers team `id`'s VM
+    /// on: an update, which stops and boots it again, or a new team's
+    /// first boot. Pause does not end these.
+    pub fn join_fixed(self: &Arc<Self>, id: &str) -> Ticket {
+        self.push(id, false)
+    }
+
+    /// Pause: ends team `id`'s resume while it waits its turn or waits to
+    /// try again, before its VM powers on. False when it has none that
+    /// can end so.
+    pub fn cancel(&self, id: &str) -> bool {
+        let mut line = self.lock();
+        let Some(p) = line.places.iter_mut().find(|p| p.id == id && p.cancellable && !p.cancelled && p.stage != Stage::Starting) else {
+            return false;
+        };
+        p.cancelled = true;
+        drop(line);
+        self.turn.notify_all();
+        true
+    }
+
+    /// Whether team `id` has a resume that [`Self::cancel`] can end.
+    pub fn waiting(&self, id: &str) -> bool {
+        self.lock().places.iter().any(|p| p.id == id && p.cancellable && !p.cancelled && p.stage != Stage::Starting)
+    }
+
     /// Quitting: the starts still waiting give up, and so does one
-    /// waiting to try again. Answers the teams whose start had not begun.
+    /// waiting to try again. Answers the teams whose resume had not begun.
     pub fn close(&self) -> Vec<String> {
         let mut line = self.lock();
         line.closed = true;
-        let waiting = line.places.iter().filter(|p| !p.began).map(|p| p.id.clone()).collect();
+        let waiting = line.places.iter().filter(|p| p.cancellable && !p.cancelled && p.stage == Stage::Waiting).map(|p| p.id.clone()).collect();
         drop(line);
         self.turn.notify_all();
         waiting
@@ -113,24 +167,36 @@ impl StartQueue {
 }
 
 impl Ticket {
+    /// This ticket's place, under the line's lock.
+    fn place<'a>(&self, line: &'a mut Line) -> Option<&'a mut Place> {
+        line.places.iter_mut().find(|p| p.n == self.n)
+    }
+
+    /// Why the start may not go on, if it may not.
+    fn stopped(&self, line: &mut Line) -> Option<Turn> {
+        if line.closed {
+            return Some(Turn::Closed);
+        }
+        self.place(line).filter(|p| p.cancelled).map(|_| Turn::Cancelled)
+    }
+
     /// Blocks until this start's turn; `ahead` hears the team whose start
-    /// runs meanwhile, each time that changes. False once the queue is
-    /// closed.
-    pub fn wait_turn(&self, ahead: &mut dyn FnMut(&str)) -> bool {
+    /// runs meanwhile, each time that changes.
+    pub fn wait_turn(&self, ahead: &mut dyn FnMut(&str)) -> Turn {
         let q = &self.queue;
         let mut told = None;
         let mut line = q.lock();
         loop {
-            if line.closed {
-                return false;
+            if let Some(t) = self.stopped(&mut line) {
+                return t;
             }
             let first = line.places.front().map(|p| (p.n, p.id.clone()));
             match first {
                 Some((n, _)) if n == self.n => {
                     if let Some(p) = line.places.front_mut() {
-                        p.began = true;
+                        p.stage = Stage::Starting;
                     }
-                    return true;
+                    return Turn::Go;
                 }
                 Some((n, id)) if told != Some(n) => {
                     told = Some(n);
@@ -144,19 +210,24 @@ impl Ticket {
         }
     }
 
-    /// Waits `d` on the queue's clock, keeping the turn. False once the
-    /// queue is closed.
-    pub fn settle(&self, d: Duration) -> bool {
+    /// Waits `d` on the queue's clock, keeping the turn.
+    pub fn settle(&self, d: Duration) -> Turn {
         let q = &self.queue;
         let deadline = q.clock.now() + d;
         let mut line = q.lock();
+        if let Some(p) = self.place(&mut line) {
+            p.stage = Stage::Settling;
+        }
         loop {
-            if line.closed {
-                return false;
+            if let Some(t) = self.stopped(&mut line) {
+                return t;
             }
             let now = q.clock.now();
             if now >= deadline {
-                return true;
+                if let Some(p) = self.place(&mut line) {
+                    p.stage = Stage::Starting;
+                }
+                return Turn::Go;
             }
             line = q.clock.wait(&q.turn, line, deadline - now);
         }
@@ -189,13 +260,25 @@ pub enum Ended {
     NoMemory(String),
     /// The queue closed before the start (or its retry) could run.
     Closed,
+    /// Pause ended it before the start (or its retry) could run.
+    Cancelled,
+}
+
+impl From<Turn> for Ended {
+    fn from(t: Turn) -> Ended {
+        match t {
+            Turn::Cancelled => Ended::Cancelled,
+            _ => Ended::Closed,
+        }
+    }
 }
 
 /// Runs one start in its turn: waits for the starts ahead, then starts;
 /// one refused for memory waits [`SETTLE`] and starts once more.
 pub fn start_in_turn(ticket: &Ticket, s: &mut dyn Starter) -> Ended {
-    if !ticket.wait_turn(&mut |ahead| s.waiting(ahead)) {
-        return Ended::Closed;
+    match ticket.wait_turn(&mut |ahead| s.waiting(ahead)) {
+        Turn::Go => {}
+        t => return t.into(),
     }
     let first = match s.start() {
         Ok(()) => return Ended::Started,
@@ -205,8 +288,9 @@ pub fn start_in_turn(ticket: &Ticket, s: &mut dyn Starter) -> Ended {
         return Ended::Failed(first);
     }
     s.retrying();
-    if !ticket.settle(SETTLE) {
-        return Ended::Closed;
+    match ticket.settle(SETTLE) {
+        Turn::Go => {}
+        t => return t.into(),
     }
     match s.start() {
         Ok(()) => Ended::Started,
@@ -414,15 +498,67 @@ mod tests {
         let unused = q.join("x");
         let (a, b) = (q.join("a"), q.join("b"));
         drop(unused);
-        assert!(a.wait_turn(&mut |_| panic!("a is first")));
+        assert_eq!(a.wait_turn(&mut |_| panic!("a is first")), Turn::Go);
         assert_eq!(q.close(), ["b"]);
         assert_eq!(start_in_turn(&b, &mut Scripted::new("b", &clock, &log, vec![])), Ended::Closed);
         // A start waiting to try again gives up too.
-        assert!(!a.settle(SETTLE));
+        assert_eq!(a.settle(SETTLE), Turn::Closed);
         assert!(log.lock().unwrap().is_empty());
         drop((a, b));
         q.reopen();
         let c = q.join("c");
         assert_eq!(start_in_turn(&c, &mut Scripted::new("c", &clock, &log, vec![Ok(())])), Ended::Started);
+    }
+
+    /// Pause ends a resume that waits its turn, or waits to try again,
+    /// and the team behind it moves up; it does not end one whose VM is
+    /// powering on, nor an update's or a new team's place.
+    #[test]
+    fn pause_ends_a_waiting_resume() {
+        let (q, clock) = queue();
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (a, b, c) = (q.join("a"), q.join("b"), q.join("c"));
+        assert_eq!(a.wait_turn(&mut |_| {}), Turn::Go);
+        assert!(!q.cancel("a"), "a's VM is powering on");
+        assert!(!q.waiting("a") && q.waiting("b"));
+        assert!(q.cancel("b"));
+        assert!(!q.waiting("b"));
+        assert!(!q.cancel("b"), "b was already ended");
+        assert_eq!(start_in_turn(&b, &mut Scripted::new("b", &clock, &log, vec![])), Ended::Cancelled);
+        drop((a, b));
+        // Refused for memory, c waits to try again; Pause ends that too.
+        assert_eq!(c.wait_turn(&mut |_| panic!("c is first now")), Turn::Go);
+        c.place(&mut q.lock()).unwrap().stage = Stage::Settling;
+        assert!(q.cancel("c"));
+        assert_eq!(c.settle(SETTLE), Turn::Cancelled);
+        drop(c);
+        let u = q.join_fixed("u");
+        assert!(!q.cancel("u"));
+        assert_eq!(q.close(), Vec::<String>::new());
+        drop(u);
+        assert!(log.lock().unwrap().is_empty());
+    }
+
+    /// An update or a new team's first boot waits its turn like a resume,
+    /// so it never powers a VM on beside another start.
+    #[test]
+    fn fixed_places_wait_their_turn() {
+        let (q, _) = queue();
+        let a = q.join("a");
+        let u = q.join_fixed("b");
+        assert_eq!(a.wait_turn(&mut |_| {}), Turn::Go);
+        let (heard_tx, heard_rx) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            let mut heard = Vec::new();
+            let t = u.wait_turn(&mut |ahead| {
+                heard.push(ahead.to_string());
+                let _ = heard_tx.send(());
+            });
+            (t, heard)
+        });
+        // The update has heard it waits for a's resume; then a ends.
+        heard_rx.recv().unwrap();
+        drop(a);
+        assert_eq!(waiter.join().unwrap(), (Turn::Go, vec!["a".to_string()]));
     }
 }

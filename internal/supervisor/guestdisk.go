@@ -31,11 +31,13 @@ const (
 // writes as it starts (its containers' layers, its logs).
 const guestHeadroom = 1 << 30
 
-// importFactor estimates what importing an image bundle takes on the
+// importFactor estimates what importing an image bundle adds to the
 // data disk, as a multiple of the bundle's download size: containerd
 // keeps the layers as the bundle holds them and unpacks each beside
-// them. The check after the import measures what it took.
-const importFactor = 3
+// them, and layers the installed release shares cost nothing. A release
+// that shares fewer takes more; the check after the import measures
+// what it took, and undoes an import that left too little.
+const importFactor = 2
 
 // pinnedLabel is the containerd label kubelet's image garbage collection
 // skips an image for (the CRI image's pinned field).
@@ -119,17 +121,63 @@ func (e *diskFullError) Error() string {
 	if d := e.disk; d.size > 0 {
 		msg += fmt.Sprintf(" (%s free of %s; Kubernetes stops the team below %s free)", gb(d.avail), gb(d.size), gb(d.floor()))
 		if want := d.floor() + guestHeadroom; d.avail < want {
-			msg += fmt.Sprintf(". Free up %s of the team's files, then start it again", gb(want-d.avail))
+			msg += fmt.Sprintf(". It runs again once %s more of the disk is free", gb(want-d.avail))
 		}
 	}
 	return msg
 }
 
+// withDisk adds the data disk's usage to a diskFullError that has none.
+func withDisk(ctx context.Context, g Guest, err error) error {
+	var full *diskFullError
+	if errors.As(err, &full) && full.disk.size == 0 {
+		if d, derr := guestDiskUsage(ctx, g); derr == nil {
+			full.disk = d
+		}
+	}
+	return err
+}
+
+// evictedServer is the eviction of a server pod among pl, if kubelet
+// evicted one for disk: status.reason Evicted, with "ephemeral-storage"
+// (what imagefs and nodefs pressure evict for) in its message. A pod
+// evicted for memory is not the disk's.
+func evictedServer(pl podList) *diskFullError {
+	for _, p := range pl.Items {
+		if p.Status.Reason == "Evicted" && strings.Contains(p.Status.Message, "ephemeral-storage") {
+			why := "Kubernetes evicted the server"
+			if m := strings.TrimSpace(p.Status.Message); m != "" {
+				why += " (" + m + ")"
+			}
+			return &diskFullError{Why: why}
+		}
+	}
+	return nil
+}
+
+// serverEvicted reports a server pod kubelet evicted; nil when none was,
+// or the pods could not be read.
+func serverEvicted(ctx context.Context, g Guest) error {
+	out, err := kubectl(ctx, g, "-n", Namespace, "get", "pods", "-l", "app=kivali", "-o", "json")
+	if err != nil {
+		return nil
+	}
+	var pl podList
+	if json.Unmarshal(out, &pl) != nil {
+		return nil
+	}
+	if e := evictedServer(pl); e != nil {
+		return e
+	}
+	return nil
+}
+
 // diskPressure reports a data disk too full for the team to run: the
-// node tainted for disk pressure, a server pod evicted, or free space
-// below the floor kubelet evicts at (which a node that has only just
-// started may not have acted on yet). nil when none of those shows, or
-// none could be read.
+// node tainted for disk pressure, or free space below the floor kubelet
+// evicts at (which a node that has only just started may not have acted
+// on yet). An evicted server pod is deploymentState's and
+// serverEvicted's to report. nil when neither shows, or neither could
+// be read.
 func diskPressure(ctx context.Context, g Guest) error {
 	d, derr := guestDiskUsage(ctx, g)
 	if derr != nil {
@@ -147,20 +195,6 @@ func diskPressure(ctx context.Context, g Guest) error {
 			for _, t := range n.Spec.Taints {
 				if t.Key == "node.kubernetes.io/disk-pressure" {
 					return &diskFullError{Why: "Kubernetes reports the VM under disk pressure", disk: d}
-				}
-			}
-		}
-	}
-	if out, err := kubectl(ctx, g, "-n", Namespace, "get", "pods", "-l", "app=kivali", "-o", "json"); err == nil {
-		var pl podList
-		if json.Unmarshal(out, &pl) == nil {
-			for _, p := range pl.Items {
-				if p.Status.Reason == "Evicted" {
-					why := "Kubernetes evicted the server"
-					if m := strings.TrimSpace(p.Status.Message); m != "" {
-						why += " (" + m + ")"
-					}
-					return &diskFullError{Why: why, disk: d}
 				}
 			}
 		}
@@ -242,15 +276,15 @@ func installedRefs(ctx context.Context, g Guest, have map[string]bool) (server s
 // them again), so the release the team runs, and the one an upgrade
 // rolls back to, keep theirs while the disk is under pressure; the
 // images of releases the team no longer needs are left to the garbage
-// collection. A failure is logged: pinning protects, and nothing waits
-// on it.
+// collection. Only images whose label differs are labelled. A failure
+// is logged: pinning protects, and nothing waits on it.
 func pinImages(ctx context.Context, g Guest, keep []string, logf Logf) {
 	if len(keep) == 0 {
 		// The release's images are unknown (a manifest that cannot be
 		// read): unpinning the rest could leave the team's own unpinned.
 		return
 	}
-	have, err := containerdImages(ctx, g)
+	pins, err := containerdPins(ctx, g)
 	if err != nil {
 		logf("pinning the release's images: %v", err)
 		return
@@ -259,17 +293,23 @@ func pinImages(ctx context.Context, g Guest, keep []string, logf Logf) {
 	for _, r := range keep {
 		want[guestapi.NormalizeRef(r)] = true
 	}
-	var pinned []string
-	for r := range have {
+	var pinned, changed []string
+	for r, is := range pins {
 		repo, tag := guestapi.SplitRef(r)
 		if tag == "" || !kivaliRepos[guestapi.RepoName(repo)] {
+			continue
+		}
+		if want[r] {
+			pinned = append(pinned, r)
+		}
+		if is == want[r] {
 			continue
 		}
 		v := ""
 		if want[r] {
 			v = pinnedValue
-			pinned = append(pinned, r)
 		}
+		changed = append(changed, r)
 		var errb bytes.Buffer
 		code, err := g.Exec(ctx, guestapi.ExecSpec{Argv: []string{"k3s", "ctr", "-n", "k8s.io", "images", "label", r, pinnedLabel + "=" + v}}, nil, nil, &errb)
 		if err == nil && code != 0 {
@@ -279,19 +319,52 @@ func pinImages(ctx context.Context, g Guest, keep []string, logf Logf) {
 			logf("labelling %s: %v", r, err)
 		}
 	}
-	if len(pinned) > 0 {
+	if len(changed) > 0 {
 		logf("pinned %d images: %s", len(pinned), strings.Join(slices.Sorted(slices.Values(pinned)), ", "))
 	}
 }
 
-// added are the refs not in before; none when before is unknown (nil).
-func added(refs []string, before map[string]bool) []string {
-	if before == nil {
-		return nil
+// containerdPins lists containerd's images with whether each is pinned:
+// `ctr images ls` prints a reference first and its labels last
+// (comma-separated, "-" for none); the size between them has a space.
+func containerdPins(ctx context.Context, g Guest) (map[string]bool, error) {
+	var out, errb bytes.Buffer
+	code, err := g.Exec(ctx, guestapi.ExecSpec{Argv: []string{"k3s", "ctr", "-n", "k8s.io", "images", "ls"}}, nil, &out, &errb)
+	if err != nil {
+		return nil, err
 	}
+	if code != 0 {
+		return nil, fmt.Errorf("ctr images ls: exit %d: %s", code, strings.TrimSpace(errb.String()))
+	}
+	return parsePins(out.String()), nil
+}
+
+// parsePins reads `ctr images ls`'s table (containerdPins).
+func parsePins(out string) map[string]bool {
+	pins := map[string]bool{}
+	for i, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		if i == 0 || len(f) < 2 {
+			continue
+		}
+		pins[f[0]] = slices.Contains(strings.Split(f[len(f)-1], ","), pinnedLabel+"="+pinnedValue)
+	}
+	return pins
+}
+
+// added are the refs the upgrade's import brought: those containerd did
+// not list before it. With that listing unknown (nil), the refs at
+// another tag than installed (the installed release's server image),
+// since an image at the installed release's tag is the team's own; none
+// when the installed release is unknown too.
+func added(refs []string, before map[string]bool, installed string) []string {
+	_, itag := guestapi.SplitRef(installed)
 	var out []string
 	for _, r := range refs {
-		if !before[guestapi.NormalizeRef(r)] {
+		switch _, tag := guestapi.SplitRef(r); {
+		case before != nil && !before[guestapi.NormalizeRef(r)]:
+			out = append(out, r)
+		case before == nil && itag != "" && tag != itag:
 			out = append(out, r)
 		}
 	}

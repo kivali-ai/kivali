@@ -87,6 +87,8 @@ struct Row {
     phrase: String,
     /// The team's update, when one is available ("0.17").
     update: Option<String>,
+    /// Its resume waits its turn (`TeamView::queued`).
+    queued: bool,
 }
 
 struct View {
@@ -99,7 +101,7 @@ struct View {
 fn row(sh: &Shell, t: Team) -> Row {
     let v = sh.team_view(&t);
     let update = v.update.as_ref().filter(|u| u.state == "available").and_then(|u| u.latest.clone());
-    Row { state: v.state, phrase: v.phrase, update: update.map(|u| shell::short_version(&u)), team: t }
+    Row { state: v.state, phrase: v.phrase, update: update.map(|u| shell::short_version(&u)), queued: v.queued, team: t }
 }
 
 fn view(app: &AppHandle) -> View {
@@ -130,17 +132,25 @@ fn sep(app: &AppHandle) -> R<PredefinedMenuItem<Wry>> {
 
 /// Pause or Resume, by what the team is doing now.
 fn pause_resume(app: &AppHandle, r: &Row) -> R<Option<MenuItem<Wry>>> {
-    let id = &r.team.id;
-    Ok(match r.state {
-        TeamState::Running => Some(item(app, format!("pause:{id}"), format!("Pause {}…", r.team.name), None)?),
-        TeamState::Paused => Some(item(app, format!("resume:{id}"), format!("Resume {}", r.team.name), None)?),
-        TeamState::Failed => Some(item(app, format!("resume:{id}"), format!("Try starting {} again", r.team.name), None)?),
+    pause_resume_item(r).map(|(id, text)| item(app, id, text, None)).transpose()
+}
+
+/// [`pause_resume`]'s item id and text: Pause for a running team, and
+/// for one whose resume waits its turn (`queued`), which Pause ends.
+fn pause_resume_item(r: &Row) -> Option<(String, String)> {
+    let (id, name) = (&r.team.id, &r.team.name);
+    match r.state {
+        TeamState::Running => Some((format!("pause:{id}"), format!("Pause {name}…"))),
+        TeamState::Starting if r.queued => Some((format!("pause:{id}"), format!("Pause {name}…"))),
+        TeamState::Paused => Some((format!("resume:{id}"), format!("Resume {name}"))),
+        TeamState::Failed => Some((format!("resume:{id}"), format!("Try starting {name} again"))),
         TeamState::Starting => None,
-    })
+    }
 }
 
 /// The Team menu's items for `r`: Pause, Resume or Try again for a team
-/// here (none while it starts), its settings, Open in browser with
+/// here (none while it starts, but Pause while its resume waits its
+/// turn), its settings, Open in browser with
 /// `browser_key`. The menu bar's (macOS) and each team window's (Windows).
 fn team_items(app: &AppHandle, r: &Row, browser_key: Option<&str>) -> R<Vec<MenuItem<Wry>>> {
     let id = &r.team.id;
@@ -827,7 +837,19 @@ mod tests {
         } else {
             Place::Elsewhere { url: format!("https://{name}.example.com") }
         };
-        Row { team: Team { id: name.into(), name: name.into(), kind: None, place, paused_at: None }, state, phrase: phrase.into(), update: None }
+        Row { team: Team { id: name.into(), name: name.into(), kind: None, place, paused_at: None }, state, phrase: phrase.into(), update: None, queued: false }
+    }
+
+    /// A starting team offers nothing, unless its resume waits its turn:
+    /// then Pause, which ends that start.
+    #[test]
+    fn pause_is_offered_for_a_waiting_resume() {
+        let mut r = row("Home", true, TeamState::Starting, "waking up");
+        assert_eq!(pause_resume_item(&r), None);
+        r.queued = true;
+        assert_eq!(pause_resume_item(&r), Some(("pause:Home".into(), "Pause Home…".into())));
+        let r = row("Home", true, TeamState::Running, "running");
+        assert_eq!(pause_resume_item(&r), Some(("pause:Home".into(), "Pause Home…".into())));
     }
 
     #[test]

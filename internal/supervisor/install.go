@@ -576,6 +576,11 @@ func deploymentState(ctx context.Context, g Guest, chartVersion, image string, h
 	if pods, err := kubectl(ctx, g, "-n", Namespace, "get", "pods", "-l", "app=kivali", "-o", "json"); err == nil {
 		var pl podList
 		if json.Unmarshal(pods, &pl) == nil {
+			// A server evicted for its disk: the replacement is not
+			// scheduled while the disk stays short.
+			if e := evictedServer(pl); e != nil {
+				return permanent(e)
+			}
 			for _, p := range pl.Items {
 				for _, c := range p.Status.ContainerStatuses {
 					if w := c.State.Waiting; w != nil && fatalWaiting[w.Reason] {
@@ -826,7 +831,7 @@ func (s *Supervisor) waitServing(ctx context.Context, chartVersion, image string
 		}
 		return err
 	}); err != nil {
-		return err
+		return withDisk(ctx, g, err)
 	}
 	logf("deployment rolled out after %s; waiting for /readyz", s.o.Clock.Now().Sub(start).Round(time.Second))
 	url := s.baseURL() + "/readyz"
@@ -854,5 +859,8 @@ func (s *Supervisor) waitServing(ctx context.Context, chartVersion, image string
 	// A node that came up under disk pressure answers once, then evicts
 	// the server; a disk below kubelet's floor is that, before kubelet
 	// has acted on it.
+	if err := serverEvicted(ctx, g); err != nil {
+		return withDisk(ctx, g, err)
+	}
 	return diskPressure(ctx, g)
 }

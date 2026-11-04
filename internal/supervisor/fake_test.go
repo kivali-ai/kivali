@@ -213,8 +213,14 @@ type fakeBackend struct {
 	// from guestAvail. Under mu.
 	guestSize, guestAvail, importCost uint64
 	// diskTaint taints the node for disk pressure; evicted lists an
-	// evicted server pod. Under mu.
-	diskTaint, evicted bool
+	// evicted server pod, evicted again after any delete (the disk is
+	// still short), staleEvicted one an earlier start left, which a
+	// delete of the ended pods removes. listFailures fails that many
+	// `ctr images ls -q`. Under mu.
+	diskTaint, evicted, staleEvicted bool
+	listFailures                     int
+	// labelled records every image `ctr images label` changed. Under mu.
+	labelled []string
 	// pinned are the images containerd has labelled pinned; removed
 	// records every image `ctr images rm` deleted. Under mu.
 	pinned  map[string]bool
@@ -750,6 +756,7 @@ func (g fakeGuest) Exec(ctx context.Context, spec guestapi.ExecSpec, stdin io.Re
 			return 1, nil
 		}
 		g.m.vm.pinned[a[6]] = v == pinnedValue
+		g.m.vm.labelled = append(g.m.vm.labelled, a[6])
 		if v == "" {
 			delete(g.m.vm.pinned, a[6])
 		}
@@ -763,8 +770,31 @@ func (g fakeGuest) Exec(ctx context.Context, spec guestapi.ExecSpec, stdin io.Re
 			g.m.vm.removed = append(g.m.vm.removed, r)
 		}
 		return 0, nil
+	case strings.Join(a, " ") == "k3s ctr -n k8s.io images ls":
+		g.m.vm.mu.Lock()
+		defer g.m.vm.mu.Unlock()
+		var refs []string
+		for r := range g.m.vm.imported {
+			refs = append(refs, r)
+		}
+		sort.Strings(refs)
+		_, _ = io.WriteString(stdout, "REF                                TYPE                                                 DIGEST                                                                  SIZE      PLATFORMS   LABELS\n")
+		for _, r := range refs {
+			labels := "io.cri-containerd.image=managed"
+			if g.m.vm.pinned[r] {
+				labels += "," + pinnedLabel + "=" + pinnedValue
+			}
+			_, _ = fmt.Fprintf(stdout, "%s application/vnd.oci.image.index.v1+json sha256:0000 33.6 MiB linux/amd64 %s\n", r, labels)
+		}
+		return 0, nil
 	case strings.Join(a[:3], " ") == "k3s ctr -n":
 		g.m.vm.mu.Lock()
+		if g.m.vm.listFailures > 0 {
+			g.m.vm.listFailures--
+			g.m.vm.mu.Unlock()
+			_, _ = io.WriteString(stderr, "ctr: context deadline exceeded")
+			return 1, nil
+		}
 		var refs []string
 		for r := range g.m.vm.imported {
 			refs = append(refs, r)
@@ -923,7 +953,7 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 			"status":   map[string]any{"containerStatuses": statuses},
 		}}
 		vm.mu.Lock()
-		if vm.evicted {
+		if vm.evicted || vm.staleEvicted {
 			items = append(items, map[string]any{
 				"metadata": map[string]string{"name": "kivali-0"},
 				"status":   map[string]any{"phase": "Failed", "reason": "Evicted", "message": "The node was low on resource: ephemeral-storage."},
@@ -939,6 +969,11 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		vm.mu.Unlock()
 		return 0, json.NewEncoder(stdout).Encode(map[string]any{"spec": map[string]any{"taints": taints}})
+	case strings.Contains(joined, "delete pod -l app=kivali --field-selector=status.phase=Failed"):
+		vm.mu.Lock()
+		vm.staleEvicted = false
+		vm.mu.Unlock()
+		return 0, nil
 	case strings.Contains(joined, "delete pod"), strings.Contains(joined, "rollout restart"):
 		return 0, nil
 	case strings.Contains(joined, "exec") && strings.HasSuffix(joined, "claude auth status --json"):

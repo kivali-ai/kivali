@@ -176,7 +176,7 @@ func TestRollbackUnderDiskPressureIsAFailedStart(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "the data disk was restored to 0.15.0, but starting it failed: the team's data disk is too full to run on: "+tc.why) {
 				t.Fatalf("upgrade: %v", err)
 			}
-			if name == "below the floor" && !strings.Contains(err.Error(), "Free up "+gb(guestHeadroom+1)+" of the team's files") {
+			if name == "below the floor" && !strings.Contains(err.Error(), "It runs again once "+gb(guestHeadroom+1)+" more of the disk is free") {
 				t.Fatalf("upgrade: %v, want how much to free", err)
 			}
 			if st := h.sup.State(); st.Upgrade != nil || st.Kivali != "0.15.0" {
@@ -250,5 +250,106 @@ func TestUpgradePreflightRefusesAnImageErrorWithTheImagePresent(t *testing.T) {
 	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")}, h.logf())
 	if err == nil || !strings.Contains(err.Error(), "preflight: the org is not healthy") || !strings.Contains(err.Error(), "ImagePullBackOff") {
 		t.Fatalf("upgrade: %v", err)
+	}
+}
+
+func TestParsePins(t *testing.T) {
+	out := "REF                                TYPE                                                 DIGEST       SIZE      PLATFORMS   LABELS\n" +
+		"docker.io/library/kivali:v0.16.0 application/vnd.oci.image.index.v1+json sha256:aa 33.6 MiB linux/amd64 io.cri-containerd.image=managed,io.cri-containerd.pinned=pinned\n" +
+		"docker.io/library/kivali:v0.15.0 application/vnd.oci.image.index.v1+json sha256:bb 33.1 MiB linux/amd64 io.cri-containerd.image=managed\n" +
+		"docker.io/rancher/mirrored-pause:3.10.2 application/vnd.oci.image.index.v1+json sha256:cc 312.0 KiB linux/amd64 -\n"
+	got := parsePins(out)
+	want := map[string]bool{"docker.io/library/kivali:v0.16.0": true, "docker.io/library/kivali:v0.15.0": false, "docker.io/rancher/mirrored-pause:3.10.2": false}
+	if len(got) != len(want) {
+		t.Fatalf("parsePins = %v", got)
+	}
+	for r, p := range want {
+		if got[r] != p {
+			t.Errorf("%s pinned %v, want %v", r, got[r], p)
+		}
+	}
+}
+
+// Pinning labels only the images whose label differs: run again with
+// the same release, it labels nothing.
+func TestPinImagesLabelsOnlyWhatChanged(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	g, err := h.sup.running()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := []string{"docker.io/library/kivali:v0.15.0", "docker.io/library/kivali-egress-proxy:v0.15.0"}
+	labelled := func() int {
+		h.vm.mu.Lock()
+		defer h.vm.mu.Unlock()
+		return len(h.vm.labelled)
+	}
+	pinImages(context.Background(), g, keep, h.logf())
+	if n := labelled(); n != 2 {
+		t.Fatalf("%d images labelled, want the 2 kept", n)
+	}
+	pinImages(context.Background(), g, keep, h.logf())
+	if n := labelled(); n != 2 {
+		t.Fatalf("%d images labelled after pinning the same release again, want none more", n-2)
+	}
+	pinImages(context.Background(), g, keep[:1], h.logf())
+	if n := labelled(); n != 3 {
+		t.Fatalf("%d images labelled, want one more (the egress proxy unpinned)", n-2)
+	}
+}
+
+// With the images in the VM unknown at the preflight (containerd's list
+// could not be read), an import that leaves too little room still
+// removes what it brought: the new release's images, at a tag other than
+// the installed release's.
+func TestUpgradeRemovesTheImportWithoutTheListBefore(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	feed := writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")
+	h.setGuest(func(vm *fakeBackend) {
+		vm.listFailures = 1
+		vm.guestAvail = floorBytes + 2<<30
+		vm.importCost = 2 << 30
+	})
+	err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: feed}, h.logf())
+	refusedForRoom(t, h, err, floorBytes, stillRunning)
+	h.vm.mu.Lock()
+	removed := slices.Sorted(slices.Values(h.vm.removed))
+	has15 := h.vm.imported["docker.io/library/kivali:v0.15.0"]
+	h.vm.mu.Unlock()
+	want := []string{"docker.io/library/kivali-agent-shell:v0.16.0", "docker.io/library/kivali-browser:v0.16.0", "docker.io/library/kivali-egress-proxy:v0.16.0", "docker.io/library/kivali:v0.16.0"}
+	if !slices.Equal(removed, want) || !has15 {
+		t.Fatalf("removed %v (want %v); the installed release's server image kept: %v", removed, want, has15)
+	}
+}
+
+// A server pod an earlier start left evicted does not hold the upgrade
+// back: the preflight deletes the ended pods, and the room check says
+// whether the disk is short now.
+func TestUpgradeIgnoresAnEarlierEviction(t *testing.T) {
+	h := newHarness(t)
+	h.mustUp(UpOptions{Install: owner})
+	h.setGuest(func(vm *fakeBackend) { vm.staleEvicted = true })
+	if err := h.sup.Upgrade(context.Background(), UpgradeOptions{Feed: writeRelease(t, filepath.Join(t.TempDir(), "rel"), "0.16.0", "v0.16.0")}, h.logf()); err != nil {
+		t.Fatalf("upgrade: %v", err)
+	}
+}
+
+// A pod evicted for memory is not the disk's: only an eviction for
+// ephemeral-storage (imagefs or nodefs pressure) is a full disk.
+func TestEvictedForMemoryIsNotTheDisk(t *testing.T) {
+	pods := func(msg string) podList {
+		var pl podList
+		if err := json.Unmarshal([]byte(`{"items":[{"metadata":{"name":"kivali-0"},"status":{"phase":"Failed","reason":"Evicted","message":`+fmt.Sprintf("%q", msg)+`}}]}`), &pl); err != nil {
+			t.Fatal(err)
+		}
+		return pl
+	}
+	if e := evictedServer(pods("The node was low on resource: memory. Threshold quantity: 100Mi, available: 80Mi.")); e != nil {
+		t.Fatalf("a memory eviction counted as the disk: %v", e)
+	}
+	if e := evictedServer(pods("The node was low on resource: ephemeral-storage. Threshold quantity: 9Gi, available: 8Gi.")); e == nil {
+		t.Fatal("an ephemeral-storage eviction did not count as the disk")
 	}
 }
