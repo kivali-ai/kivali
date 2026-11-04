@@ -28,9 +28,9 @@ import { duration, fileSize, messageTime, modelBadge } from './format';
 import { TASK_STATE, asApiError, personWaitLine } from './tabsShared';
 import { SentRow } from './SentRow';
 
-/** Server rows (a past chat, a background task) as transcript rows: keyed, nothing live. */
-export function keyRows(rows: readonly TranscriptRow[]): ChatRow[] {
-  return mergeLoaded(rows, []);
+/** Server rows (a past chat, a background task) as transcript rows: keyed. `running` says their turn is still going, so a call with no result yet is in flight. */
+export function keyRows(rows: readonly TranscriptRow[], running = false): ChatRow[] {
+  return mergeLoaded(rows, [], running);
 }
 
 export interface TranscriptProps {

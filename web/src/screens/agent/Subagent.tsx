@@ -88,7 +88,7 @@ export function Subagent() {
   }, [live, visible, deps, slug, id, refresh]);
 
   const now = useNow(live ? 1000 : 60_000, deps.now);
-  const rows = useMemo(() => keyRows(data?.rows ?? []), [data]);
+  const rows = useMemo(() => keyRows(data?.rows ?? [], live), [data, live]);
 
   if (loading) {
     return (
