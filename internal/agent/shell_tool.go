@@ -90,6 +90,7 @@ const shellToolkitUnknown = "The shell is bash on Debian. Its package list could
 var shellCommandNames = map[string]string{
 	"ripgrep":       "rg",
 	"fd-find":       "fd",
+	"git-lfs":       "git lfs",
 	"imagemagick":   "magick, convert",
 	"poppler-utils": "pdftotext, pdftoppm, pdfinfo",
 	"python3-pip":   "pip3",

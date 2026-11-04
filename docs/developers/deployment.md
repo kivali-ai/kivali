@@ -80,7 +80,10 @@ cross-compile natively either way. `REGISTRY=ghcr.io/kivali-ai/`
 prefixes all four names; empty, the tags are the bare local names.
 
 **The agent-shell toolkit.** The agent-shell's default packages are small
-and company-agnostic: bash, coreutils, ca-certificates, git, python3
+and company-agnostic: bash, coreutils, ca-certificates, git, git-lfs
+(its filters set for every user with smudge skipped, so a checkout
+leaves pointers and `git lfs checkout` fills in what the GitHub
+integration downloaded; the image installs no hook), python3
 with pip and venv, jq, ripgrep, fd-find, curl, wget, tar, zip, unzip,
 less, pandoc, poppler-utils (pdftotext, pdftoppm, pdfinfo) and
 imagemagick. There is no compiler and no
