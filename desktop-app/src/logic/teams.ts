@@ -81,12 +81,14 @@ export function teamPage(team: Team | undefined, snap: Pick<Snapshot, "teams" | 
     const other = team.pause_first ? snap.teams.find((t) => t.id === team.pause_first) : undefined;
     const updateFailed = op?.kind === "update";
     let body: string;
-    if (team.reason) body = sentence(team.reason);
+    if (team.stopped) body = "Your agents aren’t working. Start it again and they pick up where they left off.";
+    else if (team.reason) body = sentence(team.reason);
     else if (other) body = lowMemory(snap.platform, other);
     else if (updateFailed && team.version) body = `The update didn’t finish, so ${name} went back to ${shortVersion(team.version)}.`;
     else body = "Something went wrong while starting.";
-    const title = updateFailed && !other ? `${name} couldn’t update` : `${name} couldn’t start`;
-    const details = op && (op.lines.length || op.error) ? [...op.lines, ...(op.error ? [op.error] : [])].join("\n") : null;
+    const title = team.stopped ? `${name} stopped unexpectedly` : updateFailed && !other ? `${name} couldn’t update` : `${name} couldn’t start`;
+    // The last operation has nothing to do with a team that stopped later.
+    const details = !team.stopped && op && (op.lines.length || op.error) ? [...op.lines, ...(op.error ? [op.error] : [])].join("\n") : null;
     return {
       kind: "failed",
       title,
@@ -226,7 +228,7 @@ export function statusRow(
       const other = team.pause_first ? snap.teams.find((t) => t.id === team.pause_first) : undefined;
       return {
         cls,
-        word,
+        word: team.stopped ? "Stopped unexpectedly" : word,
         sub: team.reason ?? (other ? lowMemory(snap.platform, other) : null),
         action: "retry",
         actionLabel: other ? `Pause ${other.name} and try again` : "Try again",

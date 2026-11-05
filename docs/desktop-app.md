@@ -27,7 +27,16 @@ Closing a window does not stop anything. Kivali keeps running in the menu bar on
 
 ## The Kivali icon and the menus
 
-Kivali's icon, in the menu bar on macOS and in the notification area on Windows, lists every team with its state ("3 agents working", "paused", "Claude isn't signed in"). Choose a team to open its window. The icon's menu also offers **Open Kivali**, **New team…**, **Connect to a team…**, **Settings…**, an update when one is available, and **Quit Kivali**.
+Kivali's icon, in the menu bar on macOS and in the notification area on Windows, lists every team with its state ("3 agents working", "paused", "Claude isn't signed in", "stopped unexpectedly"). Choose a team to open its window. The icon's menu also offers **Open Kivali**, **New team…**, **Connect to a team…**, **Settings…**, an update when one is available, and **Quit Kivali**.
+
+The icon itself sums up all your teams, including those on other computers:
+
+- **Red dots:** a team on this computer needs you. It couldn't start, it stopped unexpectedly, or Claude signed out.
+- **Pulsing:** a team on this computer is starting, updating, pausing or otherwise changing.
+- **Solid:** at least one team is running.
+- **Outlined:** no team is running and nothing needs you.
+
+Kivali can only tell whether a team on another computer answers, so a reachable one counts as running. One it can't reach doesn't turn the icon red, because that may just mean you're offline. Its row in the menu says so.
 
 The menus add:
 

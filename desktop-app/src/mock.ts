@@ -57,6 +57,7 @@ function team(o: Partial<Team> & Pick<Team, "id" | "name">): Team {
     activity: null,
     phrase: "running",
     reason: null,
+    stopped: false,
     pause_first: null,
     op: null,
     version: "0.17.0",

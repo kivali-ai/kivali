@@ -51,6 +51,21 @@ describe("teamPage", () => {
     const v = teamPage(team({ name: "Home", state: "paused", paused_since: new Date(2026, 9, 5, 9, 14).toISOString() }), snap, now);
     expect(v).toEqual({ kind: "paused", title: "Home is paused", body: "Your agents aren’t working. Nothing is lost.", action: "Resume Home", since: "Paused since 9:14 this morning" });
   });
+  // A team that stopped on its own is neither paused nor a failed start,
+  // so "couldn't start" would be wrong. The last operation's log must stay
+  // off the page too, or a healthy resume from hours ago reads as the cause.
+  it("stopped on its own", () => {
+    const t = team({ name: "Home", state: "failed", stopped: true, op: op({ kind: "resume", running: false, finished: true, lines: ["ready"] }) });
+    expect(teamPage(t, snap, now)).toEqual({
+      kind: "failed",
+      title: "Home stopped unexpectedly",
+      body: "Your agents aren’t working. Start it again and they pick up where they left off.",
+      action: { label: "Try again", pause: null },
+      details: null,
+    });
+    expect(statusRow(t, snap, now).word).toBe("Stopped unexpectedly");
+    expect(statusRow(team({ state: "failed" }), snap, now).word).toBe("Couldn’t start");
+  });
   it("waking", () => {
     const v = teamPage(team({ name: "Home", state: "starting", activity: "waking", op: op({ kind: "resume", percent: 40, remaining: "about 30 seconds" }) }), snap, now);
     expect(v).toEqual({ kind: "progress", title: "Waking Home up", body: "About 30 seconds.", percent: 40, step: null });

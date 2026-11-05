@@ -8,9 +8,9 @@
 //   running        solid bars and dots, full strength
 //   paused         outlined, at 45%
 //   starting       the paused drawing pulsing 45% -> 100% -> 45% over
-//                  1.6 s: FRAMES frames, plus a held frame at 50% for
+//                  1.6 s: FRAMES frames, plus a held frame at 75% for
 //                  Reduce motion
-//   couldnt-start  solid bars, red dots
+//   needs-you      solid bars, red dots
 //
 // Each in two inks, for light and dark menu bars (#1D1D1F, #F5F5F5).
 // They are coloured images, never template images, so the red survives.
@@ -82,8 +82,8 @@ for (const [prefix, canvas] of Object.entries(CANVASES)) {
     const ink = INK[tone];
     render(`${prefix}-running-${tone}.png`, canvas, solid(ink, ink), 1);
     render(`${prefix}-paused-${tone}.png`, canvas, outline(ink), 0.45);
-    render(`${prefix}-couldnt-start-${tone}.png`, canvas, solid(ink, DANGER[tone]), 1);
-    render(`${prefix}-starting-${tone}.png`, canvas, outline(ink), 0.5);
+    render(`${prefix}-needs-you-${tone}.png`, canvas, solid(ink, DANGER[tone]), 1);
+    render(`${prefix}-starting-${tone}.png`, canvas, outline(ink), 0.75);
     for (let i = 0; i < FRAMES; i++) {
       render(`${prefix}-starting-${tone}-${i}.png`, canvas, outline(ink), pulse(i));
     }
