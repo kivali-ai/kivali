@@ -139,6 +139,28 @@ type fakeGitHub struct {
 	tokenLife time.Duration
 	// mintReply, when set, answers the token endpoint instead.
 	mintReply *reply
+	// installed, when set, is what the installation holds: a token that
+	// asks for more is refused with a 422, as GitHub refuses one.
+	installed map[string]string
+}
+
+// lacksFor reports whether body asks for a permission past installed.
+func (f *fakeGitHub) lacksFor(body []byte) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.installed == nil {
+		return false
+	}
+	var g grant
+	if err := json.Unmarshal(body, &g); err != nil {
+		return false
+	}
+	for name, level := range g.Permissions {
+		if !covers(f.installed[name], level) {
+			return true
+		}
+	}
+	return false
 }
 
 func newFake(t *testing.T) *fakeGitHub {
@@ -258,6 +280,8 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, req *http.Request) {
 			write(*mintReply)
 		case rec.JWT == nil:
 			write(reply{Status: 401, Body: `{"message":"A JSON web token could not be decoded"}`})
+		case f.lacksFor(body):
+			write(reply{Status: 422, Body: `{"message":"The permissions requested are not granted to this installation."}`})
 		default:
 			write(f.mint(body))
 		}

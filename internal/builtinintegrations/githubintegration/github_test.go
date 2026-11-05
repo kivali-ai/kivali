@@ -52,9 +52,12 @@ func TestManifest(t *testing.T) {
 		t.Errorf("kivali = %+v", m.Kivali)
 	}
 	form := integration.AccessForm(m)
-	if form == nil || len(form.Fields) != 3 ||
+	if form == nil || len(form.Fields) != 4 ||
 		form.Fields[2].Key != "workflows" || form.Fields[2].Kind != integration.FieldSwitch || form.Fields[2].Title != "May change workflows" ||
 		!strings.Contains(form.Fields[2].Description, ".github/workflows") || !strings.Contains(form.Fields[2].Description, "Actions secrets") ||
+		form.Fields[3].Key != "run_workflows" || form.Fields[3].Kind != integration.FieldSwitch || form.Fields[3].Title != "May run workflows" || form.Fields[3].Required ||
+		!strings.Contains(form.Fields[3].Description, "Actions secrets") || !strings.Contains(form.Fields[3].Description, "a workflow may deploy") ||
+		!strings.Contains(form.Fields[3].Description, "May create, comment, push and close") ||
 		form.Fields[0].Key != "repositories" || form.Fields[0].Kind != integration.FieldList || !form.Fields[0].Required ||
 		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create, comment, push and close" ||
 		!strings.Contains(form.Fields[1].Description, "push branches and tags") ||
@@ -62,7 +65,7 @@ func TestManifest(t *testing.T) {
 		!strings.Contains(form.Fields[1].Description, "delete a branch whose commits beyond the default branch the app's bot authored and committed") {
 		t.Errorf("access form = %+v", form)
 	}
-	var names, writes []string
+	var names, writes, runs []string
 	for _, tl := range m.Tools {
 		names = append(names, tl.Name)
 		if tl.Description == "" || strings.Contains(tl.Description, "signed in with") {
@@ -76,6 +79,12 @@ func TestManifest(t *testing.T) {
 			if !strings.HasSuffix(tl.Description, " Only when the agent's access may create, comment, push and close.") {
 				t.Errorf("%s: %q does not name the write switch", tl.Name, tl.Description)
 			}
+		case "run_workflows":
+			runs = append(runs, tl.Name)
+			if !strings.HasSuffix(tl.Description, " Only when the agent's access may run workflows and may create, comment, push and close.") ||
+				!strings.Contains(tl.Description, "Actions secrets") {
+				t.Errorf("%s: %q does not name both switches and the secrets", tl.Name, tl.Description)
+			}
 		case "":
 			if strings.Contains(tl.Description, needsWrite) {
 				t.Errorf("%s: %q", tl.Name, tl.Description)
@@ -88,6 +97,7 @@ func TestManifest(t *testing.T) {
 		"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
 		"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
 		"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset",
+		"rerun_workflow_run", "rerun_job", "cancel_workflow_run", "dispatch_workflow",
 		"clone", "fetch", "push"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v", names)
@@ -95,19 +105,23 @@ func TestManifest(t *testing.T) {
 	if want := []string{"create_issue", "comment", "close_issue", "create_pull_request", "close_pull_request", "delete_branch", "push"}; !slices.Equal(writes, want) {
 		t.Errorf("tools needing write = %v, want %v", writes, want)
 	}
+	if want := []string{"rerun_workflow_run", "rerun_job", "cancel_workflow_run", "dispatch_workflow"}; !slices.Equal(runs, want) {
+		t.Errorf("tools needing run_workflows = %v, want %v", runs, want)
+	}
 }
 
 // Why this test exists: the integration's page groups the manifest's
 // tools by the access each names, as the access form presents GitHub:
-// the repositories, and the write switch. A write action left unmarked
-// would read as one any access gives; a read action marked would read
-// as one only write gives; whoami listed would show the owner an action
-// no agent is ever given. The marks must agree with what Tools gives an
-// agent with and without write.
+// the repositories, the write switch and the run_workflows switch. A
+// write action left unmarked would read as one any access gives; a read
+// action marked would read as one only write gives; a run action marked
+// write would read as one write alone gives; whoami listed would show
+// the owner an action no agent is ever given. The marks must agree with
+// what Tools gives an agent at each step of the access.
 func TestManifestToolsNameTheAccessToolsFollows(t *testing.T) {
 	g := New()
-	given := func(write bool) map[string]bool {
-		tools, err := g.Tools(context.Background(), agent(write, "acme/*"))
+	given := func(c builtinintegrations.Caller) map[string]bool {
+		tools, err := g.Tools(context.Background(), c)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,17 +131,20 @@ func TestManifestToolsNameTheAccessToolsFollows(t *testing.T) {
 		}
 		return out
 	}
-	without, with := given(false), given(true)
+	reader, writer, both := given(agent(false, "acme/*")), given(agent(true, "acme/*")), given(runner("acme/*"))
 	for _, tl := range g.Manifest().Tools {
-		if !with[tl.Name] {
+		if !both[tl.Name] {
 			t.Errorf("%s is in the manifest, and no agent is given it", tl.Name)
 		}
-		if needsWrite := tl.Access == "write"; without[tl.Name] == needsWrite {
-			t.Errorf("%s: access %q, given without write %v", tl.Name, tl.Access, without[tl.Name])
+		if reader[tl.Name] != (tl.Access == "") {
+			t.Errorf("%s: access %q, given to a reader %v", tl.Name, tl.Access, reader[tl.Name])
+		}
+		if writer[tl.Name] != (tl.Access != "run_workflows") {
+			t.Errorf("%s: access %q, given to a writer %v", tl.Name, tl.Access, writer[tl.Name])
 		}
 	}
-	if len(g.Manifest().Tools) != len(with) {
-		t.Errorf("manifest has %d tools, an agent with write is given %d", len(g.Manifest().Tools), len(with))
+	if len(g.Manifest().Tools) != len(both) {
+		t.Errorf("manifest has %d tools, an agent with both switches is given %d", len(g.Manifest().Tools), len(both))
 	}
 }
 
@@ -146,18 +163,24 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 		declared = append(declared, tl.Name)
 	}
 	for _, c := range []struct {
-		write bool
-		want  []string
+		name   string
+		caller builtinintegrations.Caller
+		want   []string
 	}{
-		{false, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare",
+		{"reader", agent(false, "acme/*"), []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare",
 			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
 			"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset", "clone", "fetch"}},
-		{true, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
+		{"writer", agent(true, "acme/*"), []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 			"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
 			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
 			"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset", "clone", "fetch", "push"}},
+		{"writer with the run_workflows switch", runner("acme/*"), []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
+			"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
+			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
+			"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset",
+			"rerun_workflow_run", "rerun_job", "cancel_workflow_run", "dispatch_workflow", "clone", "fetch", "push"}},
 	} {
-		tools, err := g.Tools(context.Background(), agent(c.write, "acme/*"))
+		tools, err := g.Tools(context.Background(), c.caller)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -190,7 +213,7 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 			}
 		}
 		if !slices.Equal(names, c.want) {
-			t.Errorf("write %v: tools %v, want %v", c.write, names, c.want)
+			t.Errorf("%s: tools %v, want %v", c.name, names, c.want)
 		}
 	}
 	// Access without the switch is off.

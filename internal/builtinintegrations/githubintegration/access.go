@@ -16,12 +16,14 @@ import (
 // whether it may open, comment on and close issues and pull requests,
 // push and delete branches in them (closing only what the app opened,
 // and deleting only a branch whose own commits are all the app's bot's,
-// actions.go); and whether its pushes may change workflow files
-// (.github/workflows), which also needs write.
+// actions.go); whether its pushes may change workflow files
+// (.github/workflows), which also needs write; and whether it may
+// rerun, cancel and start workflows (runs.go), which also needs write.
 const (
 	repositoriesKey = "repositories"
 	writeKey        = "write"
 	workflowsKey    = "workflows"
+	runWorkflowsKey = "run_workflows"
 )
 
 // access is an agent's access as the owner's form fills it in. A
@@ -30,6 +32,7 @@ type access struct {
 	repositories []string
 	write        bool
 	workflows    bool
+	runWorkflows bool
 }
 
 // pushesWorkflows reports whether the access lets a push change
@@ -37,9 +40,14 @@ type access struct {
 // writer pushes.
 func (a access) pushesWorkflows() bool { return a.write && a.workflows }
 
+// runsWorkflows reports whether the access lets the agent rerun, cancel
+// and start workflows: the run_workflows switch, with write.
+func (a access) runsWorkflows() bool { return a.write && a.runWorkflows }
+
 // readAccess reads the stored form: every non-blank string of
 // repositories (gitrepo.Match ignores one that is not a pattern), and
-// write and workflows each when it is true and nothing else.
+// write, workflows and run_workflows each when it is true and nothing
+// else.
 func readAccess(m map[string]any) access {
 	var a access
 	raw, _ := m[repositoriesKey].([]any)
@@ -50,6 +58,7 @@ func readAccess(m map[string]any) access {
 	}
 	a.write, _ = m[writeKey].(bool)
 	a.workflows, _ = m[workflowsKey].(bool)
+	a.runWorkflows, _ = m[runWorkflowsKey].(bool)
 	return a
 }
 
@@ -64,6 +73,13 @@ func (a access) includes(repo string) bool {
 const (
 	writeRefusal = "Your access to GitHub does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches; ask the owner."
 	writeReason  = "the access does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches"
+)
+
+// runRefusal is the words of a run action called without
+// access.runsWorkflows, and runReason its audit's reason.
+const (
+	runRefusal = "Your access to GitHub does not include rerunning, cancelling or starting workflows; ask the owner."
+	runReason  = "the access does not include rerunning, cancelling or starting workflows"
 )
 
 // notIncluded is the refusal of a repository the access does not name.
