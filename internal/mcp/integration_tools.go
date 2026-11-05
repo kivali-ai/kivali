@@ -21,6 +21,7 @@ type IntegrationCaller interface {
 // *agentshell.SidecarShell, the agent-shell daemon.
 type IntegrationShell interface {
 	Git(ctx context.Context, req agentshell.GitRequest) (*agentshell.GitResponse, error)
+	Download(ctx context.Context, req agentshell.DownloadRequest) (*agentshell.DownloadResponse, error)
 }
 
 // shellJobSkippedNoShell is why a shell job did not run for an agent
@@ -94,11 +95,14 @@ func gitIdentity(id *agentpod.GitIdentity) *agentshell.GitIdentity {
 // reaching the shell is the result's error, scrubbed of the job's
 // credentials.
 func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.IntegrationShellJob) *agentpod.IntegrationShellJobResult {
-	if job.Git == nil {
+	if job.Git == nil && job.Download == nil {
 		return &agentpod.IntegrationShellJobResult{Skipped: shellJobUnknown}
 	}
 	if shell == nil {
 		return &agentpod.IntegrationShellJobResult{Skipped: shellJobSkippedNoShell}
+	}
+	if job.Download != nil {
+		return runDownloadJob(ctx, shell, job.Download)
 	}
 	g := job.Git
 	req := agentshell.GitRequest{
@@ -144,4 +148,41 @@ func runShellJob(ctx context.Context, shell IntegrationShell, job agentpod.Integ
 		out.Updated = append(out.Updated, agentpod.GitRefUpdate{Ref: u.Ref, Old: u.Old, New: u.New})
 	}
 	return &agentpod.IntegrationShellJobResult{Git: out}
+}
+
+// runDownloadJob runs job in shell. An error reaching the shell is the
+// result's error, scrubbed of the job's credentials.
+func runDownloadJob(ctx context.Context, shell IntegrationShell, d *agentpod.DownloadJob) *agentpod.IntegrationShellJobResult {
+	req := agentshell.DownloadRequest{
+		URL:            d.URL,
+		Accept:         d.Accept,
+		Token:          d.Token,
+		Hosts:          d.Hosts,
+		Folder:         d.Folder,
+		Name:           d.Name,
+		NameZip:        d.NameZip,
+		MaxBytes:       d.MaxBytes,
+		Proxy:          agentshell.GitProxy{Username: d.Proxy.Username, Password: d.Proxy.Password},
+		TimeoutSeconds: d.TimeoutSeconds,
+		ConnectionID:   d.ConnectionID,
+	}
+	res, err := shell.Download(ctx, req)
+	if err != nil {
+		msg := agentshell.DownloadScrubber(req, "")(err.Error())
+		if len(msg) > agentshell.GitErrorMaxBytes {
+			msg = strings.ToValidUTF8(msg[:agentshell.GitErrorMaxBytes], "")
+		}
+		return &agentpod.IntegrationShellJobResult{Download: &agentpod.DownloadResult{Error: msg, ConnectionID: d.ConnectionID}}
+	}
+	return &agentpod.IntegrationShellJobResult{Download: &agentpod.DownloadResult{
+		Path:         res.Path,
+		Bytes:        res.Bytes,
+		Zip:          res.Zip,
+		Status:       res.Status,
+		Error:        res.Error,
+		TooLarge:     res.TooLarge,
+		TimedOut:     res.TimedOut,
+		DurationMs:   res.DurationMs,
+		ConnectionID: res.ConnectionID,
+	}}
 }

@@ -13,6 +13,10 @@ type Job struct {
 	// connection (internal/builtinintegrations/gitops), run by the
 	// agent-shell daemon (POST /v1/git).
 	Git *GitJob `json:"git,omitempty"`
+	// Download is one file fetched through a built-in integration's
+	// connection into the agent's files, run by the agent-shell daemon
+	// (POST /v1/download).
+	Download *DownloadJob `json:"download,omitempty"`
 }
 
 // GitJob is one git operation through a connection, as the agent-shell
@@ -104,11 +108,82 @@ type GitProxy struct {
 	Password string `json:"password,omitempty"`
 }
 
+// DownloadJob is one file fetched through a connection, as the
+// agent-shell daemon runs it (agentshell.DownloadRequest has the same
+// fields).
+//
+//   - URL is GET with Token as a bearer credential and Accept, if any.
+//     The token is narrowed to this one job and is sent nowhere else.
+//   - Hosts are the host patterns (as kivali.hosts reads them) a redirect
+//     from URL may lead to. A redirect is followed once, with no
+//     credential of the job's; anywhere else is refused.
+//   - Folder is the directory under /files/ the file lands in, made when
+//     missing; Name its plain file name, to which NameZip adds .zip when
+//     the body starts as a zip.
+//   - MaxBytes bounds the file, TimeoutSeconds the job in the daemon.
+//   - Proxy is the connection's scoped egress proxy credential.
+//   - ConnectionID is echoed in DownloadResult.ConnectionID, as a GitJob's.
+//
+// It carries credentials: nothing on its path logs it.
+type DownloadJob struct {
+	URL            string   `json:"url"`
+	Accept         string   `json:"accept,omitempty"`
+	Token          string   `json:"token"`
+	Hosts          []string `json:"hosts,omitempty"`
+	Folder         string   `json:"folder"`
+	Name           string   `json:"name"`
+	NameZip        bool     `json:"name_zip,omitempty"`
+	MaxBytes       int64    `json:"max_bytes,omitempty"`
+	Proxy          GitProxy `json:"proxy"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	ConnectionID   string   `json:"connection_id,omitempty"`
+}
+
 // Result is what the agent's shell gave back for a Job, or Skipped, why
 // nothing ran: an agent with no shell.
 type Result struct {
-	Skipped string     `json:"skipped,omitempty"`
-	Git     *GitResult `json:"git,omitempty"`
+	Skipped  string          `json:"skipped,omitempty"`
+	Git      *GitResult      `json:"git,omitempty"`
+	Download *DownloadResult `json:"download,omitempty"`
+}
+
+// Connection is the connection the result's job ran through, as the
+// job echoed it; "" when it gives none.
+func (r Result) Connection() string {
+	switch {
+	case r.Git != nil:
+		return r.Git.ConnectionID
+	case r.Download != nil:
+		return r.Download.ConnectionID
+	}
+	return ""
+}
+
+// Duration is how long the result says its job ran, in milliseconds.
+func (r Result) Duration() int64 {
+	switch {
+	case r.Git != nil:
+		return r.Git.DurationMs
+	case r.Download != nil:
+		return r.Download.DurationMs
+	}
+	return 0
+}
+
+// DownloadResult is a DownloadJob's outcome: the path the file landed
+// at and its size, whether it is a zip, or the error. Status is the
+// answer of the job's URL when that was not a success, and TooLarge a
+// body over MaxBytes. No file is left unless Error is empty.
+type DownloadResult struct {
+	Path         string `json:"path,omitempty"`
+	Bytes        int64  `json:"bytes,omitempty"`
+	Zip          bool   `json:"zip,omitempty"`
+	Status       int    `json:"status,omitempty"`
+	Error        string `json:"error,omitempty"`
+	TooLarge     bool   `json:"too_large,omitempty"`
+	TimedOut     bool   `json:"timed_out,omitempty"`
+	DurationMs   int64  `json:"duration_ms,omitempty"`
+	ConnectionID string `json:"connection_id,omitempty"`
 }
 
 // GitResult is a GitJob's outcome: the repository it reached

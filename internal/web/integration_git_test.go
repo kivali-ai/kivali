@@ -59,11 +59,19 @@ func gitProxy(t *testing.T, srv *Server) (store.EgressScoped, bool, string, stri
 type fakeGitShell struct {
 	res  *agentshell.GitResponse
 	jobs []agentshell.GitRequest
+
+	saved     *agentshell.DownloadResponse
+	downloads []agentshell.DownloadRequest
 }
 
 func (f *fakeGitShell) Git(_ context.Context, req agentshell.GitRequest) (*agentshell.GitResponse, error) {
 	f.jobs = append(f.jobs, req)
 	return f.res, nil
+}
+
+func (f *fakeGitShell) Download(_ context.Context, req agentshell.DownloadRequest) (*agentshell.DownloadResponse, error) {
+	f.downloads = append(f.downloads, req)
+	return f.saved, nil
 }
 
 // gitRows is the Git (Basic) integration's audit, newest first.

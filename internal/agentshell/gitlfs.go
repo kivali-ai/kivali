@@ -349,20 +349,9 @@ var errLFSRedirect = errors.New("redirected")
 // repo's URL plus /info/lfs/objects/batch, through the daemon's proxy
 // with req's proxy credential.
 func newLFSClient(cfg ServerConfig, req GitRequest, repo gitrepo.Repository) (*lfsClient, error) {
-	tr := &http.Transport{ForceAttemptHTTP2: true, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: 2 * time.Minute}
-	if cfg.GitProxyURL != "" {
-		raw := cfg.GitProxyURL
-		if req.Proxy.Password != "" {
-			var err error
-			if raw, err = egresscred.ProxyURL(cfg.GitProxyURL, req.Proxy.Username, req.Proxy.Password); err != nil {
-				return nil, errors.New("the daemon's proxy URL does not read")
-			}
-		}
-		u, err := url.Parse(raw)
-		if err != nil {
-			return nil, errors.New("the daemon's proxy URL does not read")
-		}
-		tr.Proxy = http.ProxyURL(u)
+	tr, err := daemonTransport(cfg, req.Proxy)
+	if err != nil {
+		return nil, err
 	}
 	base, err := url.Parse(repo.URL())
 	if err != nil {
@@ -387,6 +376,29 @@ func newLFSClient(cfg ServerConfig, req GitRequest, repo gitrepo.Repository) (*l
 }
 
 func (c *lfsClient) close() { c.http.CloseIdleConnections() }
+
+// daemonTransport is what a job's HTTP requests go by: the daemon's
+// bare proxy URL with the job's proxy credential, never a proxy from
+// the environment.
+func daemonTransport(cfg ServerConfig, proxy GitProxy) (*http.Transport, error) {
+	tr := &http.Transport{ForceAttemptHTTP2: true, TLSHandshakeTimeout: 30 * time.Second, ResponseHeaderTimeout: 2 * time.Minute}
+	if cfg.GitProxyURL == "" {
+		return tr, nil
+	}
+	raw := cfg.GitProxyURL
+	if proxy.Password != "" {
+		var err error
+		if raw, err = egresscred.ProxyURL(cfg.GitProxyURL, proxy.Username, proxy.Password); err != nil {
+			return nil, errors.New("the daemon's proxy URL does not read")
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, errors.New("the daemon's proxy URL does not read")
+	}
+	tr.Proxy = http.ProxyURL(u)
+	return tr, nil
+}
 
 // lfsAction is a transfer the batch API names for a file.
 type lfsAction struct {

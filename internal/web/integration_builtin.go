@@ -325,8 +325,8 @@ func (s *Server) builtinAgentCall(ctx context.Context, start time.Time, slug str
 		// integration has now (it was uninstalled and installed again
 		// while the job ran): its words may quote that connection's
 		// secrets, and the audit row says so.
-		if g := result.Git; g != nil && g.ConnectionID != "" && g.ConnectionID != conn.ID {
-			jobNote, scrub = s.jobConnectionNote(ctx, v, g.ConnectionID, rowSecrets)
+		if id := result.Connection(); id != "" && id != conn.ID {
+			jobNote, scrub = s.jobConnectionNote(ctx, v, id, rowSecrets)
 		}
 		run = func(ctx context.Context) (*builtinintegrations.Result, error) {
 			return sj.Complete(ctx, caller, conn, tool, args, *result)
@@ -392,14 +392,14 @@ func auditOutside(outside []string, scrub *strings.Replacer) []string {
 
 // builtinShellJob is the first request's answer for a call whose
 // built-in asked for job: the job, with the connection's scoped proxy
-// credential added to a git one. It is not yet the call's answer, but
+// credential added. It is not yet the call's answer, but
 // the job carries the token out, so it writes an audit row of its own,
 // with started (the built-in's Result.Audit, "started: <owner/name>"
 // for git) as its reason: a second request that never comes still
 // leaves the owner a row. The second request writes the row of how it
 // ended.
 func (s *Server) builtinShellJob(ctx context.Context, start time.Time, slug string, v agentIntegration, tool string, conn builtinintegrations.Connection, proxySecret string, job *agentpod.IntegrationShellJob, started string) agentpod.IntegrationCallResponse {
-	if job.Git != nil {
+	if job.Git != nil || job.Download != nil {
 		if _, ok := v.builtin.(builtinintegrations.HostsOf); ok && proxySecret == "" {
 			var err error
 			if proxySecret, err = s.builtinProxySecret(ctx, v.name, v.builtin, conn.ID); err != nil {
@@ -409,7 +409,13 @@ func (s *Server) builtinShellJob(ctx context.Context, start time.Time, slug stri
 			}
 		}
 		if proxySecret != "" {
-			job.Git.Proxy = agentpod.GitProxy{Username: builtinintegrations.ProxyUser(v.name, conn.ID), Password: proxySecret}
+			proxy := agentpod.GitProxy{Username: builtinintegrations.ProxyUser(v.name, conn.ID), Password: proxySecret}
+			if job.Git != nil {
+				job.Git.Proxy = proxy
+			}
+			if job.Download != nil {
+				job.Download.Proxy = proxy
+			}
 		}
 	}
 	if started == "" {
@@ -426,13 +432,14 @@ const shellJobMaxDuration = 15 * time.Minute
 // shellJobDuration is how long result says its job ran, within
 // [0, shellJobMaxDuration].
 func shellJobDuration(result agentpod.IntegrationShellJobResult) time.Duration {
+	ms := result.Duration()
 	switch {
-	case result.Git == nil || result.Git.DurationMs <= 0:
+	case ms <= 0:
 		return 0
-	case result.Git.DurationMs >= shellJobMaxDuration.Milliseconds():
+	case ms >= shellJobMaxDuration.Milliseconds():
 		return shellJobMaxDuration
 	}
-	return time.Duration(result.Git.DurationMs) * time.Millisecond
+	return time.Duration(ms) * time.Millisecond
 }
 
 // builtinOwnerCall is the owner's call of a built-in with its

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"regexp"
 	"strings"
 )
@@ -157,4 +158,30 @@ func ScrubberFromEnv(getenv func(string) string) *Scrubber {
 		}
 	}
 	return nil
+}
+
+// HostMatches reports whether host is one a pattern of patterns names,
+// as kivali.hosts reads them: the pattern's host or any name under it,
+// each of the pattern's labels a glob (* within one label) against the
+// host's label in its place, counted from the right.
+func HostMatches(host string, patterns []string) bool {
+	hl := strings.Split(host, ".")
+	for _, p := range patterns {
+		pl := strings.Split(p, ".")
+		if len(hl) < len(pl) {
+			continue
+		}
+		ok := true
+		for i := range pl {
+			m, err := path.Match(pl[len(pl)-1-i], hl[len(hl)-1-i])
+			if err != nil || !m {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }
