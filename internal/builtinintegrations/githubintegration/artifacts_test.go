@@ -139,7 +139,7 @@ func TestDownloadArtifactHandsTheFetchToTheShell(t *testing.T) {
 	if strings.Join(job.Hosts, " ") != strings.Join(resultHosts, " ") {
 		t.Errorf("hosts = %v", job.Hosts)
 	}
-	if job.MaxBytes != artifactBytesMost || job.TimeoutSeconds != artifactSecondsMost || job.ConnectionID != testConn().ID {
+	if job.MaxBytes != artifactBytesMost || job.TimeoutSeconds != downloadSecondsMost || job.ConnectionID != testConn().ID {
 		t.Errorf("bounds = %+v", job)
 	}
 	if got := mintedFor(f); len(got) != 2 || got[0] != "actions=read widgets" || got[1] != "actions=read widgets" {

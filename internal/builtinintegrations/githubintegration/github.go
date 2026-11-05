@@ -138,11 +138,11 @@ const accessSchema = `{"type":"object","properties":{` +
 
 // resultHosts are where GitHub sends a job's log and an artifact from:
 // the addresses GET /repos/{owner}/{repo}/actions/jobs/{id}/logs, which
-// core reads (ci.go), and GET /repos/{owner}/{repo}/actions/artifacts/
-// {id}/zip, which the agent's shell does (artifacts.go), redirect to,
-// signed for a minute. They take no credential of Kivali's. Each is a
-// pattern as kivali.hosts reads it: the host and every name under it,
-// with * a glob within one label.
+// core reads and the agent's shell saves (ci.go), and GET /repos/{owner}/
+// {repo}/actions/artifacts/{id}/zip, which the shell saves
+// (artifacts.go), redirect to, signed for a minute. They take no
+// credential of Kivali's. Each is a pattern as kivali.hosts reads it:
+// the host and every name under it, with * a glob within one label.
 var resultHosts = []string{"productionresultssa*.blob.core.windows.net", "actions.githubusercontent.com"}
 
 // Manifest is GitHub's manifest. Its tools are the actions an agent

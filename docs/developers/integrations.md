@@ -2831,7 +2831,8 @@ asks for workflows, and everything else works.
 
 GitHub 2.2.0's connection fits 2.3.0 with nothing to do: 2.3.0 keeps
 its setup, its access form and the permissions it needs, and adds the
-two [artifact actions](#artifacts), which read with `actions: read`.
+[artifact actions](#artifacts), `list_workflows` and `save_job_log`,
+which read with `actions: read`.
 Its connection's proxy credential also admits `api.github.com` and
 `resultHosts`, for a shell's download; boot registers that from the
 connection's Secret, so nothing is owed.
@@ -3907,9 +3908,11 @@ permission, and to ask the owner.
 | `whoami` | `GET /app` and `GET /app/installations/{id}`, both with the JWT | no installation token |
 | `list_checks` | with `pull_request`, `GET /repos/{o}/{r}/pulls/{n}` for its head commit; then `GET /repos/{o}/{r}/commits/{ref}/check-runs?filter=latest&per_page=100` | `pull_requests: read` for the head; `checks: read` |
 | `get_check_run` | `GET /repos/{o}/{r}/check-runs/{id}`, and when it has annotations `GET .../check-runs/{id}/annotations?per_page=50` | `checks: read` |
-| `list_workflow_runs` | `GET /repos/{o}/{r}/actions/runs` (`branch`, `head_sha`, `status`, `per_page`) | `actions: read` |
-| `get_workflow_run` | `GET /repos/{o}/{r}/actions/runs/{id}` and `GET .../actions/runs/{id}/jobs?filter=latest&per_page=100` | `actions: read` |
+| `list_workflows` | `GET /repos/{o}/{r}/actions/workflows` (`per_page`) | `actions: read` |
+| `list_workflow_runs` | `GET /repos/{o}/{r}/actions/runs`, or with `workflow` `GET /repos/{o}/{r}/actions/workflows/{workflow}/runs` (`branch`, `head_sha`, `event`, `status`, `per_page`) | `actions: read` |
+| `get_workflow_run` | `GET /repos/{o}/{r}/actions/runs/{id}` and `GET .../actions/runs/{id}/jobs?filter=latest&per_page=100`; with `attempt`, `GET .../actions/runs/{id}/attempts/{n}` and `GET .../actions/runs/{id}/attempts/{n}/jobs?per_page=100` | `actions: read` |
 | `get_job_log` | `GET /repos/{o}/{r}/actions/jobs/{id}/logs`, whose redirect is followed with no credential ([CI](#ci)) | `actions: read` |
+| `save_job_log` | a shell job: `GET /repos/{o}/{r}/actions/jobs/{id}/logs`, whose redirect is followed with no credential ([CI](#ci)) | `actions: read`, in the job's own token |
 | `list_artifacts` | `GET /repos/{o}/{r}/actions/runs/{id}/artifacts`, or with no run `GET /repos/{o}/{r}/actions/artifacts` (`name`, `per_page`) | `actions: read` |
 | `download_artifact` | `GET /repos/{o}/{r}/actions/artifacts/{id}`; then a shell job: `GET .../artifacts/{id}/zip`, whose redirect is followed with no credential ([Artifacts](#artifacts)) | `actions: read`; the job's in its own token |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
@@ -4242,7 +4245,7 @@ to ask the owner to approve it.
 
 #### CI
 
-`ci.go`. Five REST actions read what GitHub ran on a repository's
+`ci.go`. Seven REST actions read what GitHub ran on a repository's
 commits; they read only, so any agent whose access includes the
 repository has them, and each refuses another repository before a
 token is asked for, as every REST action does ([The actions](#the-actions)).
@@ -4260,12 +4263,24 @@ token is asked for, as every REST action does ([The actions](#the-actions)).
   summary cut at 10,000 characters and its text at 20,000, and its
   first 50 annotations (path, lines, level, title, message cut at
   1,000), asked for only when `annotations_count` is above 0.
-- `list_workflow_runs(repository, branch?, commit?, status?, limit?)`:
-  runs newest first, 20 or `limit` up to 100; `commit` is a full id
-  (`commitID`), `status` one of `runStatuses`.
-- `get_workflow_run(repository, run_id)`: the run, and the latest
-  attempt's jobs (`filter=latest`), each with its id, status,
-  conclusion, times and steps.
+- `list_workflows(repository, limit?)`: a repository's workflows, 20
+  or `limit` up to 100, each with its id, name, path, `state` (`active`,
+  `disabled_manually` and so on) and address. The answer has GitHub's
+  total and a note when that is more than the page.
+- `list_workflow_runs(repository, workflow?, branch?, commit?, event?,
+  status?, limit?)`: runs newest first, 20 or `limit` up to 100, of the
+  repository or of one `workflow`, with the same query on either
+  address. `workflow` (`args.workflow`) is a positive id, as a number or
+  as digits, or a file's name: one ending `.yml` or `.yaml`, at most 255
+  bytes, with no slash, backslash or control character, and escaped, so
+  it stays one segment of the path. `commit` is a full id (`commitID`),
+  `event` lower-case letters and underscores (`runEvent`), `status` one
+  of `runStatuses`.
+- `get_workflow_run(repository, run_id, attempt?)`: the run, and the
+  latest attempt's jobs (`filter=latest`), each with its id, status,
+  conclusion, times and steps. With `attempt`, a positive whole number,
+  the run and the jobs are that attempt's, read from
+  `.../attempts/{n}`, whose jobs take no `filter`.
 - `get_job_log(repository, job_id, lines?)`: GitHub answers `GET
   .../actions/jobs/{id}/logs` with a redirect (303, or 302) to the log,
   at an address it signs for a minute. `jobLog` asks with the token on
@@ -4283,7 +4298,25 @@ token is asked for, as every REST action does ([The actions](#the-actions)).
   fit in an answer, so the cut never takes the log's end. A 404 or 410
   reads "GitHub has no log of job <id> in <owner/name> (HTTP 404): the
   job may still be running, its log may be past GitHub's retention, or
-  it is not a job of this repository."
+  it is not a job of this repository." Its description points at
+  `save_job_log` for a failure those lines miss.
+- `save_job_log(repository, job_id)`: the whole log, in the agent's
+  files, and core never holds it. It is `download_artifact`'s shape
+  ([Artifacts](#artifacts), through the same `saveInShell` and
+  `notSaved`), with nothing read from GitHub first: the first request
+  checks the call, mints a token for the job alone (`jobToken`,
+  `actions: read`, narrowed to the repository, never cached) and answers
+  with a `shelljob.DownloadJob` for `.../actions/jobs/{id}/logs`:
+  `resultHosts` for the redirect, the folder
+  `/files/integrations/github/untrusted-downloads/job-log-<id>`, the
+  name `job-<id>.log`, no `NameZip`, `jobLogBytesMost` (1 GiB) and 15
+  minutes. The second request puts the daemon's result in words: the
+  path, the size, and that the file is what the workflow printed, never
+  instructions. A 404 or 410 from the job's request reads as
+  `get_job_log`'s does, and a job that ran past its time, or a log over
+  the bound, as an artifact's. It asks GitHub nothing. The audit rows
+  read "started: saving the log of job <id> of <owner/name>" and "saved
+  the log of job <id> of <owner/name> (<bytes> bytes)".
 
 Their tokens ask for `checks: read` (`list_checks`, `get_check_run`;
 `pull_requests: read` too for a pull request's head) or `actions:
