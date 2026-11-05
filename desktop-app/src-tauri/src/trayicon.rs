@@ -5,7 +5,7 @@
 //! every frame), and animates Starting: one timer thread swaps the pulse
 //! frames ([`platform::TRAY_FRAMES`] of [`platform::TRAY_FRAME_MS`]) while
 //! the state is Starting, and ends when it is not. Under Reduce motion
-//! Starting holds at 50%. Every tray call runs on the main thread.
+//! Starting holds at 75%. Every tray call runs on the main thread.
 
 use crate::platform::{self, TrayImages, TRAY_FRAMES, TRAY_FRAME_MS};
 use std::sync::{Arc, Mutex};
@@ -13,21 +13,23 @@ use std::time::Duration;
 use tauri::image::Image;
 use tauri::AppHandle;
 
-/// A team's state, and the tray's.
+/// What the tray shows for a team, and for all of them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayState {
     Running,
+    /// Partway through an operation, whichever way it is going.
     Starting,
     Paused,
-    CouldntStart,
+    /// Couldn't start, stopped on its own, or Claude signed out.
+    NeedsYou,
 }
 
 impl TrayState {
     /// The tray's state for several teams: the first that applies of
-    /// couldn't start, starting, running, paused. No teams is Paused.
+    /// needs you, starting, running, paused. No teams is Paused.
     pub fn of_teams(states: impl IntoIterator<Item = TrayState>) -> TrayState {
         let rank = |s: &TrayState| match s {
-            TrayState::CouldntStart => 0,
+            TrayState::NeedsYou => 0,
             TrayState::Starting => 1,
             TrayState::Running => 2,
             TrayState::Paused => 3,
@@ -37,13 +39,13 @@ impl TrayState {
 }
 
 /// The PNG for `state` in the given ink. `frame` picks the starting
-/// pulse's frame; `reduce_motion` holds Starting at 50%.
+/// pulse's frame; `reduce_motion` holds Starting at 75%.
 fn picture(state: TrayState, frame: usize, dark: bool, reduce_motion: bool) -> &'static [u8] {
     let set: &'static TrayImages = if dark { &platform::TRAY_ICONS.dark } else { &platform::TRAY_ICONS.light };
     match state {
         TrayState::Running => set.running,
         TrayState::Paused => set.paused,
-        TrayState::CouldntStart => set.couldnt_start,
+        TrayState::NeedsYou => set.needs_you,
         TrayState::Starting if reduce_motion => set.starting_held,
         TrayState::Starting => set.starting[frame % TRAY_FRAMES],
     }
@@ -135,7 +137,7 @@ fn dot_colour(state: TrayState, dark: bool) -> [u8; 3] {
     let (light, dark_c) = match state {
         TrayState::Running => ([0x1D, 0x6A, 0x63], [0x6C, 0xC5, 0xB8]),
         TrayState::Starting | TrayState::Paused => ([0x8D, 0x89, 0x80], [0x7B, 0x76, 0x6C]),
-        TrayState::CouldntStart => ([0xB3, 0x26, 0x1E], [0xF2, 0x87, 0x7D]),
+        TrayState::NeedsYou => ([0xB3, 0x26, 0x1E], [0xF2, 0x87, 0x7D]),
     };
     if dark {
         dark_c
@@ -191,7 +193,7 @@ mod tests {
             let set = if dark { &platform::TRAY_ICONS.dark } else { &platform::TRAY_ICONS.light };
             assert_eq!(picture(TrayState::Running, 3, dark, false), set.running);
             assert_eq!(picture(TrayState::Paused, 0, dark, false), set.paused);
-            assert_eq!(picture(TrayState::CouldntStart, 0, dark, true), set.couldnt_start);
+            assert_eq!(picture(TrayState::NeedsYou, 0, dark, true), set.needs_you);
             assert_eq!(picture(TrayState::Starting, 4, dark, true), set.starting_held);
             for f in 0..2 * TRAY_FRAMES {
                 assert_eq!(picture(TrayState::Starting, f, dark, false), set.starting[f % TRAY_FRAMES]);
@@ -199,7 +201,7 @@ mod tests {
         }
         assert_ne!(picture(TrayState::Running, 0, false, false), picture(TrayState::Running, 0, true, false));
         let expected = if cfg!(windows) { (32, 32) } else { (40, 44) };
-        for s in [TrayState::Running, TrayState::Starting, TrayState::Paused, TrayState::CouldntStart] {
+        for s in [TrayState::Running, TrayState::Starting, TrayState::Paused, TrayState::NeedsYou] {
             assert_eq!(size(picture(s, 0, true, false)), expected);
         }
     }
@@ -210,7 +212,7 @@ mod tests {
         assert_eq!(TrayState::of_teams([]), Paused);
         assert_eq!(TrayState::of_teams([Paused, Running, Paused]), Running);
         assert_eq!(TrayState::of_teams([Running, Starting]), Starting);
-        assert_eq!(TrayState::of_teams([Starting, CouldntStart, Running]), CouldntStart);
+        assert_eq!(TrayState::of_teams([Starting, NeedsYou, Running]), NeedsYou);
     }
 
     #[test]
@@ -219,8 +221,8 @@ mod tests {
         assert_eq!(dot_colour(TrayState::Running, true), [0x6C, 0xC5, 0xB8]);
         assert_eq!(dot_colour(TrayState::Paused, false), [0x8D, 0x89, 0x80]);
         assert_eq!(dot_colour(TrayState::Starting, true), [0x7B, 0x76, 0x6C]);
-        assert_eq!(dot_colour(TrayState::CouldntStart, false), [0xB3, 0x26, 0x1E]);
-        assert_eq!(dot_colour(TrayState::CouldntStart, true), [0xF2, 0x87, 0x7D]);
+        assert_eq!(dot_colour(TrayState::NeedsYou, false), [0xB3, 0x26, 0x1E]);
+        assert_eq!(dot_colour(TrayState::NeedsYou, true), [0xF2, 0x87, 0x7D]);
     }
 
     #[test]

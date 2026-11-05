@@ -207,6 +207,10 @@ pub struct Runtime {
     pub provisional: AtomicBool,
     /// Why the last start failed; cleared by the next success.
     pub failure: Mutex<Option<String>>,
+    /// Seen running since the last operation began: the team is meant to
+    /// be up, so its going down is a stop of its own
+    /// ([`Self::stopped_on_its_own`]). Written under `op`.
+    seen_running: AtomicBool,
     pub signin: Mutex<SigninWatch>,
     check_loop: AtomicBool,
     /// What the team's own API last said, as its window's person
@@ -229,6 +233,7 @@ impl Runtime {
             credential_at: Mutex::new(None),
             provisional: AtomicBool::new(false),
             failure: Mutex::new(None),
+            seen_running: AtomicBool::new(false),
             signin: Mutex::new(SigninWatch::default()),
             check_loop: AtomicBool::new(false),
             facts: Mutex::new(None),
@@ -249,18 +254,46 @@ impl Runtime {
 
     pub fn state(&self) -> (TeamState, Option<Activity>) {
         let op = self.op_running();
-        let failed = self.failure.lock().unwrap().is_some();
+        let failed = self.failure.lock().unwrap().is_some() || self.stopped_on_its_own();
         view::local_state(op, failed, self.status().as_ref())
+    }
+
+    /// Whether the team went down with no operation of Kivali's behind it.
+    /// It reads as couldn't start in its own words, so a crash is not taken
+    /// for a pause, and ends when it runs again or an operation begins. A
+    /// team still in setup reads as paused: setup starts it again itself.
+    pub fn stopped_on_its_own(&self) -> bool {
+        self.seen_running.load(Ordering::SeqCst)
+            && self.op_running().is_none()
+            && !self.provisional.load(Ordering::SeqCst)
+            && matches!(self.status().map(|s| s.state), None | Some(OrgState::Stopped | OrgState::Absent))
+    }
+
+    /// Whether the next launch starts this team: it runs now, or it was
+    /// meant to and went down by itself.
+    fn resumes_next_launch(&self) -> bool {
+        self.is_running() || self.stopped_on_its_own()
     }
 
     pub fn refresh_status(&self) -> Result<Report, SupError> {
         let r = self.supervisor.report();
         match &r {
-            Ok(rep) => *self.report.lock().unwrap() = Some(rep.clone()),
-            Err(SupError::NotRunning) => *self.report.lock().unwrap() = None,
+            Ok(rep) => self.record_report(Some(rep.clone())),
+            Err(SupError::NotRunning) => self.record_report(None),
             Err(_) => {}
         }
         r
+    }
+
+    /// Keeps the supervisor's report. A running team outside an operation
+    /// is one that is meant to be up; an operation's own reads don't count,
+    /// since it may be taking the team down.
+    fn record_report(&self, report: Option<Report>) {
+        *self.report.lock().unwrap() = report;
+        let op = self.op.lock().unwrap();
+        if self.is_running() && !op.as_ref().is_some_and(|o| o.running) {
+            self.seen_running.store(true, Ordering::SeqCst);
+        }
     }
 
     pub fn refresh_credential(&self) -> Option<CredentialStatus> {
@@ -375,6 +408,7 @@ impl Runtime {
     /// exits next, or resumes the team when an update's installer could
     /// not start.
     fn pause_for_exit(&self, redraw: &dyn Fn()) {
+        self.seen_running.store(false, Ordering::SeqCst);
         if !self.report.lock().unwrap().as_ref().is_some_and(|r| r.running) {
             return self.stop_everything(&mut |_| {});
         }
@@ -394,15 +428,32 @@ impl Runtime {
         }
     }
 
+    /// Starts operation `kind`, refused while another runs.
+    fn begin_op(&self, kind: OpKind, copy_bytes: u64, baked: bool) -> Result<(), String> {
+        let mut op = self.op.lock().unwrap();
+        if let Some(o) = op.as_ref().filter(|o| o.running) {
+            return Err(format!("{} is busy ({:?}).", self.id, o.kind).to_lowercase());
+        }
+        *op = Some(TeamOp::with(kind, copy_bytes, baked));
+        self.seen_running.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
     /// Ends the running operation with `result` and wakes [`Self::wait_idle`].
+    /// A team it leaves running is meant to be up.
     fn end_op(&self, result: &Result<(), String>) {
-        if let Some(o) = self.op.lock().unwrap().as_mut() {
+        let mut op = self.op.lock().unwrap();
+        if let Some(o) = op.as_mut() {
             o.running = false;
             match result {
                 Ok(()) => o.finished = true,
                 Err(e) => o.error = Some(e.clone()),
             }
         }
+        if self.is_running() {
+            self.seen_running.store(true, Ordering::SeqCst);
+        }
+        drop(op);
         self.op_done.notify_all();
     }
 
@@ -626,6 +677,8 @@ pub struct TeamView {
     pub activity: Option<Activity>,
     pub phrase: String,
     pub reason: Option<String>,
+    /// `failed` because it stopped on its own, not on a start.
+    pub stopped: bool,
     pub pause_first: Option<String>,
     pub op: Option<OpView>,
     pub version: Option<String>,
@@ -843,6 +896,7 @@ impl Shell {
                     "idle"
                 };
                 let failure = rt.as_ref().and_then(|r| r.failure.lock().unwrap().clone());
+                let stopped = failure.is_none() && rt.as_ref().is_some_and(|r| r.stopped_on_its_own());
                 let pause_first = failure.as_deref().and_then(|f| f.strip_prefix("memory:")).map(str::to_string);
                 let reason = match &pause_first {
                     Some(other) => {
@@ -873,8 +927,9 @@ impl Shell {
                     device: None,
                     state,
                     activity,
-                    phrase: view::phrase(state, activity, signed_in, None, working),
+                    phrase: if stopped { view::STOPPED_PHRASE.into() } else { view::phrase(state, activity, signed_in, None, working) },
                     reason,
+                    stopped,
                     pause_first,
                     op,
                     version: status.as_ref().and_then(|s| s.kivali.clone()),
@@ -929,6 +984,7 @@ impl Shell {
                     state,
                     activity: None,
                     reason: None,
+                    stopped: false,
                     pause_first: None,
                     op: None,
                     version: None,
@@ -1191,13 +1247,7 @@ where
         return Err("Kivali is quitting.".into());
     }
     let copy = snapshot_copy_bytes(rt.report.lock().unwrap().as_ref());
-    {
-        let mut op = rt.op.lock().unwrap();
-        if let Some(o) = op.as_ref().filter(|o| o.running) {
-            return Err(format!("{} is busy ({:?}).", rt.id, o.kind).to_lowercase());
-        }
-        *op = Some(TeamOp::with(kind, copy, baked));
-    }
+    rt.begin_op(kind, copy, baked)?;
     changed(app);
     let app = app.clone();
     std::thread::spawn(move || {
@@ -2540,7 +2590,7 @@ pub(crate) fn pause_all_for_exit(app: &AppHandle) -> Vec<String> {
     for rt in &rts {
         rt.wait_idle();
     }
-    let running = with_queued(rts.iter().filter(|r| r.is_running()).map(|r| r.id.clone()).collect(), queued);
+    let running = with_queued(rts.iter().filter(|r| r.resumes_next_launch()).map(|r| r.id.clone()).collect(), queued);
     {
         let mut t = sh.teams.lock().unwrap();
         t.running_at_quit = running.clone();
@@ -2669,7 +2719,7 @@ pub fn on_exit(sh: &Shell) {
     // As at Quit: the teams running now resume at the next launch (a
     // logout's login item, say). Quit has already recorded them.
     if !sh.quitting.load(Ordering::SeqCst) {
-        let running = with_queued(rts.iter().filter(|r| r.is_running()).map(|r| r.id.clone()).collect(), queued);
+        let running = with_queued(rts.iter().filter(|r| r.resumes_next_launch()).map(|r| r.id.clone()).collect(), queued);
         let stamp = now_rfc3339();
         {
             let mut t = sh.teams.lock().unwrap();
@@ -2724,7 +2774,7 @@ mod tests {
         }
         let t = &v["teams"][0];
         for k in [
-            "id", "name", "kind", "place", "url", "device", "state", "activity", "phrase", "reason", "pause_first", "op", "version", "dev",
+            "id", "name", "kind", "place", "url", "device", "state", "activity", "phrase", "reason", "stopped", "pause_first", "op", "version", "dev",
             "update", "ai", "owner", "memory_mb", "cpus", "disk_used_bytes", "disk_size_bytes", "public_url", "paused_since", "last_reached",
             "provisional", "agents", "working", "files", "signed_in_as", "memory_free_mb", "queued", "downloads",
         ] {
@@ -3113,6 +3163,128 @@ mod tests {
         assert_eq!(on_disk.get(&a).unwrap().local().unwrap().port, 18090);
         assert_eq!(on_disk.running_at_quit, std::slice::from_ref(&a));
         assert_eq!(sh.follow_status(&rt), (false, false));
+    }
+
+    /// A team here with its report read as the watch loop or a tray click
+    /// reads it, for the tests of a team that stops on its own.
+    fn stop_fixture() -> (tempfile::TempDir, Shell, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut teams = TeamsFile::default();
+        let a = teams.add_here("A", Kind::Work, "a@example.com", &mut || 1);
+        let sh = Shell::new(dir.path().to_path_buf(), "0.15.1".into(), teams, None);
+        (dir, sh, a)
+    }
+
+    /// A stopped team must not read as paused once its notification has
+    /// gone, or nothing says a crashed team's agents have stopped. Any
+    /// reader of the report can be the one that sees it go down (the tray
+    /// click, a sign-in's watch), so this goes through the report alone.
+    /// A team that comes back without Kivali starting it must not stay red.
+    #[test]
+    fn a_team_that_stops_on_its_own_reads_stopped_until_it_runs() {
+        let (_dir, sh, a) = stop_fixture();
+        let rt = sh.runtime(&a).unwrap();
+        let view = || sh.team_view(&sh.team(&a).unwrap());
+
+        rt.record_report(Some(running_on(8080)));
+        assert_eq!(view().state, TeamState::Running);
+
+        rt.record_report(Some(Report::default()));
+        let v = view();
+        assert_eq!((v.state, v.stopped, v.phrase.as_str()), (TeamState::Failed, true, "stopped unexpectedly"));
+
+        rt.record_report(Some(running_on(8080)));
+        let v = view();
+        assert_eq!((v.state, v.stopped), (TeamState::Running, false));
+    }
+
+    /// A VM on its way down reports starting first, so a team must not
+    /// have to go straight from running to stopped to count. Starting
+    /// itself is not a stop: a team that recovers never reads as one.
+    #[test]
+    fn a_team_going_down_through_starting_reads_stopped() {
+        let (_dir, sh, a) = stop_fixture();
+        let rt = sh.runtime(&a).unwrap();
+        rt.record_report(Some(running_on(8080)));
+        rt.record_report(Some(Report { running: true, ..Default::default() }));
+        assert_eq!(rt.state().0, TeamState::Starting);
+        assert!(!rt.stopped_on_its_own());
+        rt.record_report(None);
+        assert!(rt.stopped_on_its_own());
+    }
+
+    /// A Pause must never read as a crash: a paused team showing red
+    /// "stopped unexpectedly" would stay that way until its next start. A
+    /// status read during the operation, which can land while the VM is
+    /// still up, must not mark the team as meant to be running either.
+    #[test]
+    fn an_operation_taking_a_team_down_is_not_a_stop() {
+        let (_dir, sh, a) = stop_fixture();
+        let rt = sh.runtime(&a).unwrap();
+        rt.record_report(Some(running_on(8080)));
+        rt.begin_op(OpKind::Pause, 0, false).unwrap();
+        rt.record_report(Some(running_on(8080)));
+        rt.record_report(Some(Report::default()));
+        rt.end_op(&Ok(()));
+        assert_eq!(rt.state().0, TeamState::Paused);
+        assert!(!rt.stopped_on_its_own());
+    }
+
+    /// An operation on a stopped team owns what happens next: a failed
+    /// update on one must show its own error, and that page only appears
+    /// when the team no longer reads as stopped.
+    #[test]
+    fn an_operation_ends_a_stop() {
+        let (_dir, sh, a) = stop_fixture();
+        let rt = sh.runtime(&a).unwrap();
+        rt.record_report(Some(running_on(8080)));
+        rt.record_report(None);
+        assert!(rt.stopped_on_its_own());
+        rt.begin_op(OpKind::Update, 0, false).unwrap();
+        rt.end_op(&Err("no room".into()));
+        assert!(!rt.stopped_on_its_own());
+    }
+
+    /// A team that crashes right after its start must read as stopped,
+    /// though the only reads of it as running were the start's own.
+    #[test]
+    fn a_start_marks_the_team_as_meant_to_run() {
+        let (_dir, sh, a) = stop_fixture();
+        let rt = sh.runtime(&a).unwrap();
+        rt.begin_op(OpKind::Resume, 0, false).unwrap();
+        rt.record_report(Some(running_on(8080)));
+        rt.end_op(&Ok(()));
+        rt.record_report(None);
+        assert!(rt.stopped_on_its_own());
+    }
+
+    /// Setup reads `failed` as a failed create, and its Try again then
+    /// destroys and remakes the team, so a team still in setup that goes
+    /// down must stay paused for setup to start it again.
+    #[test]
+    fn a_team_in_setup_never_reads_stopped() {
+        let (_dir, sh, a) = stop_fixture();
+        let rt = sh.runtime(&a).unwrap();
+        rt.provisional.store(true, Ordering::SeqCst);
+        rt.record_report(Some(running_on(8080)));
+        rt.record_report(Some(Report::default()));
+        assert_eq!(rt.state().0, TeamState::Paused);
+    }
+
+    /// A stop lives in memory, so a team dropped from `running_at_quit` at
+    /// Quit would come back reading paused, with no sign of the crash. It
+    /// was meant to run: the next launch starts it. A team never seen
+    /// running stays paused, or every paused team would resume.
+    #[test]
+    fn a_stopped_team_resumes_next_launch() {
+        let (_dir, sh, a) = stop_fixture();
+        let rt = sh.runtime(&a).unwrap();
+        rt.record_report(Some(Report::default()));
+        assert!(!rt.resumes_next_launch());
+        rt.record_report(Some(running_on(8080)));
+        assert!(rt.resumes_next_launch());
+        rt.record_report(None);
+        assert!(rt.resumes_next_launch());
     }
 
     /// Only a port failure ends when the status says running: a start

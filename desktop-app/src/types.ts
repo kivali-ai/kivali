@@ -133,6 +133,8 @@ export interface Team {
   phrase: string;
   /** Why it couldn't start, in words, when the shell knows. */
   reason: string | null;
+  /** `failed` because it stopped on its own, not on a start. */
+  stopped: boolean;
   /** Set when the reason is memory: the running team to pause first. */
   pause_first: string | null;
   op: OpView | null;

@@ -1133,13 +1133,14 @@ word beside its dot, never colour alone:
 | running | the supervisor reports running | the last check reached it (or none has run yet) | success teal |
 | starting | an operation runs (any kind, including pause and delete), or the supervisor reports starting or upgrading | | the paused grey, pulsing in the pages |
 | paused | stopped, absent, or no supervisor answering | the last check did not reach it | ink-faint grey |
-| couldn't start (`failed`) | the last start failed (until the next succeeds; one that failed on the team's port, also until the supervisor reports it running), or the supervisor reports failed | | danger red |
+| couldn't start (`failed`) | the last start failed (until the next succeeds; one that failed on the team's port, also until the supervisor reports it running), the team went down on its own (`stopped`, `Runtime::stopped_on_its_own`: seen running since the last operation began, and now down; until it runs again or an operation begins; never during setup), or the supervisor reports failed | | danger red |
 
 The phrase beside it (tray rows, the tooltip, Settings) is "running"
 ("3 agents working" or "1 agent working" when the team API says some
 are; "Claude isn't signed in" when the credential check says so),
 "getting ready", "waking up", "pausing", "updating", "applying a
-change", "deleting", "paused", "couldn't start"; for a team elsewhere
+change", "deleting", "paused", "couldn't start", "stopped
+unexpectedly" (`view::STOPPED_PHRASE`); for a team elsewhere
 "on <host>" or "can't reach <host>".
 
 **Memory.** A team here may start only if its memory fits:
@@ -1437,7 +1438,9 @@ wakes every 5 seconds, or every 3 while someone signs in to Claude
 (above). Once a minute it also, for each team here with no operation
 running and a supervisor answering (or a status remembered), refreshes
 the status, notices a team that stopped on its own (a notification
-when it had been running and Kivali is not quitting), and every 5
+when it had been running and Kivali is not quitting; the team reads
+as `stopped` from the status alone, whoever read it, and stays on the
+list of teams the next launch resumes), and every 5
 minutes asks a running team whether Claude is still signed in (a
 notification when it signed out); and it asks each team elsewhere's
 `GET /api/v1/login` again, every minute while unreachable, every 5
@@ -1635,15 +1638,24 @@ bars and dots:
 | --- | --- | --- |
 | running | solid bars and dots, full strength | `tray-running-<ink>.png` |
 | starting | the paused drawing pulsing 45% → 100% → 45% over 1.6 s: 10 frames of 160 ms | `tray-starting-<ink>-0.png` … `-9.png` |
-| starting, Reduce motion | the paused drawing held at 50% | `tray-starting-<ink>.png` |
-| paused (or no team here) | outlined, at 45% | `tray-paused-<ink>.png` |
-| couldn't start | solid bars, red dots (`#B3261E`, dark `#F2877D`) | `tray-couldnt-start-<ink>.png` |
+| starting, Reduce motion | the paused drawing held at 75%, well clear of paused | `tray-starting-<ink>.png` |
+| paused (or no team) | outlined, at 45% | `tray-paused-<ink>.png` |
+| needs you | solid bars, red dots (`#B3261E`, dark `#F2877D`) | `tray-needs-you-<ink>.png` |
 
-With several teams the icon shows the first that applies among the
-teams here: couldn't start, starting, running, paused; so any running
-team means running, and paused means nothing here runs. Teams
-elsewhere never change it. There is no badge: what is waiting is said
-in the tray menu and in notifications. The images are coloured, never
+With several teams the icon shows the first that applies among every
+team, here and elsewhere, as the tray menu lists them: needs you,
+starting, running, paused; so any running team means running, and
+paused means nothing runs and nothing needs you. A team elsewhere counts
+as its state above: running while the last check reached it, paused
+otherwise, so one that can't be reached never turns the icon red (a
+laptop off the network is not a fault, and from here a team paused on
+its own computer looks the same as an outage).
+
+Needs you (`TrayState::NeedsYou`) is a team that couldn't start, one
+that stopped on its own, or a running team with Claude signed out once
+setup has finished (`view::needs_signin`); that team's dot in the tray
+menu is red too. There is no badge: what is waiting is said in the tray
+menu and in notifications. The images are coloured, never
 template images, so the red survives; the shell picks the ink itself
 (`#1D1D1F` for a light menu bar, `#F5F5F5` for a dark one) through
 `platform::menu_bar_dark` (macOS: the status bar window's effective
@@ -1652,12 +1664,13 @@ theme), each time it sets a picture or a frame. The pulse is one timer
 thread that runs only while the state is starting; Reduce motion
 (`platform::reduce_motion`) is checked on every change and every frame
 and stops it at the held picture. The tooltip is "Kivali · Plainsong
-running · Home paused" (just "Kivali" with no team here). macOS uses
+running · Home paused · Studio on studio.example.com" (just "Kivali"
+with no team). macOS uses
 the 40×44 set (shown 18 pt tall), Windows the 32×32 `tray-win-` set.
 `scripts/make-icons.mjs` renders both from SVG (viewBox 11 3 78 88, the
 design's 20×22 pt icon) with rsvg-convert; `make icons` runs it; the
 PNGs are committed. A test decodes every file and checks its size, its
-ink, the red, the 45% and 50% alphas and the pulse's rise and fall.
+ink, the red, the 45% and 75% alphas and the pulse's rise and fall.
 
 **Alerts.** Every dialog is a sheet on the window it came from. Those
 raised from native surfaces are native alerts (`platform::alert`;
@@ -1825,7 +1838,7 @@ welcome screen.
 | Key | What |
 | --- | --- |
 | `app_version`, `platform` | this app's version; `macos`, `windows` or `linux` |
-| `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 4 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere), `queued` (a team here whose resume waits its turn or waits to try again, which Pause ends; "One start at a time"), `downloads` (the window's downloads, oldest first: `id`, `name`, `folder`, `state`, `received`, `total`, `error`; "Downloads") |
+| `teams[]` | per team: `id`, `name`, `kind`, `place` (`here`/`elsewhere`), `url`, `device`, `state`, `activity`, `phrase`, `reason`, `stopped` (`failed` because it stopped on its own, which changes the page's words), `pause_first` (the team to pause when memory stopped a start), `op` (the current or last operation: kind, running, error, finished, raw lines, stage, stage index, stages, start time, percent, time left), `version`, `update` (above, plus `takes`, an update's typical length in words, "about 4 minutes", from its stages), `ai` (`provider`, `signed_in`, `email` and `billing` as `claude auth status` reports them, `terminal_open`, `signin`, `signed_out_at` while Claude is signed out), `owner`, `memory_mb`, `cpus`, `disk_used_bytes`, `disk_size_bytes`, `paused_since`, `last_reached`, `provisional`, `agents`, `working` (only while running), `files`, `signed_in_as` ("The team API"; null until read), `memory_free_mb` (a team here: `view::memory_free_mb` beside the other teams running now, E5's "2 GB free"; null elsewhere), `queued` (a team here whose resume waits its turn or waits to try again, which Pause ends; "One start at a time"), `downloads` (the window's downloads, oldest first: `id`, `name`, `folder`, `state`, `received`, `total`, `error`; "Downloads") |
 | `host` | this computer's memory and CPUs, and `vm_support`: whether a team's VM can run here (`ready`, `hyperv_off`, `windows_home`, `virtualization_off`, `in_vm`; `platform::vm_support`) |
 | `web_memory_mb` | the least memory a team needs for a web task (`teams::WEB_TASK_MEMORY_MB`); the memory select warns below it |
 | `settings` | `start_at_login`, `ask_before_quit` |
@@ -2065,7 +2078,7 @@ limit is 2 GB.
 | Single instance | the platform's lock on `shell.lock` and exit (macOS: `flock` and a dialog; Windows: an exclusive open, and the running shell is asked to open Kivali through a named event) | tauri-plugin-single-instance: another plugin for a lock the OS already gives |
 | Waiting for `serve` | until the endpoint answers or the process exits, at most 15 seconds | no deadline: a transport that never answers would hang the shell; `serve` listens before it boots anything, so 15 seconds is not a slow first start |
 | Minimum desktop version | compared by the shell with its own version, the supervisor's verdict as a second opinion | the verdict alone: a supervisor stamped with a different version would judge for an app it is not |
-| Tray picture | four coloured states in two inks, the ink chosen by the shell, the pulse as frames on a timer | template images: the system tints them, so couldn't start's red would be lost; one animated image: the tray takes still images only |
+| Tray picture | four coloured states in two inks, the ink chosen by the shell, the pulse as frames on a timer | template images: the system tints them, so needs you's red would be lost; one animated image: the tray takes still images only |
 | Quit | a custom menu item, E2 when a team here runs | the predefined Quit ends the process before the teams are paused |
 | Alerts | native alerts from native surfaces, in-page sheets from the bundled pages | in-page everywhere: a menu or the tray has no page to draw on; native everywhere: the dialog plugin cannot draw E7/E8's list and name field |
 | Remote team check | 10-second limit, no redirects, 64 KiB body cap | following redirects: a login wall would pass for a team; an unbounded read: any host could feed the check forever |

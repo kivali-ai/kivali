@@ -32,6 +32,7 @@ export function team(o: Partial<Team> = {}): Team {
     activity: null,
     phrase: "running",
     reason: null,
+    stopped: false,
     pause_first: null,
     op: null,
     version: "0.17.0",

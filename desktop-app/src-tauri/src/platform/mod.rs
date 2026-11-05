@@ -109,8 +109,8 @@ pub struct TrayImages {
     /// Outlined, at 45%.
     pub paused: &'static [u8],
     /// Solid bars, red dots.
-    pub couldnt_start: &'static [u8],
-    /// The paused drawing held at 50%: starting under Reduce motion.
+    pub needs_you: &'static [u8],
+    /// The paused drawing held at 75%: starting under Reduce motion.
     pub starting_held: &'static [u8],
     /// The starting pulse, [`TRAY_FRAMES`] frames of [`TRAY_FRAME_MS`].
     pub starting: [&'static [u8]; TRAY_FRAMES],
@@ -136,7 +136,7 @@ macro_rules! tray_set {
         $crate::platform::TrayImages {
             running: include_bytes!(concat!("../../icons/", $prefix, "-running-", $ink, ".png")),
             paused: include_bytes!(concat!("../../icons/", $prefix, "-paused-", $ink, ".png")),
-            couldnt_start: include_bytes!(concat!("../../icons/", $prefix, "-couldnt-start-", $ink, ".png")),
+            needs_you: include_bytes!(concat!("../../icons/", $prefix, "-needs-you-", $ink, ".png")),
             starting_held: include_bytes!(concat!("../../icons/", $prefix, "-starting-", $ink, ".png")),
             starting: [
                 include_bytes!(concat!("../../icons/", $prefix, "-starting-", $ink, "-0.png")),
@@ -478,9 +478,11 @@ mod tests {
     }
 
     /// Both sets are committed at their sizes (menu bar 40x44, the
-    /// notification area 32x32), in the design's two inks; couldn't start
+    /// notification area 32x32), in the design's two inks; needs you
     /// carries the danger red; the starting frames pulse 45% -> 100% ->
-    /// 45%; the held frame is at 50%.
+    /// 45%; the held frame is at 75%, well clear of paused's 45%: it is the
+    /// same drawing, so anything closer hides that a team is starting under
+    /// Reduce motion.
     #[test]
     fn tray_icon_sets_decode() {
         let sets = [(tray_set!("tray"), (40, 44)), (tray_set!("tray-win"), (32, 32))];
@@ -494,7 +496,7 @@ mod tests {
                 assert_eq!(strongest(&running), [ink[0], ink[1], ink[2], 255]);
                 assert!(!has_colour(&running, red));
 
-                let broken = decode(images.couldnt_start);
+                let broken = decode(images.needs_you);
                 assert!(has_colour(&broken, ink) && has_colour(&broken, red));
 
                 let alpha = |b: &[u8]| strongest(&decode(b))[3];
@@ -503,7 +505,7 @@ mod tests {
                 // Un-premultiplied at 45%: within one step of the ink.
                 assert!(strongest(&paused)[..3].iter().zip(ink).all(|(a, b)| a.abs_diff(b) <= 1), "{:?}", strongest(&paused));
                 assert!(alpha(images.paused).abs_diff(115) <= 1, "{}", alpha(images.paused)); // 45%
-                assert!(alpha(images.starting_held).abs_diff(128) <= 1); // 50%
+                assert!(alpha(images.starting_held).abs_diff(191) <= 1); // 75%
 
                 let pulse: Vec<u8> = images.starting.iter().map(|b| alpha(b)).collect();
                 assert_eq!(pulse[0], alpha(images.paused));

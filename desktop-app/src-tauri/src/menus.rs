@@ -89,6 +89,8 @@ struct Row {
     update: Option<String>,
     /// Its resume waits its turn (`TeamView::queued`).
     queued: bool,
+    /// Its agents can't work until someone signs in to Claude.
+    needs_signin: bool,
 }
 
 struct View {
@@ -101,7 +103,8 @@ struct View {
 fn row(sh: &Shell, t: Team) -> Row {
     let v = sh.team_view(&t);
     let update = v.update.as_ref().filter(|u| u.state == "available").and_then(|u| u.latest.clone());
-    Row { state: v.state, phrase: v.phrase, update: update.map(|u| shell::short_version(&u)), queued: v.queued, team: t }
+    let needs_signin = view::needs_signin(v.state, v.ai.as_ref().and_then(|a| a.signed_in), v.provisional);
+    Row { state: v.state, phrase: v.phrase, update: update.map(|u| shell::short_version(&u)), queued: v.queued, needs_signin, team: t }
 }
 
 fn view(app: &AppHandle) -> View {
@@ -113,12 +116,15 @@ fn view(app: &AppHandle) -> View {
     View { rows, front, app_update }
 }
 
-fn tray_state(s: TeamState) -> TrayState {
-    match s {
+fn tray_state(r: &Row) -> TrayState {
+    if r.needs_signin {
+        return TrayState::NeedsYou;
+    }
+    match r.state {
         TeamState::Running => TrayState::Running,
         TeamState::Starting => TrayState::Starting,
         TeamState::Paused => TrayState::Paused,
-        TeamState::Failed => TrayState::CouldntStart,
+        TeamState::Failed => TrayState::NeedsYou,
     }
 }
 
@@ -324,7 +330,7 @@ fn tray_menu(app: &AppHandle, v: &View) -> R<Menu<Wry>> {
             format!("open:{}", r.team.id),
             format!("{} · {}", r.team.name, r.phrase),
             true,
-            Some(trayicon::dot_image(tray_state(r.state))),
+            Some(trayicon::dot_image(tray_state(r))),
             None::<&str>,
         )?;
         m.append(&row)?;
@@ -455,11 +461,11 @@ fn app_menu(app: &AppHandle, v: &View) -> R<Menu<Wry>> {
     Menu::with_items(app, &refs)
 }
 
-/// The menu-bar icon's state and tooltip across every team here.
+/// The menu-bar icon's state and tooltip across every team, here and
+/// elsewhere, as the tray menu lists them.
 fn icon(v: &View) -> (TrayState, String) {
-    let here: Vec<&Row> = v.rows.iter().filter(|r| r.team.is_here()).collect();
-    let st = TrayState::of_teams(here.iter().map(|r| tray_state(r.state)));
-    let tip = match here.as_slice() {
+    let st = TrayState::of_teams(v.rows.iter().map(tray_state));
+    let tip = match v.rows.as_slice() {
         [] => "Kivali".to_string(),
         rows => format!(
             "Kivali · {}",
@@ -540,7 +546,7 @@ struct Signatures {
 fn signatures(v: &View) -> Signatures {
     let mut tray = String::new();
     for r in &v.rows {
-        tray.push_str(&format!("{}|{}|{:?}|{}|{:?}|{}\n", r.team.id, r.team.name, r.state, r.phrase, r.update, r.team.is_here()));
+        tray.push_str(&format!("{}|{}|{:?}|{}|{:?}|{}|{}\n", r.team.id, r.team.name, r.state, r.phrase, r.update, r.team.is_here(), r.needs_signin));
     }
     tray.push_str(&format!("app={:?}", v.app_update));
     let app = format!("{tray} front={:?}", v.front);
@@ -837,7 +843,7 @@ mod tests {
         } else {
             Place::Elsewhere { url: format!("https://{name}.example.com") }
         };
-        Row { team: Team { id: name.into(), name: name.into(), kind: None, place, paused_at: None }, state, phrase: phrase.into(), update: None, queued: false }
+        Row { team: Team { id: name.into(), name: name.into(), kind: None, place, paused_at: None }, state, phrase: phrase.into(), update: None, queued: false, needs_signin: false }
     }
 
     /// A starting team offers nothing, unless its resume waits its turn:
@@ -852,18 +858,45 @@ mod tests {
         assert_eq!(pause_resume_item(&r), Some(("pause:Home".into(), "Pause Home…".into())));
     }
 
+    /// One paused team here beside running teams elsewhere must read as
+    /// running, or the icon contradicts the menu under it. A team that can't
+    /// be reached must stay quiet: a laptop off the network would otherwise
+    /// raise the icon for every remote team.
     #[test]
-    fn icon_follows_teams_here_only() {
-        let v = View {
-            rows: vec![row("Plainsong", true, TeamState::Running, "running"), row("Home", true, TeamState::Paused, "paused"), row("Studio", false, TeamState::Paused, "can't reach studio.example.com")],
-            front: None,
-            app_update: None,
-        };
-        let (st, tip) = icon(&v);
+    fn icon_counts_every_team_and_stays_quiet_about_unreachable_ones() {
+        let view = |rows| View { rows, front: None, app_update: None };
+        let home = || row("Home", true, TeamState::Paused, "paused");
+        let studio = || row("Studio", false, TeamState::Running, "on studio.example.com");
+        let lost = || row("Lab", false, TeamState::Paused, "can't reach lab.example.com");
+
+        let (st, tip) = icon(&view(vec![home(), studio(), lost()]));
         assert_eq!(st, TrayState::Running);
-        assert_eq!(tip, "Kivali · Plainsong running · Home paused");
-        let none = View { rows: vec![], front: None, app_update: None };
-        assert_eq!(icon(&none), (TrayState::Paused, "Kivali".to_string()));
+        assert_eq!(tip, "Kivali · Home paused · Studio on studio.example.com · Lab can't reach lab.example.com");
+        assert_eq!(icon(&view(vec![studio()])).0, TrayState::Running);
+        assert_eq!(icon(&view(vec![home(), lost()])).0, TrayState::Paused);
+        assert_eq!(icon(&view(vec![])), (TrayState::Paused, "Kivali".to_string()));
+    }
+
+    /// When Claude signs out the agents stop and the notification says
+    /// "needs you", so the icon must say so too. A running team beside it
+    /// must not hide that.
+    #[test]
+    fn a_team_that_needs_signin_raises_the_icon() {
+        let signed_out = Row { needs_signin: true, ..row("Home", true, TeamState::Running, "Claude isn't signed in") };
+        let v = View { rows: vec![row("Plainsong", true, TeamState::Running, "running"), signed_out], front: None, app_update: None };
+        assert_eq!(tray_state(&v.rows[1]), TrayState::NeedsYou);
+        assert_eq!(icon(&v).0, TrayState::NeedsYou);
+    }
+
+    /// Setup finishing with Claude signed out changes the row's dot and
+    /// nothing else in the row. Without it in the signature the tray menu
+    /// keeps the dot it drew during setup.
+    #[test]
+    fn the_tray_menu_redraws_when_a_team_starts_needing_signin() {
+        let during = || row("Home", true, TeamState::Running, "Claude isn't signed in");
+        let after = Row { needs_signin: true, ..during() };
+        let tray = |r| signatures(&View { rows: vec![r], front: None, app_update: None }).tray;
+        assert_ne!(tray(after), tray(during()));
     }
 
     /// A tray click refreshes the menus with the tray menu open, and

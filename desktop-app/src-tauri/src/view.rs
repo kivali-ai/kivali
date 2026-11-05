@@ -297,6 +297,17 @@ pub fn local_state(op: Option<OpKind>, failed: bool, status: Option<&Status>) ->
     }
 }
 
+/// The phrase for a team that stopped on its own, in place of "couldn't
+/// start": nothing failed to start, and it was running a moment ago.
+pub const STOPPED_PHRASE: &str = "stopped unexpectedly";
+
+/// A running team whose agents can't work until someone signs in to
+/// Claude. A team still in setup is left out: signing in is the next
+/// step there.
+pub fn needs_signin(state: TeamState, signed_in: Option<bool>, provisional: bool) -> bool {
+    state == TeamState::Running && signed_in == Some(false) && !provisional
+}
+
 /// The short phrase beside a team's dot (tray rows, Settings). `working`
 /// is how many agents the team says are working (teamapi.rs), when known.
 pub fn phrase(state: TeamState, activity: Option<Activity>, signed_in: Option<bool>, elsewhere: Option<&str>, working: Option<u64>) -> String {
@@ -434,6 +445,21 @@ mod tests {
         assert_eq!(local_state(None, false, Some(&st(OrgState::Upgrading))).1, Some(Activity::Updating));
         assert_eq!(local_state(None, false, None), (TeamState::Paused, None));
         assert_eq!(local_state(None, false, Some(&st(OrgState::Failed))).0, TeamState::Failed);
+    }
+
+    /// Claude signing out stops the agents while the team still reads
+    /// running, so without this the tray icon looks healthy. Setup asks
+    /// for that sign-in itself: without the provisional check a new team
+    /// shows the icon's red before its owner has done anything wrong.
+    #[test]
+    fn a_signed_out_team_needs_signin_once_setup_is_done() {
+        assert!(needs_signin(TeamState::Running, Some(false), false));
+        assert!(!needs_signin(TeamState::Running, Some(false), true));
+        assert!(!needs_signin(TeamState::Running, Some(true), false));
+        // Not asked yet: no reason to raise anything.
+        assert!(!needs_signin(TeamState::Running, None, false));
+        // A team that isn't running has no agents waiting on the sign-in.
+        assert!(!needs_signin(TeamState::Paused, Some(false), false));
     }
 
     #[test]
