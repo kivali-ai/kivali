@@ -190,18 +190,18 @@ func repoAndID(c *call, name string) (string, int64, error) {
 
 // saveInShell is the answer of a download's first request: a shell job
 // that fetches path on GitHub's API into file (its folder, name and
-// bound), with a token minted for it alone, narrowed to repo and to
-// reading Actions. A redirect may lead to resultHosts only.
-func (c *call) saveInShell(ctx context.Context, repo, path string, file shelljob.DownloadJob, audit string) (any, error) {
+// bound, the media type it asks for, and the hosts a redirect may lead
+// to), with a token minted for it alone, narrowed to repo and to p.
+func (c *call) saveInShell(ctx context.Context, repo, path string, p permissions, file shelljob.DownloadJob, audit string) (any, error) {
 	base, err := c.g.base()
 	if err != nil {
 		return nil, err
 	}
-	tok, err := c.g.jobToken(ctx, c.conn, repo, perms("actions", "read"))
+	tok, err := c.g.jobToken(ctx, c.conn, repo, p)
 	if err != nil {
 		return nil, err
 	}
-	file.URL, file.Accept, file.Token, file.Hosts = base.String()+path, mediaJSON, tok, resultHosts
+	file.URL, file.Token = base.String()+path, tok
 	file.TimeoutSeconds, file.ConnectionID = downloadSecondsMost, c.connID
 	return shellJob{job: &shelljob.Job{Download: &file}, audit: audit}, nil
 }
@@ -263,7 +263,9 @@ func downloadArtifact(ctx context.Context, c *call) (any, error) {
 		return nil, refuse(fmt.Sprintf("Artifact %d of %s is %.1f GiB, more than the %d GiB Kivali saves.", id, repo, float64(a.SizeInBytes)/(1<<30), artifactBytesMost>>30),
 			"the artifact is larger than 5 GiB")
 	}
-	return c.saveInShell(ctx, repo, artifactAddress(repo, id)+"/zip", shelljob.DownloadJob{
+	return c.saveInShell(ctx, repo, artifactAddress(repo, id)+"/zip", perms("actions", "read"), shelljob.DownloadJob{
+		Accept:   mediaJSON,
+		Hosts:    resultHosts,
 		Folder:   fmt.Sprintf("%s/artifact-%d", downloadsFolder, id),
 		Name:     files.CleanDownloadName(a.Name),
 		NameZip:  true,

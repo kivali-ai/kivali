@@ -649,6 +649,9 @@ func TestGetIssueReadsThePageBeforeTheLast(t *testing.T) {
 	for _, q := range f.api() {
 		if strings.HasSuffix(q.Path, "/comments") {
 			pages = append(pages, q.Query.Get("page"))
+			if q.Query.Get("per_page") != "100" {
+				t.Errorf("page size %q", q.Query.Get("per_page"))
+			}
 		}
 	}
 	if !slices.Equal(pages, []string{"2", "1"}) {
