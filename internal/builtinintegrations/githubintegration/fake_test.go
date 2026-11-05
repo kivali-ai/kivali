@@ -100,8 +100,10 @@ type grant struct {
 type recorded struct {
 	Method string
 	Path   string
-	Query  url.Values
-	Header http.Header
+	// Escaped is the path as it was sent, before decoding.
+	Escaped string
+	Query   url.Values
+	Header  http.Header
 	// Bearer is the Authorization header's credential.
 	Bearer string
 	// JWT is the claims of a bearer JWT whose signature the app's key
@@ -229,7 +231,7 @@ var mintPath = regexp.MustCompile(`^/app/installations/[0-9]+/access_tokens$`)
 
 func (f *fakeGitHub) serve(w http.ResponseWriter, req *http.Request) {
 	body, _ := io.ReadAll(req.Body)
-	rec := recorded{Method: req.Method, Path: req.URL.Path, Query: req.URL.Query(), Header: req.Header.Clone(), Body: string(body)}
+	rec := recorded{Method: req.Method, Path: req.URL.Path, Escaped: req.URL.EscapedPath(), Query: req.URL.Query(), Header: req.Header.Clone(), Body: string(body)}
 	rec.Bearer, _ = strings.CutPrefix(req.Header.Get("Authorization"), "Bearer ")
 	if c, err := verifyJWT(rec.Bearer); err == nil {
 		rec.JWT = c

@@ -861,11 +861,12 @@ func TestGitHubShellJobGetsTheConnectionsProxyCredential(t *testing.T) {
 	secret := data[builtinintegrations.ProxySecretKey]
 	proxy, registered := srv.Store.EgressScopedCredentials()[builtinintegrations.ProxyUser("github", rec.ID)]
 	// The credential admits github.com, the hosts GitHub keeps LFS files
-	// on, and the API and the hosts a shell's download reaches; the daemon
-	// is told those same LFS hosts.
+	// on, and the API and the hosts a shell's download reaches, Actions'
+	// and release assets'; the daemon is told those same LFS hosts.
 	lfsHosts := []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
 	admitted := slices.Sorted(slices.Values(proxy.Hosts))
-	reached := slices.Concat([]string{"github.com", "api.github.com", "productionresultssa*.blob.core.windows.net", "actions.githubusercontent.com"}, lfsHosts)
+	reached := slices.Concat([]string{"github.com", "api.github.com", "productionresultssa*.blob.core.windows.net", "actions.githubusercontent.com",
+		"release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com"}, lfsHosts)
 	if secret == "" || !registered || proxy.Hash != egresscred.Hash(secret) || !slices.Equal(admitted, slices.Sorted(slices.Values(reached))) ||
 		slices.Contains(rec.SecretKeys, builtinintegrations.ProxySecretKey) || data["private_key"] == "" {
 		t.Errorf("proxy credential = %+v registered %v, record %+v", proxy, registered, rec)

@@ -48,6 +48,8 @@ type apiError struct {
 	RateLimited bool
 	// Timeout is GitHub not answering in time, for Status 0.
 	Timeout bool
+	// TooLarge is an answer larger than Kivali reads, for Status 0.
+	TooLarge bool
 }
 
 func (e *apiError) Error() string {
@@ -175,7 +177,7 @@ func (g *GitHub) do(ctx context.Context, r request) ([]byte, http.Header, error)
 	case err != nil:
 		return nil, nil, transportError(ctx, err, r.secret())
 	case len(b) > maxAnswerBytes:
-		return nil, nil, &apiError{Message: "its answer is larger than Kivali reads"}
+		return nil, nil, &apiError{Message: "its answer is larger than Kivali reads", TooLarge: true}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := scrub(errorWords(b, cmp.Or(http.StatusText(resp.StatusCode), resp.Status)), r.secret())
