@@ -2785,8 +2785,8 @@ every access row, now naming no connection (or naming a connection set
 aside), as invalid until the owner sets it again.
 
 GitHub 1.0.0 (a bundle an earlier Kivali shipped and ran in a pod) is
-GitHub 2.2.0 here, a built-in of Go code. Boot's
-`InstallBuiltinIntegrations` makes 2.2.0 the version in use and 1.0.0
+GitHub 2.3.0 here, a built-in of Go code. Boot's
+`InstallBuiltinIntegrations` makes 2.3.0 the version in use and 1.0.0
 superseded; the reconcile stops 1.0.0's pod, since it runs no pod for
 a built-in record. 1.0.0's connection, the owner's own GitHub App
 signed in with (its client id in the record; its client secret and
@@ -2828,6 +2828,13 @@ app 2.1.0 made does not have: its `permissions` requirement reads
 unmet, naming the three, until the owner's Fix gives them on GitHub.
 Until then GitHub refuses the CI actions' tokens and a push's that
 asks for workflows, and everything else works.
+
+GitHub 2.2.0's connection fits 2.3.0 with nothing to do: 2.3.0 keeps
+its setup, its access form and the permissions it needs, and adds the
+two [artifact actions](#artifacts), which read with `actions: read`.
+Its connection's proxy credential also admits `api.github.com` and
+`resultHosts`, for a shell's download; boot registers that from the
+connection's Secret, so nothing is owed.
 
 ### Dispatch
 
@@ -3211,10 +3218,13 @@ whose integration asks for no job is refused and audited. The MCP
 server never runs a second job in one call.
 
 The wire shapes (`internal/shelljob`, named in `agentpod` as
-`IntegrationShellJob`, `GitJob` and the rest):
+`IntegrationShellJob`, `GitJob`, `DownloadJob` and the rest):
 
 ```go
-type IntegrationShellJob struct{ Git *GitJob }             // json: git
+type IntegrationShellJob struct { // one field is set
+	Git      *GitJob      // json: git
+	Download *DownloadJob // json: download; see The daemon's download
+}
 type GitJob struct {
 	Op, Path, URL       string   // op: clone, fetch or push; url empty: the working copy's origin
 	RefSpecs            []string // json: refspecs; a fetch's, or a push's normalised
@@ -3229,7 +3239,33 @@ type GitJob struct {
 	TimeoutSeconds      int      // clone 900, fetch and push 600
 	ConnectionID        string   // json: connection_id; the connection the job runs through
 }
-type IntegrationShellJobResult struct{ Skipped string; Git *GitResult }
+type DownloadJob struct {
+	URL, Accept    string   // GET with Token as a bearer credential; Accept, if any
+	Token          string   // minted for this job alone
+	Hosts          []string // the host patterns a redirect may lead to; followed once, with no credential
+	Folder, Name   string   // where the file lands, made when missing; its plain name
+	NameZip        bool     // json: name_zip; add .zip when the body starts as a zip
+	MaxBytes       int64    // json: max_bytes; at most 5 GiB
+	Proxy          GitProxy // as a GitJob's
+	TimeoutSeconds int      // at most 900
+	ConnectionID   string   // json: connection_id; echoed by the daemon
+}
+type IntegrationShellJobResult struct {
+	Skipped  string
+	Git      *GitResult
+	Download *DownloadResult
+}
+type DownloadResult struct {
+	Path         string // where the file landed; no file is left unless Error is empty
+	Bytes        int64
+	Zip          bool
+	Status       int    // the URL's answer when it was not a success
+	Error        string // at most 4 KiB, scrubbed of the job's credentials
+	TooLarge     bool   // json: too_large
+	TimedOut     bool   // json: timed_out
+	DurationMs   int64
+	ConnectionID string // json: connection_id; the job's, echoed by the daemon
+}
 type GitResult struct {
 	Repository   string
 	Updated      []GitRefUpdate // {ref, old, new}; old empty for a new ref; at most 200; a push's: the remote's refs
@@ -3595,9 +3631,10 @@ submodules (not cloned), and deleting a remote ref.
 ### The GitHub built-in
 
 `internal/builtinintegrations/githubintegration` (name `github`,
-version 2.2.0, in `builtins.All()`) is GitHub as a built-in of Go
+version 2.3.0, in `builtins.All()`) is GitHub as a built-in of Go
 code: agents read and open issues, comments and pull requests, read
-checks, GitHub Actions runs and job logs (`ci.go`, [CI](#ci)), close
+checks, GitHub Actions runs and job logs (`ci.go`, [CI](#ci)), save
+Actions artifacts (`artifacts.go`, [Artifacts](#artifacts)), close
 the ones the app opened and delete their branches through GitHub's
 REST API, and clone, fetch and push through the agent-shell
 daemon, as a private GitHub App its setup makes on the owner's account
@@ -3617,8 +3654,8 @@ or an organization's. The package implements `Integration`,
   `private_key`, secret; no `then`), an empty `user_config`,
   `kivali.hosts: ["api.github.com", "github.com",
   "productionresultssa*.blob.core.windows.net",
-  "actions.githubusercontent.com"]` (the last two `logHosts`, where
-  GitHub keeps job logs, [CI](#ci)), `kivali.verify:
+  "actions.githubusercontent.com"]` (the last two `resultHosts`, where
+  GitHub keeps job logs and artifacts, [CI](#ci)), `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
   over: `repositories` (required) and `write`, "May create, comment,
   push and close", then `workflows`, "May change workflows", off when
@@ -3873,6 +3910,8 @@ permission, and to ask the owner.
 | `list_workflow_runs` | `GET /repos/{o}/{r}/actions/runs` (`branch`, `head_sha`, `status`, `per_page`) | `actions: read` |
 | `get_workflow_run` | `GET /repos/{o}/{r}/actions/runs/{id}` and `GET .../actions/runs/{id}/jobs?filter=latest&per_page=100` | `actions: read` |
 | `get_job_log` | `GET /repos/{o}/{r}/actions/jobs/{id}/logs`, whose redirect is followed with no credential ([CI](#ci)) | `actions: read` |
+| `list_artifacts` | `GET /repos/{o}/{r}/actions/runs/{id}/artifacts`, or with no run `GET /repos/{o}/{r}/actions/artifacts` (`name`, `per_page`) | `actions: read` |
+| `download_artifact` | `GET /repos/{o}/{r}/actions/artifacts/{id}`; then a shell job: `GET .../artifacts/{id}/zip`, whose redirect is followed with no credential ([Artifacts](#artifacts)) | `actions: read`; the job's in its own token |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
 | `push` | a shell job | `contents: write`, and `workflows: write` when the push says it changes workflow files and the access allows it, in the job's own token |
 
@@ -4231,9 +4270,10 @@ token is asked for, as every REST action does ([The actions](#the-actions)).
   .../actions/jobs/{id}/logs` with a redirect (303, or 302) to the log,
   at an address it signs for a minute. `jobLog` asks with the token on
   a client that follows no redirect, holds the `Location` to `logURL`
-  (https, no user info, on a host of `logHosts`, each pattern read as
-  `kivali.hosts` reads one: the host or a name under it, `*` a glob
-  within one label; against the tests' fake, plain http on loopback),
+  (https, no user info, on a host of `resultHosts`, each
+  pattern read as `kivali.hosts` reads one: the host or a name under
+  it, `*` a glob within one label; against the tests' fake, plain http
+  on loopback),
   and GETs it with no credential. Anywhere else is refused, "GitHub
   keeps the log on <host>, which is not a host Kivali reads logs from;
   tell the owner." `readLog` reads at most 64 MiB, line by line with
@@ -4251,7 +4291,65 @@ read` (the rest), which an app made before 2.2.0 lacks until the
 owner's Fix ([Requirements](#requirements)); until then GitHub refuses
 the token (422) in [Tokens](#tokens)' words. Commit statuses (`GET
 .../commits/{ref}/status`, another permission) are not read, and
-nothing reruns, cancels or downloads a run's artifacts.
+nothing reruns or cancels a run.
+
+#### Artifacts
+
+`artifacts.go`. Two REST actions read what workflow runs kept; they
+read only, so any agent whose access includes the repository has them,
+and their tokens ask for `actions: read`, as the [CI](#ci) actions'
+do.
+
+- `list_artifacts(repository, run_id?, name?, limit?)`: a run's
+  artifacts, or with no `run_id` the repository's, 20 or `limit` up to
+  100, each with its id, name, `size_bytes`, whether it has expired,
+  its times, its run, branch and commit, and `from_fork` when the run's
+  head repository is not the one it ran in. The answer has GitHub's
+  total and a note when that is more than the page.
+- `download_artifact(repository, artifact_id)`: core never holds the
+  file. The first request reads the artifact, fails on one that has
+  expired and refuses one over `artifactBytesMost` (5 GiB), both with
+  nothing fetched; a 404 or a 410 reads "GitHub has no artifact <id> in
+  <owner/name> (HTTP 404): it may be past GitHub's retention, or it is
+  not an artifact of this repository." It then mints a token for the
+  job alone (`jobToken`, `actions: read`, narrowed to the repository,
+  never cached) and answers with a `shelljob.DownloadJob`: `.../zip` on
+  the API, `resultHosts` for the redirect, the folder
+  `/files/integrations/github/untrusted-downloads/artifact-<id>`, the
+  artifact's cleaned name and `NameZip`. The job takes the connection's
+  scoped proxy credential as a git job does ([A call](#a-call)). The
+  second request (`Complete`, then the action's `complete`) puts the
+  daemon's result in words, the same 404 or 410 words included, and
+  reads the artifact again for its run and commit. If that read fails
+  or GitHub names no run, the answer says GitHub does not say where the
+  file came from, as it warns of a fork's, rather than treat it as the
+  repository's own. The audit rows read "started: saving artifact <id>
+  of <owner/name>" and "saved artifact <id> of <owner/name> (<bytes>
+  bytes)".
+
+##### The daemon's download
+
+`POST /v1/download` (`internal/agentshell/download.go`) runs a
+`shelljob.DownloadJob`, the agent-side half any built-in's file fetch
+can use. It GETs the job's URL with the token as a bearer credential,
+following no redirect. A redirect must be https, without user info, on
+a host of the job's `Hosts` (`egresscred.HostMatches`, patterns as
+`kivali.hosts` reads them), and is fetched once with no credential of
+the job's; any other is refused, naming only the host, since the
+address is signed. Both requests go through the daemon's bare proxy URL
+with the job's proxy credential. The folder is held under `/files/` or
+the shell's home as a git job's path is (`resolveGitPath`); the name
+must be plain. The body lands under a temporary `.download-` name in
+the folder, through an `os.Root`, and takes its own name once whole and
+within `MaxBytes` (at most 5 GiB), replacing an earlier copy; a body
+that starts as a zip gains `.zip` with `NameZip`, and anything else, as
+`upload-artifact`'s `archive: false` keeps a file, stays as named.
+Anything that stops it leaves no file: a body cut short, one over the
+bound, the disk filling, the job's time running out (at most 15
+minutes). Only a daemon killed part way leaves the temporary file, under
+a name no agent takes for the file. The answer carries the path, the
+size, whether it is a zip, the API's status when it was not a success,
+and an error scrubbed of the token and the proxy credential.
 
 ### The Google Workspace built-in
 

@@ -163,6 +163,42 @@ func (s *SidecarShell) Git(ctx context.Context, req GitRequest) (*GitResponse, e
 	return &out, nil
 }
 
+// Download runs one file's fetch in the daemon (POST /v1/download). The
+// request holds an integration connection's token and proxy credential:
+// nothing here logs it, and the daemon scrubs both from its answer. The
+// client waits the job's own bound (DownloadTimeoutFor) and 30s more,
+// as Git does. A non-2xx answer is an error.
+func (s *SidecarShell) Download(ctx context.Context, req DownloadRequest) (*DownloadResponse, error) {
+	if s.SocketPath == "" {
+		return nil, errors.New("agentshell.SidecarShell: SocketPath is empty")
+	}
+	body, err := marshalRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("agentshell: marshal DownloadRequest: %w", err)
+	}
+	cctx, cancel := context.WithTimeout(ctx, DownloadTimeoutFor(req.TimeoutSeconds)+30*time.Second)
+	defer cancel()
+	hreq, err := http.NewRequestWithContext(cctx, http.MethodPost, "http://agent-shell/v1/download", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("agentshell: build request: %w", err)
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	resp, err := s.connection().do(hreq)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode/100 != 2 {
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return nil, fmt.Errorf("agentshell: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(errBody)))
+	}
+	var out DownloadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("agentshell: decode DownloadResponse: %w", err)
+	}
+	return &out, nil
+}
+
 // Packages satisfies agent.ShellPackageLister: the apt packages the
 // shell has (the image's and those installed at start), those still
 // being installed and those that failed, from GET /v1/packages. An empty

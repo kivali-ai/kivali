@@ -215,6 +215,47 @@ type GitLFS struct {
 	Hosts []string `json:"hosts,omitempty"`
 }
 
+// DownloadRequest is the body of POST /v1/download: one file fetched
+// through an integration's connection (download.go). URL is GET with
+// Token as a bearer credential and Accept, if any; Hosts are the host
+// patterns a redirect from it may lead to, followed once with no
+// credential of the job's. Folder is the directory under the daemon's
+// root or its HOME the file lands in, made when missing, Name its plain
+// file name, to which NameZip adds .zip when the body starts as a zip.
+// MaxBytes bounds the file, at most DownloadMaxBytes, TimeoutSeconds
+// the job (DownloadTimeoutFor). Proxy is the connection's scoped proxy
+// credential; ConnectionID is echoed in the response.
+type DownloadRequest struct {
+	URL            string   `json:"url"`
+	Accept         string   `json:"accept,omitempty"`
+	Token          string   `json:"token"`
+	Hosts          []string `json:"hosts,omitempty"`
+	Folder         string   `json:"folder"`
+	Name           string   `json:"name"`
+	NameZip        bool     `json:"name_zip,omitempty"`
+	MaxBytes       int64    `json:"max_bytes,omitempty"`
+	Proxy          GitProxy `json:"proxy"`
+	TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+	ConnectionID   string   `json:"connection_id,omitempty"`
+}
+
+// DownloadResponse is the body POST /v1/download answers: the path the
+// file landed at and its size, whether it is a zip, or Error, scrubbed
+// of the job's credentials. Status is the answer of the job's URL when
+// that was not a success; TooLarge a body over the bound. No file is
+// left unless Error is empty.
+type DownloadResponse struct {
+	Path         string `json:"path,omitempty"`
+	Bytes        int64  `json:"bytes,omitempty"`
+	Zip          bool   `json:"zip,omitempty"`
+	Status       int    `json:"status,omitempty"`
+	Error        string `json:"error,omitempty"`
+	TooLarge     bool   `json:"too_large,omitempty"`
+	TimedOut     bool   `json:"timed_out,omitempty"`
+	DurationMs   int64  `json:"duration_ms,omitempty"`
+	ConnectionID string `json:"connection_id,omitempty"`
+}
+
 // GitIdentity is the git identity a clone's working copy is given: its
 // user.name and user.email. Each is one line of at most
 // GitIdentityMaxBytes, without < or >, which git does not take in an

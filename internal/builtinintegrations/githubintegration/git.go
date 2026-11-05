@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
@@ -47,11 +48,12 @@ var (
 	_ builtinintegrations.HostsOf             = (*GitHub)(nil)
 )
 
-// Hosts is github.com, which a clone, a fetch or a push reaches, and
-// the hosts GitHub keeps LFS files on (lfsHosts): what the connection's
-// scoped proxy credential admits.
+// Hosts is github.com, which a clone, a fetch or a push reaches, the
+// hosts GitHub keeps LFS files on (lfsHosts), the API a shell's download
+// asks, and the hosts it keeps Actions artifacts on (resultHosts): what
+// the connection's scoped proxy credential admits.
 func (g *GitHub) Hosts(builtinintegrations.Connection) []string {
-	return append([]string{gitHost}, lfsHosts...)
+	return slices.Concat([]string{gitHost, apiHost}, lfsHosts, resultHosts)
 }
 
 // lfsHosts are where GitHub's LFS API sends a clone, a fetch or a push
@@ -185,7 +187,10 @@ var workflowRefusal = regexp.MustCompile("(?i)without `?workflows`? permission")
 // there will not read as the app's, and a push GitHub refused for
 // changing a workflow file says what to do (workflowWords). It mints no
 // token.
-func (g *GitHub) Complete(_ context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage, result shelljob.Result) (*builtinintegrations.Result, error) {
+func (g *GitHub) Complete(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, args json.RawMessage, result shelljob.Result) (*builtinintegrations.Result, error) {
+	if !gitops.IsAction(name) {
+		return g.completeAction(ctx, caller, conn, name, args, result)
+	}
 	p, _ := gitPolicy(caller, conn, name)
 	res, err := gitops.Complete(name, args, p, conn.ID, result)
 	if err == nil && res != nil && res.IsError && len(res.Content) > 0 && name == gitops.Push &&
@@ -219,6 +224,21 @@ func workflowWords(acc access, args json.RawMessage) string {
 		return "The commits change a workflow file (.github/workflows): push again with workflows set to true."
 	}
 	return "GitHub refused the GitHub App's token the workflows permission; ask the owner to approve it for the app's installation on GitHub."
+}
+
+// completeAction is the second request of a REST action whose work ran
+// in the shell: the same checks as the first (checked), as things stand
+// now, then its complete.
+func (g *GitHub) completeAction(ctx context.Context, caller builtinintegrations.Caller, conn builtinintegrations.Connection, name string, raw json.RawMessage, result shelljob.Result) (*builtinintegrations.Result, error) {
+	a, cl, err := g.checked(caller, conn, name, raw)
+	if err != nil {
+		return nil, err
+	}
+	if a.complete == nil {
+		return nil, refuse("The action "+name+" does not run in your shell.", "no such shell job")
+	}
+	answer, err := a.complete(ctx, cl, result)
+	return answered(answer, err)
 }
 
 // noIdentity follows the answer of a writer's clone that landed without

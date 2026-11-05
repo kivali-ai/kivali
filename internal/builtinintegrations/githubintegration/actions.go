@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/kivali-ai/kivali/internal/shelljob"
 )
 
 // The actions, unprefixed.
@@ -47,6 +49,9 @@ type action struct {
 	write            bool
 	ownerOnly        bool
 	run              func(ctx context.Context, c *call) (any, error)
+	// complete, for an action run answers with a shellJob, puts the job's
+	// result in words.
+	complete func(ctx context.Context, c *call, r shelljob.Result) (any, error)
 }
 
 // ownerDecides ends every description an agent reads.
@@ -58,8 +63,9 @@ const needsWrite = " Only when the agent's access may create, comment, push and 
 
 // actions is every REST action: the manifest's tools are these in this
 // order, less the ownerOnly one, then clone, fetch and push (git.go).
-// The CI actions (ci.go) follow the others.
-var actions = slices.Concat(repoActions, ciActions)
+// The CI actions (ci.go) and the artifact actions (artifacts.go) follow
+// the others.
+var actions = slices.Concat(repoActions, ciActions, artifactActions)
 
 // repoActions are the REST actions on a repository's issues, pull
 // requests, branches and commits, and whoami.
@@ -261,6 +267,8 @@ type call struct {
 	conn   connection
 	access access
 	args   args
+	// connID is the connection's id, which a shell job echoes.
+	connID string
 	// current is the login of the app's bot user by the slug GitHub
 	// gives the app now, once isAppBot has asked (asked).
 	current string
@@ -378,6 +386,22 @@ type created string
 // GitHub: what it did, "closed <address>", which the owner's audit row
 // keeps as it is and the agent reads as a sentence.
 type done string
+
+// shellJob is the answer of an action whose work happens in the agent's
+// shell: the job, and the audit row of its start. Its complete puts the
+// job's result in words.
+type shellJob struct {
+	job   *shelljob.Job
+	audit string
+}
+
+// fileSaved is the answer of an action's complete that saved a file
+// into the agent's files: what the agent reads, and what the owner's
+// audit row keeps.
+type fileSaved struct {
+	text  string
+	audit string
+}
 
 // failure is an action that reached GitHub and did not do what it was
 // asked, in its own words for the agent: an error result.

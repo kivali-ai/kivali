@@ -8,10 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/kivali-ai/kivali/internal/egresscred"
 )
 
 // The CI actions read what GitHub ran on a repository's commits: its
@@ -648,7 +649,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 }
 
 // jobLog GETs a job's log at path with the token: GitHub answers with
-// a redirect to the log, signed for a minute, on a host of logHosts,
+// a redirect to the log, signed for a minute, on a host of resultHosts,
 // which is fetched with no credential of Kivali's. A redirect anywhere
 // else is refused.
 func (g *GitHub) jobLog(ctx context.Context, tok, path string) (io.ReadCloser, error) {
@@ -698,7 +699,7 @@ func (g *GitHub) jobLog(ctx context.Context, tok, path string) (io.ReadCloser, e
 }
 
 // logURL is the log's address GitHub's redirect named (loc, resolved
-// against base), when Kivali reaches it: https on a host of logHosts,
+// against base), when Kivali reaches it: https on a host of resultHosts,
 // with no user info. Against the tests' fake, plain http on loopback.
 func logURL(base *url.URL, loc string) (*url.URL, error) {
 	u, err := base.Parse(loc)
@@ -709,35 +710,9 @@ func logURL(base *url.URL, loc string) (*url.URL, error) {
 		if u.Scheme == "http" && loopback(u.Hostname()) {
 			return u, nil
 		}
-	} else if u.Scheme == "https" && hostMatches(strings.ToLower(u.Hostname()), logHosts) {
+	} else if u.Scheme == "https" && egresscred.HostMatches(strings.ToLower(u.Hostname()), resultHosts) {
 		return u, nil
 	}
 	host, _ := clip(u.Hostname(), 200)
 	return nil, failure("GitHub keeps the log on " + host + ", which is not a host Kivali reads logs from; tell the owner.")
-}
-
-// hostMatches reports whether host is one a pattern of patterns names,
-// as kivali.hosts reads them: the pattern's host or any name under it,
-// each of the pattern's labels a glob (* within one label) against the
-// host's label in its place, counted from the right.
-func hostMatches(host string, patterns []string) bool {
-	hl := strings.Split(host, ".")
-	for _, p := range patterns {
-		pl := strings.Split(p, ".")
-		if len(hl) < len(pl) {
-			continue
-		}
-		ok := true
-		for i := range pl {
-			m, err := path.Match(pl[len(pl)-1-i], hl[len(hl)-1-i])
-			if err != nil || !m {
-				ok = false
-				break
-			}
-		}
-		if ok {
-			return true
-		}
-	}
-	return false
 }

@@ -35,11 +35,51 @@ type recordingShell struct {
 	res  *agentshell.GitResponse
 	err  error
 	jobs []agentshell.GitRequest
+
+	saved     *agentshell.DownloadResponse
+	downloads []agentshell.DownloadRequest
 }
 
 func (s *recordingShell) Git(_ context.Context, req agentshell.GitRequest) (*agentshell.GitResponse, error) {
 	s.jobs = append(s.jobs, req)
 	return s.res, s.err
+}
+
+func (s *recordingShell) Download(_ context.Context, req agentshell.DownloadRequest) (*agentshell.DownloadResponse, error) {
+	s.downloads = append(s.downloads, req)
+	return s.saved, s.err
+}
+
+// Why this test exists: the job crosses from core's wire shape to the
+// daemon's field by field, so one left out would be silently dropped: a
+// lost Hosts refuses every redirect, a lost Proxy every request. The
+// daemon's answer must reach core the same way, and an error reaching
+// the shell must not carry the job's token.
+func TestDownloadJobCrossesToTheShellAndBack(t *testing.T) {
+	job := &agentpod.DownloadJob{
+		URL: "https://api.github.com/x", Accept: "a", Token: "ghs_jobtoken", Hosts: []string{"h"}, Folder: "/files/f", Name: "n", NameZip: true,
+		MaxBytes: 9, Proxy: agentpod.GitProxy{Username: "u", Password: "p"}, TimeoutSeconds: 7, ConnectionID: "c",
+	}
+	shell := &recordingShell{saved: &agentshell.DownloadResponse{Path: "/files/f/n.zip", Bytes: 3, Zip: true, Status: 410, Error: "e", TooLarge: true, TimedOut: true, DurationMs: 5, ConnectionID: "c"}}
+
+	got := runShellJob(context.Background(), shell, agentpod.IntegrationShellJob{Download: job})
+	want := agentshell.DownloadRequest{URL: job.URL, Accept: "a", Token: job.Token, Hosts: job.Hosts, Folder: job.Folder, Name: "n", NameZip: true, MaxBytes: 9,
+		Proxy: agentshell.GitProxy{Username: "u", Password: "p"}, TimeoutSeconds: 7, ConnectionID: "c"}
+	if len(shell.downloads) != 1 || !reflect.DeepEqual(shell.downloads[0], want) {
+		t.Errorf("sent %+v", shell.downloads)
+	}
+	if got.Download == nil || *got.Download != (agentpod.DownloadResult{Path: "/files/f/n.zip", Bytes: 3, Zip: true, Status: 410, Error: "e", TooLarge: true, TimedOut: true, DurationMs: 5, ConnectionID: "c"}) {
+		t.Errorf("result = %+v", got)
+	}
+
+	failing := &recordingShell{err: errors.New("the daemon said ghs_jobtoken")}
+	got = runShellJob(context.Background(), failing, agentpod.IntegrationShellJob{Download: job})
+	if got.Download == nil || strings.Contains(got.Download.Error, "ghs_jobtoken") || got.Download.ConnectionID != "c" {
+		t.Errorf("failed = %+v", got.Download)
+	}
+	if none := runShellJob(context.Background(), nil, agentpod.IntegrationShellJob{Download: job}); none.Skipped == "" {
+		t.Errorf("no shell = %+v", none)
+	}
 }
 
 // Why this test exists: an integration action's handler is a relay,
