@@ -98,7 +98,7 @@ func TestAccessHoldsCallsToTheRepositoryPatterns(t *testing.T) {
 }
 
 // writeTools are the REST actions that write to GitHub.
-var writeTools = []string{"create_issue", "comment", "close_issue", "create_pull_request", "close_pull_request", "delete_branch"}
+var writeTools = []string{"create_issue", "comment", "close_issue", "create_pull_request", "close_pull_request", "delete_branch", "merge_pull_request", "get_merge_result"}
 
 // Why this test exists: an agent whose access does not allow writing
 // must not get through by calling a write action by name, and its
@@ -112,7 +112,7 @@ func TestWriteActionsNeedWrite(t *testing.T) {
 	} {
 		for _, name := range writeTools {
 			r := g.callT(t, callerWith(access), name, map[string]any{"repository": "acme/widgets", "title": "t", "number": 1, "body": "b", "head": "h", "base": "main", "branch": "agent/x"})
-			if r.refusal == nil || r.text != "Your access to GitHub does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches; ask the owner." {
+			if r.refusal == nil || r.text != "Your access to GitHub does not include opening, commenting on or closing issues and pull requests, merging pull requests, pushing or deleting branches; ask the owner." {
 				t.Errorf("%v %s: %+v", access, name, r)
 			}
 		}

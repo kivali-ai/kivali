@@ -2841,7 +2841,11 @@ installation, which an app made before does not have: its
 `permissions` requirement reads unmet, naming `actions: write`, until
 the owner's Fix gives it on GitHub. Until then GitHub refuses the run
 actions' tokens, and everything else works, since every read of
-Actions asks for `actions: read`.
+Actions asks for `actions: read`. It adds the [merge
+actions](#merging) too, under the `write` switch, whose key is
+unchanged and whose title reads "May create, comment, push, merge and
+close": they need `contents: write`, which the `permissions`
+requirement already names, so an agent with `write` has them at once.
 Its connection's proxy credential also admits `api.github.com`,
 `resultHosts` and `releaseHosts`, for a shell's download; boot
 registers that from the connection's Secret, so nothing is owed.
@@ -3651,7 +3655,8 @@ pull request's reviews (`reviews.go`, [Reviews](#reviews)) and a
 repository's releases and save their assets (`releases.go`,
 [Releases](#releases)), close the ones the app opened and delete their branches through GitHub's
 REST API, rerun, cancel and start workflows (`runs.go`, [Run
-control](#run-control)), and clone, fetch and push through the
+control](#run-control)), merge pull requests (`merge.go`,
+[Merging](#merging)), and clone, fetch and push through the
 agent-shell daemon, as a private GitHub App its setup makes on the owner's account
 or an organization's. The package implements `Integration`,
 `SetupIntegration` (`setup.go`), `RequirementsOf`
@@ -3673,22 +3678,23 @@ or an organization's. The package implements `Integration`,
   GitHub keeps job logs and artifacts, [CI](#ci)), `kivali.verify:
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
   over: `repositories` (required) and `write`, "May create, comment,
-  push and close", then `workflows`, "May change workflows", off when
+  push, merge and close", then `workflows`, "May change workflows", off when
   absent ([Clone, fetch and push](#clone-fetch-and-push)), and
   `run_workflows`, "May run workflows", off when absent ([Run
   control](#run-control)).
   Its `tools` are the actions an agent may be given,
-  the REST ones, the CI, artifact, review, release and run ones, then
-  `clone`, `fetch` and `push`, the seven write ones
+  the REST ones, the CI, artifact, review, release, run and merge ones,
+  then `clone`, `fetch` and `push`, the nine write ones
   (`create_issue`, `comment`, `close_issue`, `create_pull_request`,
-  `close_pull_request`, `delete_branch`, `push`) with `"access":
-  "write"`, so the page lists them under "May create, comment, push and
-  close" and the rest under "Any access"; each write one's description
-  ends "Only when the agent's access may create, comment, push and
-  close." (`needsWrite`). The four run actions have `"access":
+  `close_pull_request`, `delete_branch`, `merge_pull_request`,
+  `get_merge_result`, `push`) with `"access": "write"`, so the page
+  lists them under "May create, comment, push, merge and close" and the
+  rest under "Any access"; each write one's description ends "Only when
+  the agent's access may create, comment, push, merge and close."
+  (`needsWrite`). The four run actions have `"access":
   "run_workflows"`, so the page lists them under "May run workflows",
   and each one's description ends "Only when the agent's access may
-  run workflows and may create, comment, push and close."
+  run workflows and may create, comment, push, merge and close."
   (`needsRunWorkflows`). `whoami`
   is not a tool: a built-in's `kivali.verify` need not name one
   ([The check](#the-check)). It passes `integration.ValidateBuiltin`.
@@ -3926,7 +3932,7 @@ owner to approve it on GitHub ([Run control](#run-control)).
 | `comment` | `GET /repos/{o}/{r}/issues/{n}` to learn whether it is a pull request, then `POST /repos/{o}/{r}/issues/{n}/comments` | reads with `issues: read`, `pull_requests: read`; writes with `pull_requests: write` for a pull request, `issues: write` for an issue |
 | `close_issue` | `GET /repos/{o}/{r}/issues/{n}`, held to [the same app](#the-same-app); then, with `comment`, `POST /repos/{o}/{r}/issues/{n}/comments`, and `PATCH /repos/{o}/{r}/issues/{n}` `{"state": "closed"}` | reads with `issues: read`, `pull_requests: read`; writes with `issues: write` |
 | `list_pull_requests` | `GET /repos/{o}/{r}/pulls` (state, base); `merged` asks for closed ones and keeps those with `merged_at` | `pull_requests: read` |
-| `get_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, and with `diff` the same path as `application/vnd.github.diff`; a 406 there (a diff past GitHub's limits) answers the pull request with a note instead | `pull_requests: read`, and `contents: read` with `diff` |
+| `get_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, whose answer names the head commit as `head_sha`, and with `diff` the same path as `application/vnd.github.diff`; a 406 there (a diff past GitHub's limits) answers the pull request with a note instead | `pull_requests: read`, and `contents: read` with `diff` |
 | `create_pull_request` | `POST /repos/{o}/{r}/pulls` from a head branch already on GitHub; moves no commits | `pull_requests: write`, and `contents: read`, with which GitHub resolves the head and base branches; without it GitHub refuses the pull request (422, "not all refs are readable") |
 | `close_pull_request` | `GET /repos/{o}/{r}/pulls/{n}`, held to [the same app](#the-same-app); then, with `comment`, `POST /repos/{o}/{r}/issues/{n}/comments`, and `PATCH /repos/{o}/{r}/pulls/{n}` `{"state": "closed"}` | reads with `pull_requests: read`; writes with `pull_requests: write` |
 | `list_branches` | `GET /repos/{o}/{r}/branches` | `contents: read` |
@@ -3952,6 +3958,8 @@ owner to approve it on GitHub ([Run control](#run-control)).
 | `rerun_job` | `POST /repos/{o}/{r}/actions/jobs/{id}/rerun` | `actions: write` |
 | `cancel_workflow_run` | `POST /repos/{o}/{r}/actions/runs/{id}/cancel` | `actions: write` |
 | `dispatch_workflow` | `POST /repos/{o}/{r}/actions/workflows/{workflow}/dispatches` with `ref`, `inputs` and `return_run_details: true`, without which `apiVersion` answers 204 and no run id | `actions: write` |
+| `merge_pull_request` | without `head_sha`, `GET /repos/{o}/{r}/pulls/{n}` for its head; then `PUT /repos/{o}/{r}/pulls/{n}/merge-async` under `2026-03-10`, with `sha` and never `bypass_rules` or `merge_action` ([Merging](#merging)) | reads with `pull_requests: read`; merges with `contents: write`, and `workflows: write` when the call says it changes workflow files and the access allows it |
+| `get_merge_result` | `GET /repos/{o}/{r}/pulls/{n}/merge-async/{uuid}` under `2026-03-10` ([Merging](#merging)) | `contents: write`, which GitHub's documents name for it, so it needs the `write` switch |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
 | `push` | a shell job | `contents: write`, and `workflows: write` when the push says it changes workflow files and the access allows it, in the job's own token |
 
@@ -3964,10 +3972,11 @@ The REST actions' rules are GitHub 1.0.0's:
   match (`gitrepo.Match`) is refused before any token is minted, "Your
   access to GitHub does not include <owner/name>; ask the owner."
   `create_issue`, `comment`, `close_issue`, `create_pull_request`,
-  `close_pull_request` and `delete_branch`, and `push`, need `write:
-  true`: `Tools` leaves them out without it and `Call` refuses them by
-  name, "Your access to GitHub does not include opening, commenting on
-  or closing issues and pull requests, pushing or deleting branches;
+  `close_pull_request`, `delete_branch`, `merge_pull_request` and
+  `get_merge_result`, and `push`, need `write: true`: `Tools` leaves
+  them out without it and `Call` refuses them by name, "Your access to
+  GitHub does not include opening, commenting on or closing issues and
+  pull requests, merging pull requests, pushing or deleting branches;
   ask the owner." The run actions need `run_workflows: true` as well
   ([Run control](#run-control)). `whoami` is Test
   connection's (`Verify`, "Connected as <slug>[bot], the app <name>,
@@ -4015,7 +4024,9 @@ The REST actions' rules are GitHub 1.0.0's:
 
 One `*http.Client` serves the built-in: 30 seconds a request, at most
 16 MiB of an answer read, `Accept: application/vnd.github+json` (or the
-diff type), `X-GitHub-Api-Version: 2022-11-28`, the credential as a
+diff type), `X-GitHub-Api-Version: 2022-11-28` (`apiVersion`; a request
+may name another, `request.version`, as [the merge
+actions](#merging) do), the credential as a
 bearer (none for the manifest conversion; the client id and secret as
 basic authentication for a grant's revocation), and redirects followed only for a GET and only on the API's
 own origin (a renamed repository's), at most five: Go would follow a
@@ -4229,6 +4240,85 @@ most of these. A rate limit and any other failure read as
 holds `actions: read` (`fakeGitHub.installed`): every read of Actions
 gets its token from it, and every run action gets the 422 words.
 
+#### Merging
+
+`merge.go`. `merge_pull_request` and `get_merge_result` are REST
+actions in core, under `write`: no new switch and no new permission,
+since `contents: write` is what GitHub asks of them and the app holds
+it. `merge_pull_request` merges any pull request in a repository the
+access names, whoever opened it, unlike a close ([The same
+app](#the-same-app)), so branch protection is what keeps a merge to
+reviewed work, and the description tells the agent to merge only what
+its owner or its task calls for and to read `github_list_checks` and
+`github_list_pull_request_reviews` first, a pull request's text being
+outside content.
+
+Both ask GitHub's asynchronous endpoint once and answer at once;
+nothing waits or polls. Both name `X-GitHub-Api-Version: 2026-03-10`
+(`mergeAPIVersion`, sent through `request.version`): GitHub's documents
+describe these endpoints under that version and do not say they work
+under `apiVersion`, which every other request keeps, the read of the
+pull request's head among them.
+
+The body is `sha`, always, then `merge_method`, `commit_title` and
+`commit_message` when given (blank is none), and nothing else.
+**`bypass_rules` is left out**, and so is `merge_action`, and no
+argument reaches either: GitHub's defaults leave its branch protection
+and rules in force, and let a repository with a merge queue queue the
+pull request while one without merges it directly. `sha` is `head_sha`,
+checked as `commitID`, or else the head GitHub names for the pull
+request (`pullHead`, with a token of `pull_requests: read`), so what
+merges is what the agent looked at. A head that cannot be read stops
+the call before a token that writes is minted, "GitHub names no head
+commit for pull request #<n> of <owner/name>, so it was not asked to
+merge." `merge_method` is one of `merge`, `squash` and `rebase`;
+`commit_title` one line of at most 256 characters; `commit_message` at
+most 60,000.
+
+`workflows` follows a push's rule ([Clone, fetch and
+push](#clone-fetch-and-push)): `Tools` lists it, and the description's
+sentence on it, only with `access.pushesWorkflows`; `true` without that
+is refused before GitHub is asked anything, in a push's words
+(`gitops.RefuseWorkflows`); and only `true` with it asks for
+`workflows: write` (`writePermissions`, shared with a push's job). The
+installation lacking it gets a push's 422 words
+(`workflowTokenWords`). A refusal matching `workflowRefusal`, in a
+`failed` result or a request's refusal, adds `workflowWords`, with
+"merge again". A merge's result does not say what the merge said of
+`workflows`, so `get_merge_result`'s words for an access with the
+switch cover both: merge again with it set, or, if it was set, ask the
+owner to approve the permission.
+
+GitHub's `status` chooses the words, from either action and whichever
+of 200 and 202 carries it (`mergeOutcome`). Each but `failed` is a
+`done`, so its audit row is the agent's sentence uncapitalized and
+without the full stop; `failed` is a `failure`, an error result whose
+row is its words. A `uuid` that is not UUID-shaped and a `sha` that is
+not a commit id are treated as absent, and a `details` that does not
+read as all absent.
+
+| What GitHub answered | The agent reads |
+| --- | --- |
+| `pending` | Pull request #<n> of <owner/name> is submitted to merge as request <id>, and is not merged yet; github_get_merge_result with this id follows it. |
+| `merged` | Pull request #<n> of <owner/name> is merged, as commit <sha>. |
+| `enqueued` | Pull request #<n> of <owner/name> is in the merge queue, which does not mean it is merged; github_get_pull_request shows whether it merged. |
+| `failed` | GitHub did not merge pull request #<n> of <owner/name>: <GitHub's message, on one line, at most 1,000 characters, scrubbed>. |
+| Any other status, or an answer that does not read | GitHub's answer does not say how the merge of pull request #<n> of <owner/name> stands; github_get_pull_request shows whether it merged. |
+| 409, reading `details.uuid` or `uuid` from the answer (`apiError.Body`) | A merge request for pull request #<n> of <owner/name> is already pending as request <id>, and it is not merged yet; this call submitted nothing, and github_get_merge_result with this id follows it. It is no failure, so it is a `done`. |
+| 400, 403, 404 or 422 from the merge, or a 409 naming no request id (`mergeRefused`) | GitHub did not merge pull request #<n> of <owner/name> (HTTP <status>): <its words>. GitHub merges a pull request only when it is open, its head is the commit named, and the repository's branch protection and rules allow it. For anything else, ask the owner. |
+| No answer to the merge | GitHub did not answer, so a merge of pull request #<n> of <owner/name> may have been submitted; github_get_pull_request shows whether it merged. |
+| 404 from `get_merge_result` | GitHub has no merge request <id> for pull request #<n> of <owner/name> (HTTP 404): the id is unknown, or past the 24 hours GitHub keeps a result; github_get_pull_request shows whether it merged. |
+
+A rate limit and any other failure read as [The actions](#the-actions)
+say. `request_id` must be UUID-shaped (`mergeRequestID`), so it cannot
+change the path, and is refused before a token is minted. It reads with
+`contents: write`, which is why `get_merge_result` needs the `write`
+switch although it changes nothing.
+
+`merge_test.go` holds each of these, among them the exact body with
+and without each field, `bypass_rules` and `merge_action` given as
+arguments, and the header on each request.
+
 #### Clone, fetch and push
 
 `git.go`. `clone`, `fetch` and `push` are gitops's ([The shared clone,
@@ -4242,8 +4332,8 @@ so agents call `github_clone(url, path)`, `github_fetch(path, url,
 refs?)` and `github_push(path, refs, url, workflows?)`; each tool's
 description ends, as the REST ones do, with the owner deciding which
 repositories the agent may use and whether it may open, comment on and
-close issues and pull requests, push and delete branches. `Tools`
-lists `workflows` in push's schema, and the description's sentence
+close issues and pull requests, merge pull requests, push and delete
+branches. `Tools` lists `workflows` in push's schema, and the description's sentence
 "Set workflows to true when the commits you push add, change or delete
 a file under .github/workflows/; ...", only to an agent whose access
 has both `write` and `workflows` (`access.pushesWorkflows`).
@@ -4256,7 +4346,7 @@ patterns either way. Its `Refused`:
 
 | Cause | The agent reads | The audit's reason |
 | --- | --- | --- |
-| A push without `write` | Your access to GitHub does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches; ask the owner. | the access does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches |
+| A push without `write` | Your access to GitHub does not include opening, commenting on or closing issues and pull requests, merging pull requests, pushing or deleting branches; ask the owner. | the access does not include opening, commenting on or closing issues and pull requests, merging pull requests, pushing or deleting branches |
 | A connection setup has not finished | GitHub's connection is not set up; ask the owner to set it up again. | what is missing, as for the REST actions |
 
 `Check` then refuses, in gitops's words: `force: true` or a `+`
