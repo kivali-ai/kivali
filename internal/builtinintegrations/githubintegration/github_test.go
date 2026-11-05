@@ -31,7 +31,7 @@ func TestManifest(t *testing.T) {
 	if f := integration.ValidateBuiltin(m); len(f) != 0 {
 		t.Fatalf("findings: %v", f.Texts())
 	}
-	if m.Name != "github" || m.Version != "2.2.0" || m.DisplayName != "GitHub" || len(m.UserConfig) != 0 || m.Kivali.SetupNotes != "" {
+	if m.Name != "github" || m.Version != "2.3.0" || m.DisplayName != "GitHub" || len(m.UserConfig) != 0 || m.Kivali.SetupNotes != "" {
 		t.Errorf("manifest = %+v", m)
 	}
 	c := m.Kivali.Connection
@@ -86,7 +86,7 @@ func TestManifest(t *testing.T) {
 	}
 	want := []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 		"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
-		"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log",
+		"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log", "list_artifacts", "download_artifact",
 		"clone", "fetch", "push"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v", names)
@@ -149,10 +149,10 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 		want  []string
 	}{
 		{false, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare",
-			"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log", "clone", "fetch"}},
+			"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log", "list_artifacts", "download_artifact", "clone", "fetch"}},
 		{true, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 			"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
-			"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log", "clone", "fetch", "push"}},
+			"list_checks", "get_check_run", "list_workflow_runs", "get_workflow_run", "get_job_log", "list_artifacts", "download_artifact", "clone", "fetch", "push"}},
 	} {
 		tools, err := g.Tools(context.Background(), agent(c.write, "acme/*"))
 		if err != nil {

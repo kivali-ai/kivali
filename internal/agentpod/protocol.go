@@ -825,6 +825,10 @@ type (
 	GitLFS = shelljob.GitLFS
 	// GitResult is a GitJob's outcome.
 	GitResult = shelljob.GitResult
+	// DownloadJob is one file fetched through a connection.
+	DownloadJob = shelljob.DownloadJob
+	// DownloadResult is a DownloadJob's outcome.
+	DownloadResult = shelljob.DownloadResult
 	// GitRefUpdate is one ref a git operation moved.
 	GitRefUpdate = shelljob.GitRefUpdate
 )

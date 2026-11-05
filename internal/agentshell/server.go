@@ -152,6 +152,7 @@ func NewHandler(cfg ServerConfig) http.Handler {
 	mux.HandleFunc("POST /v1/files", handleFiles(cfg))
 	mux.HandleFunc("GET /v1/packages", handlePackages(cfg))
 	mux.HandleFunc("POST /v1/git", handleGit(cfg))
+	mux.HandleFunc("POST /v1/download", handleDownload(cfg))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))

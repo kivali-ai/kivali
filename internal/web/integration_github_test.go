@@ -199,6 +199,9 @@ func (f *fakeGitHubAPI) serve(w http.ResponseWriter, r *http.Request) {
 		answer(f.deleteStatus, nil)
 	case path == "GET /installation/repositories":
 		answer(http.StatusOK, map[string]any{"total_count": f.repos, "repositories": []any{}})
+	case path == "GET /repos/acme/widgets/actions/artifacts/55":
+		answer(http.StatusOK, map[string]any{"id": 55, "name": "coverage", "size_in_bytes": 21,
+			"workflow_run": map[string]any{"id": 900, "repository_id": 5, "head_repository_id": 5, "head_sha": "abc"}})
 	case path == "GET /repos/acme/widgets/issues":
 		// An issue the app itself opened: GitHub names its author by the
 		// app's slug.
@@ -636,7 +639,7 @@ func githubV1(t *testing.T, srv *Server, mem *secrets.Memory) store.IntegrationC
 // Why this test exists: a team upgraded from GitHub 1.0.0 holds a
 // connection to the owner's own app that 2.x cannot use. It must not
 // read installed (agents' calls would fail, with Needs you saying
-// nothing), nor be deleted at boot: the version in use becomes 2.2.0
+// nothing), nor be deleted at boot: the version in use becomes 2.3.0
 // with 1.0.0 superseded, the record and Secret stay as they are, and
 // GitHub reads available with one row saying to set it up again. The
 // install then takes the record over at its first Keep: every 1.0.0
@@ -648,7 +651,7 @@ func TestGitHubInstallsOverAOneZeroConnection(t *testing.T) {
 	srv.BuiltinIntegrations.Lookup("github").(*githubintegration.GitHub).TokenURL = f.srv.URL + "/login/oauth/access_token"
 	old := githubV1(t, srv, mem)
 	vs, _ := srv.Store.IntegrationVersions("github")
-	if len(vs) != 2 || vs[0].Version != "2.2.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
+	if len(vs) != 2 || vs[0].Version != "2.3.0" || vs[0].State != store.IntegrationVersionApproved || vs[1].State != store.IntegrationVersionSuperseded {
 		t.Fatalf("versions = %+v", vs)
 	}
 	page := githubPage(t, srv)
@@ -817,8 +820,8 @@ func TestGitHubDisconnectsAOneZeroConnection(t *testing.T) {
 // through only with the connection's own scoped proxy credential. A
 // connection made by setup has none until its first job: core must
 // mint it then, keep it in the connection's Secret beside the app's
-// keeps (never among them), register it for github.com alone and put
-// it in the job beside the token minted for the call, narrowed to the
+// keeps (never among them), register it for what GitHub's jobs reach
+// and no more, and put it in the job beside the token minted for the call, narrowed to the
 // repository. Without it the clone could not leave the pod; registered
 // for more hosts, the job could carry the token elsewhere. The audit
 // rows must name the repository and never the token, which core's
@@ -857,11 +860,13 @@ func TestGitHubShellJobGetsTheConnectionsProxyCredential(t *testing.T) {
 	rec, data := githubSecret(t, srv, mem)
 	secret := data[builtinintegrations.ProxySecretKey]
 	proxy, registered := srv.Store.EgressScopedCredentials()[builtinintegrations.ProxyUser("github", rec.ID)]
-	// The credential admits github.com and the hosts GitHub keeps LFS
-	// files on, and the daemon is told those same LFS hosts.
+	// The credential admits github.com, the hosts GitHub keeps LFS files
+	// on, and the API and the hosts a shell's download reaches; the daemon
+	// is told those same LFS hosts.
 	lfsHosts := []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
 	admitted := slices.Sorted(slices.Values(proxy.Hosts))
-	if secret == "" || !registered || proxy.Hash != egresscred.Hash(secret) || !slices.Equal(admitted, slices.Sorted(slices.Values(append([]string{"github.com"}, lfsHosts...)))) ||
+	reached := slices.Concat([]string{"github.com", "api.github.com", "productionresultssa*.blob.core.windows.net", "actions.githubusercontent.com"}, lfsHosts)
+	if secret == "" || !registered || proxy.Hash != egresscred.Hash(secret) || !slices.Equal(admitted, slices.Sorted(slices.Values(reached))) ||
 		slices.Contains(rec.SecretKeys, builtinintegrations.ProxySecretKey) || data["private_key"] == "" {
 		t.Errorf("proxy credential = %+v registered %v, record %+v", proxy, registered, rec)
 	}
@@ -905,5 +910,67 @@ func TestGitHubShellJobGetsTheConnectionsProxyCredential(t *testing.T) {
 	}
 	if _, ok := srv.Store.EgressScopedCredentials()[builtinintegrations.ProxyUser("github", rec.ID)]; ok {
 		t.Error("the proxy credential outlived the connection")
+	}
+}
+
+// Why this test exists: an artifact's download crosses core.sock twice
+// with the fetch in the agent's shell between, on the real client and
+// MCP tools, and core must never hold the file. The job must carry a
+// token minted for it and the connection's proxy credential, or it
+// cannot leave the pod; only the second answer may reach the model; and
+// the call must leave two audit rows, one when the job is handed out and
+// one naming what was saved, neither holding the token, which core's
+// scrubber does not know.
+func TestGitHubArtifactDownloadRunsInTheShell(t *testing.T) {
+	srv, f, mem, _ := githubServer(t)
+	githubInstall(t, srv, f)
+	intTeam(t, srv, "dana")
+	putIntegrationAccess(t, srv, "github", "dana", `{"repositories":["acme/*"]}`)
+	dana := agentpod.NewClient(serveCoreUDS(t, srv), "dana")
+	ctx := context.Background()
+	list, err := dana.IntegrationTools(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = "/files/integrations/github/untrusted-downloads/artifact-55/coverage.zip"
+	shell := &fakeGitShell{saved: &agentshell.DownloadResponse{Path: at, Bytes: 21, Zip: true, DurationMs: 1500}}
+	var download *mcp.Tool
+	tools := mcp.IntegrationTools(dana, shell, list.Tools, nil)
+	for i := range tools {
+		if tools[i].Name == "github_download_artifact" {
+			download = &tools[i]
+		}
+	}
+	if download == nil {
+		t.Fatalf("dana's actions = %+v", list)
+	}
+	res, err := download.Handler(ctx, json.RawMessage(`{"repository":"acme/widgets","artifact_id":55}`))
+	if err != nil || res.IsError || !strings.HasPrefix(res.Content[0], "Saved artifact 55 of acme/widgets, 21 bytes, to "+at+".") {
+		t.Fatalf("download = %+v, %v", res, err)
+	}
+	if len(shell.downloads) != 1 {
+		t.Fatalf("downloads = %d", len(shell.downloads))
+	}
+	rec, data := githubSecret(t, srv, mem)
+	j := shell.downloads[0]
+	if !strings.HasSuffix(j.URL, "/repos/acme/widgets/actions/artifacts/55/zip") || j.Token == "" || j.Name != "coverage" || !j.NameZip ||
+		j.Proxy != (agentshell.GitProxy{Username: builtinintegrations.ProxyUser("github", rec.ID), Password: data[builtinintegrations.ProxySecretKey]}) || j.Proxy.Password == "" {
+		t.Errorf("job = %+v", j)
+	}
+	rows, err := srv.Store.ReadIntegrationAuditTail("github", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reasons []string
+	for _, r := range rows {
+		if strings.HasSuffix(r.Action, "download_artifact") {
+			reasons = append(reasons, r.Reason)
+		}
+	}
+	if len(reasons) != 2 || !slices.Contains(reasons, "started: saving artifact 55 of acme/widgets") || !slices.Contains(reasons, "saved artifact 55 of acme/widgets (21 bytes)") {
+		t.Errorf("audit = %q", reasons)
+	}
+	if strings.Contains(strings.Join(reasons, " "), j.Token) {
+		t.Error("the audit holds the job's token")
 	}
 }

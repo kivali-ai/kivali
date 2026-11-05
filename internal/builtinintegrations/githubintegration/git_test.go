@@ -62,12 +62,12 @@ func TestCloneMintsATokenForTheRepositoryAlone(t *testing.T) {
 	}
 	// The job moves LFS files through GitHub's own LFS API, to the hosts
 	// GitHub keeps them on and no others; the proxy credential admits
-	// those and github.com alone.
+	// those, github.com, and what a shell's download reaches.
 	storage := []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
 	if job.LFS == nil || !slices.Equal(job.LFS.Hosts, storage) {
 		t.Errorf("lfs = %+v", job.LFS)
 	}
-	if hosts := g.Hosts(testConn()); !slices.Equal(hosts, append([]string{"github.com"}, storage...)) {
+	if hosts := g.Hosts(testConn()); !slices.Equal(hosts, slices.Concat([]string{"github.com", "api.github.com"}, storage, resultHosts)) {
 		t.Errorf("hosts = %v", hosts)
 	}
 
