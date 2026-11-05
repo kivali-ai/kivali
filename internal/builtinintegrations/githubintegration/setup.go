@@ -47,8 +47,8 @@ const appNameMax = 34
 // token asks for only what its call needs: every read of Actions asks
 // for actions read, which works on an installation that has not
 // approved write; only a run action's asks for actions write; and a
-// push asks for workflows only when the agent's access allows it and
-// the push says so.
+// push or a merge asks for workflows only when the agent's access
+// allows it and the call says so.
 func needed() permissions {
 	return perms("contents", "write", "issues", "write", "pull_requests", "write",
 		workflowsPermission, "write", "checks", "read", "actions", "write")

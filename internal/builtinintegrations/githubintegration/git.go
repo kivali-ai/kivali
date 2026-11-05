@@ -129,8 +129,7 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 		case errors.As(err, &te) && call.Workflows() && te.api.Status == http.StatusUnprocessableEntity:
 			// GitHub mints no token at all for a permission the
 			// installation lacks.
-			return failed("GitHub refused the GitHub App a token that may change workflow files in " + repo.Path + " (HTTP 422): " + sentence(te.api.Message) +
-				". The app's installation may lack the workflows permission; ask the owner to approve it on GitHub."), nil
+			return failed(workflowTokenWords(repo.Path, te)), nil
 		case errors.As(err, &te):
 			return failed(te.words()), nil
 		}
@@ -155,29 +154,43 @@ func (g *GitHub) callGit(ctx context.Context, caller builtinintegrations.Caller,
 
 // jobPermissions is what the job of the action name may do besides
 // metadata read: read the repository's contents for a clone or a
-// fetch; for a push, write them, and write its workflow files as well
-// when workflows (the push said its commits change one, and the access
-// allowed it: gitops.Call.Workflows). A push without it cannot change a
-// workflow file: GitHub refuses it whole.
+// fetch; for a push, what writePermissions gives, workflows being
+// whether the push said its commits change a workflow file and the
+// access allowed it (gitops.Call.Workflows).
 func jobPermissions(name string, workflows bool) permissions {
-	switch {
-	case name == gitops.Push && workflows:
-		return perms("contents", "write", workflowsPermission, "write")
-	case name == gitops.Push:
-		return perms("contents", "write")
+	if name == gitops.Push {
+		return writePermissions(workflows)
 	}
 	return perms("contents", "read")
 }
 
+// writePermissions is what a push or a merge may do besides metadata
+// read: write the repository's contents, and its workflow files as well
+// when workflows. Without that neither can change a workflow file:
+// GitHub refuses a push or a merge that does, whole.
+func writePermissions(workflows bool) permissions {
+	if workflows {
+		return perms("contents", "write", workflowsPermission, "write")
+	}
+	return perms("contents", "write")
+}
+
 // workflowsPermission is GitHub's permission to change a repository's
-// workflow files, which a push needs for a commit that touches one.
-// GitHub offers it as write alone.
+// workflow files, which a push or a merge needs for a commit that
+// touches one. GitHub offers it as write alone.
 const workflowsPermission = "workflows"
 
-// workflowRefusal matches GitHub's refusal of a push that changes a
-// workflow file with a token that may not: "refusing to allow a GitHub
-// App to create or update workflow `.github/workflows/x.yml` without
-// `workflows` permission".
+// workflowTokenWords is GitHub's refusal of a token that may change
+// workflow files in repo.
+func workflowTokenWords(repo string, te *tokenError) string {
+	return "GitHub refused the GitHub App a token that may change workflow files in " + repo + " (HTTP 422): " + sentence(te.api.Message) +
+		". The app's installation may lack the workflows permission; ask the owner to approve it on GitHub."
+}
+
+// workflowRefusal matches GitHub's refusal of a push or a merge that
+// changes a workflow file with a token that may not: "refusing to allow
+// a GitHub App to create or update workflow `.github/workflows/x.yml`
+// without `workflows` permission".
 var workflowRefusal = regexp.MustCompile("(?i)without `?workflows`? permission")
 
 // Complete puts the shell's result in words for the agent and the
@@ -196,7 +209,11 @@ func (g *GitHub) Complete(ctx context.Context, caller builtinintegrations.Caller
 	res, err := gitops.Complete(name, args, p, conn.ID, result)
 	if err == nil && res != nil && res.IsError && len(res.Content) > 0 && name == gitops.Push &&
 		result.Git != nil && workflowRefusal.MatchString(result.Git.Error) {
-		res.Content[0] = strings.TrimRight(res.Content[0], " ") + " " + workflowWords(readAccess(caller.Access), args)
+		var said struct {
+			Workflows bool `json:"workflows"`
+		}
+		_ = json.Unmarshal(args, &said)
+		res.Content[0] = strings.TrimRight(res.Content[0], " ") + " " + workflowWords(readAccess(caller.Access), gitops.Push, said.Workflows)
 	}
 	if err != nil || res == nil || res.IsError || len(res.Content) == 0 {
 		return res, err
@@ -207,22 +224,18 @@ func (g *GitHub) Complete(ctx context.Context, caller builtinintegrations.Caller
 	return res, nil
 }
 
-// workflowWords follow the answer of a push GitHub refused for changing
-// a workflow file: push again saying so, when the access allows it and
-// the push did not say so; ask the owner for the switch, when the
-// access does not allow it; or, when the push said so and still was
-// refused, ask the owner to approve the app's workflows permission on
-// GitHub.
-func workflowWords(acc access, args json.RawMessage) string {
-	var a struct {
-		Workflows bool `json:"workflows"`
-	}
-	_ = json.Unmarshal(args, &a)
+// workflowWords follow the answer of a push or a merge (verb, what the
+// agent does again) GitHub refused for changing a workflow file: do it
+// again saying so, when the access allows it and the call did not say
+// so (said); ask the owner for the switch, when the access does not
+// allow it; or, when the call said so and still was refused, ask the
+// owner to approve the app's workflows permission on GitHub.
+func workflowWords(acc access, verb string, said bool) string {
 	switch {
 	case !acc.pushesWorkflows():
 		return "The commits change a workflow file (.github/workflows), and your access to GitHub does not include changing workflows; ask the owner if your work needs it."
-	case !a.Workflows:
-		return "The commits change a workflow file (.github/workflows): push again with workflows set to true."
+	case !said:
+		return "The commits change a workflow file (.github/workflows): " + verb + " again with workflows set to true."
 	}
 	return "GitHub refused the GitHub App's token the workflows permission; ask the owner to approve it for the app's installation on GitHub."
 }
