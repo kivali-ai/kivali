@@ -39,14 +39,18 @@ const (
 // model reads, ownerDescription the manifest's, for the owner. write
 // marks an action that writes to GitHub, which an agent has only when
 // its access allows writing (its manifest tool's access is the write
-// switch, and its ownerDescription ends with needsWrite); ownerOnly
-// keeps an action for Test connection, out of the manifest's tools.
+// switch, and its ownerDescription ends with needsWrite); runsWorkflow
+// marks a write action that also needs the run_workflows switch (its
+// manifest tool's access is that switch, and its ownerDescription ends
+// with needsRunWorkflows); ownerOnly keeps an action for Test
+// connection, out of the manifest's tools.
 type action struct {
 	name             string
 	description      string
 	ownerDescription string
 	schema           string
 	write            bool
+	runsWorkflow     bool
 	ownerOnly        bool
 	run              func(ctx context.Context, c *call) (any, error)
 	// complete, for an action run answers with a shellJob, puts the job's
@@ -64,9 +68,9 @@ const needsWrite = " Only when the agent's access may create, comment, push and 
 // actions is every REST action: the manifest's tools are these in this
 // order, less the ownerOnly one, then clone, fetch and push (git.go).
 // The CI actions (ci.go), the artifact actions (artifacts.go), the
-// review actions (reviews.go) and the release actions (releases.go)
-// follow the others.
-var actions = slices.Concat(repoActions, ciActions, artifactActions, reviewActions, releaseActions)
+// review actions (reviews.go), the release actions (releases.go) and
+// the run actions (runs.go) follow the others.
+var actions = slices.Concat(repoActions, ciActions, artifactActions, reviewActions, releaseActions, runActions)
 
 // repoActions are the REST actions on a repository's issues, pull
 // requests, branches and commits, and whoami.
@@ -383,9 +387,10 @@ func decode(b []byte, out any) error {
 // its address, which the owner's audit row keeps too.
 type created string
 
-// done is the answer of an action that closed or deleted something on
-// GitHub: what it did, "closed <address>", which the owner's audit row
-// keeps as it is and the agent reads as a sentence.
+// done is the answer of an action that closed, deleted, reran, cancelled
+// or started something on GitHub: what it did, "closed <address>", which
+// the owner's audit row keeps as it is and the agent reads as a
+// sentence.
 type done string
 
 // shellJob is the answer of an action whose work happens in the agent's

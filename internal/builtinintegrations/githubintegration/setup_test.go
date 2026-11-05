@@ -148,7 +148,7 @@ func TestSetupInstallsThroughTheManifestFlow(t *testing.T) {
 	want := map[string]any{
 		"name": "Kivali Acme Corp", "url": teamBase, "redirect_url": teamBase + "/connect/callback", "setup_url": teamBase + "/connect/callback",
 		"setup_on_update": true, "public": false, "hook_attributes": map[string]any{"url": "https://example.com/no-webhook", "active": false},
-		"default_permissions": map[string]any{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "read"},
+		"default_permissions": map[string]any{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "write"},
 		"default_events":      []any{},
 	}
 	if gotJSON, wantJSON := mustJSON(t, m), mustJSON(t, want); gotJSON != wantJSON {
@@ -374,7 +374,7 @@ func installation(selection, perms string, suspended bool) string {
 }
 
 const (
-	allPerms  = `{"metadata":"read","contents":"write","issues":"write","pull_requests":"write","workflows":"write","checks":"read","actions":"read"}`
+	allPerms  = `{"metadata":"read","contents":"write","issues":"write","pull_requests":"write","workflows":"write","checks":"read","actions":"write"}`
 	readPerms = `{"metadata":"read","contents":"read","issues":"read","pull_requests":"read"}`
 	appAnswer = `{"id":1234,"slug":"kivali-acme","name":"Kivali Acme","owner":{"login":"acme","type":"Organization"},"permissions":` + allPerms + `}`
 )
@@ -451,7 +451,7 @@ func TestRequirements(t *testing.T) {
 	if got := rowsOf(rows); got != "key met |installed unmet settings|permissions unmet permissions" {
 		t.Errorf("suspended, lacking = %s", got)
 	}
-	if rows[2].Words != "The installation lacks permissions this version needs: actions: read, checks: read, contents: write, issues: write, pull requests: write, workflows: write. Approve them on GitHub." {
+	if rows[2].Words != "The installation lacks permissions this version needs: actions: write, checks: read, contents: write, issues: write, pull requests: write, workflows: write. Approve them on GitHub." {
 		t.Errorf("lacking = %q", rows[2].Words)
 	}
 	f.route("GET /app/installations/42", 404, `{"message":"Not Found"}`)
@@ -479,11 +479,11 @@ func TestRequirements(t *testing.T) {
 // since the app does not ask for it; else the owner learns of it only
 // from an agent's failed push.
 func TestAnAppMadeBeforePushingLacksContentsWrite(t *testing.T) {
-	before := map[string]string{"metadata": "read", "contents": "read", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "read"}
+	before := map[string]string{"metadata": "read", "contents": "read", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "write"}
 	if got := lacking(before); len(got) != 1 || got[0] != "contents: write" {
 		t.Errorf("lacking = %v", got)
 	}
-	if got := lacking(map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "read"}); len(got) != 0 {
+	if got := lacking(map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "write"}); len(got) != 0 {
 		t.Errorf("lacking with contents write = %v", got)
 	}
 	g, f := newTest(t)
@@ -506,7 +506,7 @@ func TestAnAppMadeBeforePushingLacksContentsWrite(t *testing.T) {
 
 // Why this test exists: an app made before Kivali read checks and
 // Actions runs and pushed workflow files lacks checks read, actions
-// read and workflows write. Its Permissions current row must read
+// write and workflows write. Its Permissions current row must read
 // unmet, naming those three alone, with the permissions Fix sending
 // the owner to the app's own settings first, since the app does not
 // ask for them; else the owner learns of it only from an agent's
@@ -514,7 +514,7 @@ func TestAnAppMadeBeforePushingLacksContentsWrite(t *testing.T) {
 // row is the only sign.
 func TestAnAppMadeBeforeCIAndWorkflowsLacksThem(t *testing.T) {
 	before := map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write"}
-	if got := strings.Join(lacking(before), ", "); got != "actions: read, checks: read, workflows: write" {
+	if got := strings.Join(lacking(before), ", "); got != "actions: write, checks: read, workflows: write" {
 		t.Errorf("lacking = %v", got)
 	}
 	g, f := newTest(t)
@@ -525,12 +525,40 @@ func TestAnAppMadeBeforeCIAndWorkflowsLacksThem(t *testing.T) {
 	if got := rowsOf(rows); got != "key met |installed met |repositories met |permissions unmet permissions" {
 		t.Fatalf("rows = %s", got)
 	}
-	if rows[3].Words != "The installation lacks permissions this version needs: actions: read, checks: read, workflows: write. Approve them on GitHub." {
+	if rows[3].Words != "The installation lacks permissions this version needs: actions: write, checks: read, workflows: write. Approve them on GitHub." {
 		t.Errorf("words = %q", rows[3].Words)
 	}
 	step := g.setupT(t, testConn(), FlowPermissions, builtinintegrations.Answer{Leg: 1})
 	if step.Go == nil || step.Go.URL != "https://github.com/organizations/acme/settings/apps/kivali-acme/permissions" ||
-		step.Go.Words != "On GitHub, give the app these permissions and save: actions: read, checks: read, workflows: write. Then approve them for its installation, where GitHub asks." {
+		step.Go.Words != "On GitHub, give the app these permissions and save: actions: write, checks: read, workflows: write. Then approve them for its installation, where GitHub asks." {
+		t.Errorf("fix = %+v", step.Go)
+	}
+}
+
+// Why this test exists: an app made before run control holds actions
+// read. Its Permissions current row must read unmet, naming actions
+// write alone, with the Fix at the app's own settings, since read does
+// not cover write; else the owner learns of it only from an agent whose
+// run action GitHub refused a token.
+func TestAnAppMadeBeforeRunControlLacksActionsWrite(t *testing.T) {
+	before := map[string]string{"metadata": "read", "contents": "write", "issues": "write", "pull_requests": "write", "workflows": "write", "checks": "read", "actions": "read"}
+	if got := strings.Join(lacking(before), ", "); got != "actions: write" {
+		t.Errorf("lacking = %v", got)
+	}
+	g, f := newTest(t)
+	beforeJSON := mustJSON(t, before)
+	f.route("GET /app", 200, `{"slug":"kivali-acme","name":"Kivali Acme","owner":{"login":"acme","type":"Organization"},"permissions":`+beforeJSON+`}`)
+	f.route("GET /app/installations/42", 200, installation("all", beforeJSON, false))
+	rows := g.requirementsT(t, testConn())
+	if got := rowsOf(rows); got != "key met |installed met |repositories met |permissions unmet permissions" {
+		t.Fatalf("rows = %s", got)
+	}
+	if rows[3].Words != "The installation lacks permissions this version needs: actions: write. Approve them on GitHub." {
+		t.Errorf("words = %q", rows[3].Words)
+	}
+	step := g.setupT(t, testConn(), FlowPermissions, builtinintegrations.Answer{Leg: 1})
+	if step.Go == nil || step.Go.URL != "https://github.com/organizations/acme/settings/apps/kivali-acme/permissions" ||
+		step.Go.Words != "On GitHub, give the app these permissions and save: actions: write. Then approve them for its installation, where GitHub asks." {
 		t.Errorf("fix = %+v", step.Go)
 	}
 }
@@ -548,7 +576,7 @@ func TestPermissionsFix(t *testing.T) {
 	f.route("GET /app/installations/42", 200, installation("selected", readPerms, false))
 	step := g.setupT(t, testConn(), FlowPermissions, builtinintegrations.Answer{Leg: 1})
 	if step.Go == nil || !step.Go.NoReturn || step.Go.URL != "https://github.com/settings/apps/kivali-acme/permissions" ||
-		step.Go.Words != "On GitHub, give the app these permissions and save: actions: read, checks: read, contents: write, issues: write, pull requests: write, workflows: write. Then approve them for its installation, where GitHub asks." {
+		step.Go.Words != "On GitHub, give the app these permissions and save: actions: write, checks: read, contents: write, issues: write, pull requests: write, workflows: write. Then approve them for its installation, where GitHub asks." {
 		t.Fatalf("app lacks = %+v", step.Go)
 	}
 	f.route("GET /app", 200, appAnswer)

@@ -301,7 +301,7 @@ anything runs, and the page shows it in the Connection block
 "connection": {
   "method": "setup",
   "setup": {
-    "summary": "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues, pull requests and workflow files, and read checks and Actions runs, and installs it on the repositories you choose.",
+    "summary": "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues, pull requests, workflow files and Actions runs, and read checks, and installs it on the repositories you choose.",
     "hosts": ["github.com"],
     "fields": {
       "account": {"words": "Your personal account, or an organization's name"},
@@ -2829,12 +2829,19 @@ unmet, naming the three, until the owner's Fix gives them on GitHub.
 Until then GitHub refuses the CI actions' tokens and a push's that
 asks for workflows, and everything else works.
 
-GitHub 2.2.0's connection fits 2.3.0 with nothing to do: 2.3.0 keeps
-its setup, its access form and the permissions it needs, and adds the
-[artifact actions](#artifacts), `list_workflows` and `save_job_log`,
-which read with `actions: read`, the [review actions](#reviews), which
-read with `pull_requests: read`, and the [release
-actions](#releases), which read with `contents: read`.
+GitHub 2.2.0's connection fits 2.3.0 the same way: 2.3.0 keeps its
+setup, and its access form adds only `run_workflows`, a switch off
+when absent, so every access row carries over unchanged. 2.3.0 adds
+the [artifact actions](#artifacts), `list_workflows` and
+`save_job_log`, which read with `actions: read`, the [review
+actions](#reviews), which read with `pull_requests: read`, the
+[release actions](#releases), which read with `contents: read`, and
+the [run actions](#run-control), which need `actions: write` of the
+installation, which an app made before does not have: its
+`permissions` requirement reads unmet, naming `actions: write`, until
+the owner's Fix gives it on GitHub. Until then GitHub refuses the run
+actions' tokens, and everything else works, since every read of
+Actions asks for `actions: read`.
 Its connection's proxy credential also admits `api.github.com`,
 `resultHosts` and `releaseHosts`, for a shell's download; boot
 registers that from the connection's Secret, so nothing is owed.
@@ -3643,8 +3650,9 @@ Actions artifacts (`artifacts.go`, [Artifacts](#artifacts)), read a
 pull request's reviews (`reviews.go`, [Reviews](#reviews)) and a
 repository's releases and save their assets (`releases.go`,
 [Releases](#releases)), close the ones the app opened and delete their branches through GitHub's
-REST API, and clone, fetch and push through the agent-shell
-daemon, as a private GitHub App its setup makes on the owner's account
+REST API, rerun, cancel and start workflows (`runs.go`, [Run
+control](#run-control)), and clone, fetch and push through the
+agent-shell daemon, as a private GitHub App its setup makes on the owner's account
 or an organization's. The package implements `Integration`,
 `SetupIntegration` (`setup.go`), `RequirementsOf`
 (`requirements.go`), `Uninstaller` and `SignInReplacer`
@@ -3666,16 +3674,22 @@ or an organization's. The package implements `Integration`,
   whoami`, and GitHub 1.0.0's access form, so agents' access carries
   over: `repositories` (required) and `write`, "May create, comment,
   push and close", then `workflows`, "May change workflows", off when
-  absent ([Clone, fetch and push](#clone-fetch-and-push)).
+  absent ([Clone, fetch and push](#clone-fetch-and-push)), and
+  `run_workflows`, "May run workflows", off when absent ([Run
+  control](#run-control)).
   Its `tools` are the actions an agent may be given,
-  the REST ones, the CI, artifact, review and release ones, then
+  the REST ones, the CI, artifact, review, release and run ones, then
   `clone`, `fetch` and `push`, the seven write ones
   (`create_issue`, `comment`, `close_issue`, `create_pull_request`,
   `close_pull_request`, `delete_branch`, `push`) with `"access":
   "write"`, so the page lists them under "May create, comment, push and
   close" and the rest under "Any access"; each write one's description
   ends "Only when the agent's access may create, comment, push and
-  close." (`needsWrite`). `whoami`
+  close." (`needsWrite`). The four run actions have `"access":
+  "run_workflows"`, so the page lists them under "May run workflows",
+  and each one's description ends "Only when the agent's access may
+  run workflows and may create, comment, push and close."
+  (`needsRunWorkflows`). `whoami`
   is not a tool: a built-in's `kivali.verify` need not name one
   ([The check](#the-check)). It passes `integration.ValidateBuiltin`.
 - **The connection** is what setup keeps, read as `conn.Fields`.
@@ -3720,7 +3734,7 @@ GitHub's own pages and nothing copied:
    false, "hook_attributes": {"url": "https://example.com/no-webhook",
    "active": false}, "default_permissions": {"metadata": "read",
    "contents": "write", "issues": "write", "pull_requests": "write",
-   "workflows": "write", "checks": "read", "actions": "read"},
+   "workflows": "write", "checks": "read", "actions": "write"},
    "default_events": []}`. GitHub takes no `hook_attributes` without a
    `url`, an inactive webhook's included, and names the lack "url"
    alone; and no `url` whose host is not reachable over the public
@@ -3808,16 +3822,20 @@ This version needs `needed()`: `contents: write` (a push's token
 writes contents), `issues: write`, `pull_requests: write`,
 `workflows: write` (a push that changes a file under
 `.github/workflows` needs it; GitHub offers it at no lower level),
-`checks: read` and `actions: read` (the [CI](#ci) actions) and
-`metadata: read`, which is also what the app is made with. An app 2.0.0
-made has `contents: read`, so its row reads "...lacks permissions this
-version needs: actions: read, checks: read, contents: write, workflows:
-write. Approve them on GitHub.", and the Fix sends the owner to the
+`checks: read` (the [CI](#ci) actions), `actions: write` (the [run
+actions](#run-control), and it covers the `actions: read` every read
+of Actions asks for) and `metadata: read`, which is also what the app
+is made with. An app 2.0.0 made has `contents: read`, so its row reads
+"...lacks permissions this version needs: actions: write, checks: read,
+contents: write, workflows: write. Approve them on GitHub.", and the Fix sends the owner to the
 app's own permissions first, since the app does not ask for them. An
-app 2.1.0 made reads the same, naming `actions: read`, `checks: read`
+app 2.1.0 made reads the same, naming `actions: write`, `checks: read`
 and `workflows: write`. Until the owner gives them, GitHub refuses the
 CI actions' tokens and a push's that asks for workflows (422), and
-everything else works.
+everything else works. An app 2.2.0 made has `actions: read`, so its
+row names `actions: write` alone: until the owner gives it, GitHub
+refuses the run actions' tokens (422), and everything else works,
+every read of Actions among it.
 
 #### Uninstall
 
@@ -3892,7 +3910,9 @@ against.
 GitHub refusing a token is an error result for the agent: 401 (the
 key) and 404 (no such installation) end with "Ask the owner."; 422 for
 a repository says the app may not be installed on it or lack the
-permission, and to ask the owner.
+permission, and to ask the owner. A run action's 422 says the app's
+installation may lack the Actions write permission, and to ask the
+owner to approve it on GitHub ([Run control](#run-control)).
 
 #### The actions
 
@@ -3928,6 +3948,10 @@ permission, and to ask the owner.
 | `get_release` | `GET /repos/{o}/{r}/releases/{id}`, or with `tag` `GET .../releases/tags/{tag}` | `contents: read` |
 | `list_release_assets` | `GET /repos/{o}/{r}/releases/{id}/assets` (`per_page`, `page`) | `contents: read` |
 | `save_release_asset` | `GET /repos/{o}/{r}/releases/assets/{id}`; then a shell job: the same address as `application/octet-stream`, which answers the file or a redirect followed with no credential ([Releases](#releases)) | `contents: read`; the job's in its own token |
+| `rerun_workflow_run` | `POST /repos/{o}/{r}/actions/runs/{id}/rerun`, or with `failed_only` `POST .../actions/runs/{id}/rerun-failed-jobs` ([Run control](#run-control)) | `actions: write` |
+| `rerun_job` | `POST /repos/{o}/{r}/actions/jobs/{id}/rerun` | `actions: write` |
+| `cancel_workflow_run` | `POST /repos/{o}/{r}/actions/runs/{id}/cancel` | `actions: write` |
+| `dispatch_workflow` | `POST /repos/{o}/{r}/actions/workflows/{workflow}/dispatches` with `ref`, `inputs` and `return_run_details: true`, without which `apiVersion` answers 204 and no run id | `actions: write` |
 | `clone`, `fetch` | a shell job ([Clone, fetch and push](#clone-fetch-and-push)) | `contents: read`, in the job's own token |
 | `push` | a shell job | `contents: write`, and `workflows: write` when the push says it changes workflow files and the access allows it, in the job's own token |
 
@@ -3944,7 +3968,8 @@ The REST actions' rules are GitHub 1.0.0's:
   true`: `Tools` leaves them out without it and `Call` refuses them by
   name, "Your access to GitHub does not include opening, commenting on
   or closing issues and pull requests, pushing or deleting branches;
-  ask the owner." `whoami` is Test
+  ask the owner." The run actions need `run_workflows: true` as well
+  ([Run control](#run-control)). `whoami` is Test
   connection's (`Verify`, "Connected as <slug>[bot], the app <name>,
   installed on <account>", the bot agents act as and the app's name
   from GET /app): it is not among the manifest's tools, no agent is
@@ -4143,6 +4168,66 @@ The action then deletes `refs/heads/<branch>` and nothing else, and
 GitHub's own branch protection still applies. The read and the
 deletion are still two requests: a commit pushed in between is not
 seen.
+
+#### Run control
+
+`runs.go`. `rerun_workflow_run`, `rerun_job`, `cancel_workflow_run` and
+`dispatch_workflow` are REST actions in core, with no shell job. Each
+needs `access.runsWorkflows`, the `run_workflows` switch and `write`.
+It is separate from `workflows`, which lets a push change a workflow:
+these run what the repository already has. `Tools` lists them only
+with both switches, and `checked`, which every request of an action
+passes, refuses any other access before GitHub is asked anything,
+"Your access to GitHub does not include rerunning, cancelling or
+starting workflows; ask the owner." (`the access does not include
+rerunning, cancelling or starting workflows`). That one refusal serves
+a reader, a writer without the switch and the switch without write.
+
+Their tokens alone ask for `actions: write` (`runToken`), narrowed to
+the one repository and cached as any REST action's. GitHub mints no
+token for a permission the installation lacks, so its 422 reads "GitHub
+refused the GitHub App a token that may run workflows in <owner/name>
+(HTTP 422): ... The app's installation may lack the Actions write
+permission; ask the owner to approve it on GitHub."
+
+Each success is a `done`, so its audit row is the agent's sentence
+uncapitalized and without the full stop:
+
+| Action | Audit row |
+| --- | --- |
+| `rerun_workflow_run` | started workflow run <id> of <owner/name> again; with `failed_only`, started the failed jobs of workflow run <id> of <owner/name> again |
+| `rerun_job` | started job <id> of <owner/name> again |
+| `cancel_workflow_run` | asked GitHub to cancel workflow run <id> of <owner/name>: GitHub answers 202 and cancels it after |
+| `dispatch_workflow` | started the workflow <workflow> of <owner/name> on <ref> as run <id> (<address>), from GitHub's `workflow_run_id` and `html_url` |
+
+A dispatch's success has started the workflow whatever its answer
+holds, so a success that names no run says so and points at
+`list_workflow_runs` instead of reading as a failure the agent would
+repeat. For the same reason a request GitHub did not answer says the
+workflow may have started, not to try again.
+
+`dispatch_workflow`'s `workflow` is `args.workflow`, as
+`list_workflow_runs` reads it: a positive id, or a `.yml` or `.yaml`
+file's name of at most 255 bytes holding no separator or control
+character, escaped as one path segment. It is required. `ref` reads as
+a branch does (`args.branch`). `inputs` (`args.inputs`) holds at most
+25 names, GitHub's limit, each one line of at most 100 characters, to
+a string of at most 10,000 characters, a number or a boolean, sent with
+its type, at most 60,000 characters in all; empty is left out of the
+body. Each refusal comes before a token is minted.
+
+A 403, 409 or 422 from a run action (`runRefused`) gives GitHub's own
+words, then what is so of the action, then "For anything else, ask the
+owner.": a run still in progress cannot be rerun, a run that has
+finished cannot be cancelled, a workflow's file must have a
+`workflow_dispatch` trigger. The note states a rule and does not read
+the status as its cause, since GitHub's documents bind no status to
+most of these. A rate limit and any other failure read as
+[The actions](#the-actions) say.
+
+`runs_test.go` holds each of these, with a fake installation that
+holds `actions: read` (`fakeGitHub.installed`): every read of Actions
+gets its token from it, and every run action gets the 422 words.
 
 #### Clone, fetch and push
 
