@@ -5,10 +5,10 @@
 // read a pull request's reviews (reviews.go), read their releases and
 // save an asset (releases.go), close the issues and pull requests the
 // app opened and delete branches whose own commits are all its bot's,
-// and clone, fetch and push the repositories, acting as a private GitHub
-// App that
-// the owner's setup makes on their account and installs on the
-// repositories they choose.
+// rerun, cancel and start workflows (runs.go), and clone, fetch and
+// push the repositories, acting as a private GitHub App that the
+// owner's setup makes on their account and installs on the repositories
+// they choose.
 //
 // Every call acts as the app's installation: core signs a JSON web
 // token with the app's private key and trades it for an installation
@@ -126,18 +126,20 @@ func (g *GitHub) now() time.Time {
 
 // setupSummary is what setup does, in words for the owner, with what
 // Disconnect leaves on GitHub.
-const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues, pull requests and workflow files, and read checks and Actions runs, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
+const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues, pull requests, workflow files and Actions runs, and read checks, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
 
 // accessSchema is the access form: the repositories an agent may use
 // (and read the releases, checks, Actions runs, logs and artifacts of);
 // whether it may open, comment on and close issues and pull requests,
 // push and delete branches there, closing only what the app opened and
-// deleting only a branch whose own commits are all the app's bot's; and
-// whether its pushes may change workflow files.
+// deleting only a branch whose own commits are all the app's bot's;
+// whether its pushes may change workflow files; and whether it may
+// rerun, cancel and start workflows.
 const accessSchema = `{"type":"object","properties":{` +
 	`"repositories":{"type":"array","items":{"type":"string"},"title":"Repositories","description":"Each one owner/name, such as acme/widgets, or a pattern such as acme/*, which covers every repository directly under acme. * is the only wildcard. Capitals do not matter. The agent may read these repositories, their releases, their checks and their Actions runs, logs and artifacts."},` +
 	`"write":{"type":"boolean","title":"May create, comment, push and close","description":"Lets the agent, as the GitHub App, open issues and pull requests, comment on them and push branches and tags in those repositories; close the issues and pull requests the app opened; and delete a branch whose commits beyond the default branch the app's bot authored and committed, every one, or a branch merged into it. A push never overwrites history."},` +
-	`"workflows":{"type":"boolean","title":"May change workflows","description":"Lets the agent's pushes add, change or delete GitHub Actions workflow files (.github/workflows) in those repositories; it needs May create, comment, push and close as well. A workflow runs on GitHub with the repository's Actions secrets, so turn this on only where you would accept that."}},` +
+	`"workflows":{"type":"boolean","title":"May change workflows","description":"Lets the agent's pushes add, change or delete GitHub Actions workflow files (.github/workflows) in those repositories; it needs May create, comment, push and close as well. A workflow runs on GitHub with the repository's Actions secrets, so turn this on only where you would accept that."},` +
+	`"run_workflows":{"type":"boolean","title":"May run workflows","description":"Lets the agent rerun, cancel and start GitHub Actions workflows in those repositories; it needs May create, comment, push and close as well. Rerunning or starting a workflow runs it on GitHub with the repository's Actions secrets, and a workflow may deploy, so turn this on only where that is acceptable."}},` +
 	`"required":["repositories"]}`
 
 // resultHosts are where GitHub sends a job's log and an artifact from:
@@ -151,8 +153,9 @@ var resultHosts = []string{"productionresultssa*.blob.core.windows.net", "action
 
 // Manifest is GitHub's manifest. Its tools are the actions an agent
 // may be given, the REST ones then clone, fetch and push, each write
-// one needing the write switch; whoami is Test connection's
-// (kivali.verify) and no tool.
+// one needing the write switch and each run one the run_workflows
+// switch as well; whoami is Test connection's (kivali.verify) and no
+// tool.
 func (g *GitHub) Manifest() *integration.Manifest {
 	var tools []integration.Tool
 	for _, a := range actions {
@@ -160,7 +163,10 @@ func (g *GitHub) Manifest() *integration.Manifest {
 			continue
 		}
 		t := integration.Tool{Name: a.name, Description: a.ownerDescription}
-		if a.write {
+		switch {
+		case a.runsWorkflow:
+			t.Access = runWorkflowsKey
+		case a.write:
 			t.Access = writeKey
 		}
 		tools = append(tools, t)
@@ -171,7 +177,7 @@ func (g *GitHub) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "2.3.0",
 		DisplayName:     "GitHub",
-		Description:     "Read and open issues, comments and pull requests in GitHub repositories, read their reviews, releases, checks and Actions runs, logs and artifacts, close the issues and pull requests the app opened, delete branches whose own commits are all its bot's, and clone, fetch and push the repositories, as a private GitHub App on your account.",
+		Description:     "Read and open issues, comments and pull requests in GitHub repositories, read their reviews, releases, checks and Actions runs, logs and artifacts, close the issues and pull requests the app opened, delete branches whose own commits are all its bot's, rerun, cancel and start workflows, and clone, fetch and push the repositories, as a private GitHub App on your account.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -207,13 +213,14 @@ func (g *GitHub) Manifest() *integration.Manifest {
 
 // Tools lists every action the caller's access allows, in the
 // manifest's order: the write actions, push among them, only with
-// write, push's workflows only with the workflows switch too, and never
+// write, push's workflows only with the workflows switch too, the run
+// actions only with write and the run_workflows switch, and never
 // whoami, which is Test connection's.
 func (g *GitHub) Tools(_ context.Context, caller builtinintegrations.Caller) ([]builtinintegrations.Tool, error) {
 	acc := readAccess(caller.Access)
 	var out []builtinintegrations.Tool
 	for _, a := range actions {
-		if a.ownerOnly || (a.write && !acc.write) {
+		if a.ownerOnly || (a.write && !acc.write) || (a.runsWorkflow && !acc.runsWorkflows()) {
 			continue
 		}
 		out = append(out, builtinintegrations.Tool{Name: a.name, Description: a.description + ownerDecides, InputSchema: json.RawMessage(a.schema)})
@@ -337,7 +344,10 @@ func (g *GitHub) checked(caller builtinintegrations.Caller, conn builtinintegrat
 		return nil, nil, refuse("Your access to GitHub does not include "+name+"; ask the owner.", name+" is Test connection's alone")
 	}
 	acc := readAccess(caller.Access)
-	if a.write && !acc.write {
+	switch {
+	case a.runsWorkflow && !acc.runsWorkflows():
+		return nil, nil, refuse(runRefusal, runReason)
+	case a.write && !acc.write:
 		return nil, nil, refuse(writeRefusal, writeReason)
 	}
 	c, err := readConnection(conn)

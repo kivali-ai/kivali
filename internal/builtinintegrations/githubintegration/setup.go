@@ -41,14 +41,17 @@ const appNameMax = 34
 // needed is what this version needs of the installation: the
 // permissions the app is made with. workflows write lets a push change
 // the repository's workflow files (.github/workflows), and GitHub offers
-// it at no lower level; checks read and actions read let an agent read
-// the checks, Actions runs and job logs of what it pushed (ci.go). Each
-// token asks for only what its call needs, and a push asks for
-// workflows only when the agent's access allows it and the push says
-// so.
+// it at no lower level; checks read lets an agent read the checks of
+// what it pushed (ci.go); actions write lets it rerun, cancel and start
+// workflows (runs.go), and covers reading their runs and job logs. Each
+// token asks for only what its call needs: every read of Actions asks
+// for actions read, which works on an installation that has not
+// approved write; only a run action's asks for actions write; and a
+// push asks for workflows only when the agent's access allows it and
+// the push says so.
 func needed() permissions {
 	return perms("contents", "write", "issues", "write", "pull_requests", "write",
-		workflowsPermission, "write", "checks", "read", "actions", "read")
+		workflowsPermission, "write", "checks", "read", "actions", "write")
 }
 
 // accountName is a GitHub account's name: letters, digits and hyphens,
