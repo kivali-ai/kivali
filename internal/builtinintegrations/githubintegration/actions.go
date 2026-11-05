@@ -63,9 +63,10 @@ const needsWrite = " Only when the agent's access may create, comment, push and 
 
 // actions is every REST action: the manifest's tools are these in this
 // order, less the ownerOnly one, then clone, fetch and push (git.go).
-// The CI actions (ci.go) and the artifact actions (artifacts.go) follow
-// the others.
-var actions = slices.Concat(repoActions, ciActions, artifactActions)
+// The CI actions (ci.go), the artifact actions (artifacts.go), the
+// review actions (reviews.go) and the release actions (releases.go)
+// follow the others.
+var actions = slices.Concat(repoActions, ciActions, artifactActions, reviewActions, releaseActions)
 
 // repoActions are the REST actions on a repository's issues, pull
 // requests, branches and commits, and whoami.
@@ -630,7 +631,7 @@ func getIssue(ctx context.Context, c *call) (any, error) {
 	if err := c.g.getJSON(ctx, tok, path, &issue); err != nil {
 		return nil, err
 	}
-	comments, err := latestComments(ctx, c.g, tok, path+"/comments", issue.Comments)
+	comments, err := latestListed[ghComment](ctx, c.g, tok, path+"/comments", issue.Comments, commentsKept, 100)
 	if err != nil {
 		return nil, err
 	}
@@ -666,33 +667,33 @@ func getIssue(ctx context.Context, c *call) (any, error) {
 	}{issue.Number, issue.Title, issue.State, issue.isPullRequest(), issue.User.Login, nonNil(issue.Labels), body, outComments, issue.HTMLURL, strings.Join(notes, " ")}, nil
 }
 
-// latestComments is the latest commentsKept of an issue's total
-// comments, oldest first. GitHub lists them oldest first, 100 a page,
-// so they are on the last page and, when it holds fewer, the one
-// before.
-func latestComments(ctx context.Context, g *GitHub, tok, path string, total int) ([]ghComment, error) {
+// latestListed is the latest keep of the total items GitHub lists at
+// path, oldest first. GitHub lists them oldest first, perPage a page, at
+// least keep, so they are on the last page and, when it holds fewer, the
+// one before.
+func latestListed[T any](ctx context.Context, g *GitHub, tok, path string, total, keep, perPage int) ([]T, error) {
 	if total <= 0 {
 		return nil, nil
 	}
-	last := (total + 99) / 100
-	read := func(page int) ([]ghComment, error) {
-		var out []ghComment
-		err := g.getJSON(ctx, tok, path+"?per_page=100&page="+strconv.Itoa(page), &out)
+	last := (total + perPage - 1) / perPage
+	read := func(page int) ([]T, error) {
+		var out []T
+		err := g.getJSON(ctx, tok, path+"?per_page="+strconv.Itoa(perPage)+"&page="+strconv.Itoa(page), &out)
 		return out, err
 	}
 	got, err := read(last)
 	if err != nil {
 		return nil, err
 	}
-	if len(got) < commentsKept && last > 1 {
+	if len(got) < keep && last > 1 {
 		before, err := read(last - 1)
 		if err != nil {
 			return nil, err
 		}
 		got = append(before, got...)
 	}
-	if len(got) > commentsKept {
-		got = got[len(got)-commentsKept:]
+	if len(got) > keep {
+		got = got[len(got)-keep:]
 	}
 	return got, nil
 }

@@ -50,10 +50,11 @@ var (
 
 // Hosts is github.com, which a clone, a fetch or a push reaches, the
 // hosts GitHub keeps LFS files on (lfsHosts), the API a shell's download
-// asks, and the hosts it keeps Actions logs and artifacts on
-// (resultHosts): what the connection's scoped proxy credential admits.
+// asks, and the hosts it keeps Actions logs and artifacts (resultHosts)
+// and release assets (releaseHosts) on: what the connection's scoped
+// proxy credential admits.
 func (g *GitHub) Hosts(builtinintegrations.Connection) []string {
-	return slices.Concat([]string{gitHost, apiHost}, lfsHosts, resultHosts)
+	return slices.Concat([]string{gitHost, apiHost}, lfsHosts, resultHosts, releaseHosts)
 }
 
 // lfsHosts are where GitHub's LFS API sends a clone, a fetch or a push

@@ -67,7 +67,7 @@ func TestCloneMintsATokenForTheRepositoryAlone(t *testing.T) {
 	if job.LFS == nil || !slices.Equal(job.LFS.Hosts, storage) {
 		t.Errorf("lfs = %+v", job.LFS)
 	}
-	if hosts := g.Hosts(testConn()); !slices.Equal(hosts, slices.Concat([]string{"github.com", "api.github.com"}, storage, resultHosts)) {
+	if hosts := g.Hosts(testConn()); !slices.Equal(hosts, slices.Concat([]string{"github.com", "api.github.com"}, storage, resultHosts, releaseHosts)) {
 		t.Errorf("hosts = %v", hosts)
 	}
 

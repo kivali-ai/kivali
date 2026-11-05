@@ -87,6 +87,7 @@ func TestManifest(t *testing.T) {
 	want := []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 		"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
 		"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
+		"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset",
 		"clone", "fetch", "push"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v", names)
@@ -149,10 +150,12 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 		want  []string
 	}{
 		{false, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "list_pull_requests", "get_pull_request", "list_branches", "compare",
-			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact", "clone", "fetch"}},
+			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
+			"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset", "clone", "fetch"}},
 		{true, []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 			"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
-			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact", "clone", "fetch", "push"}},
+			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
+			"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset", "clone", "fetch", "push"}},
 	} {
 		tools, err := g.Tools(context.Background(), agent(c.write, "acme/*"))
 		if err != nil {

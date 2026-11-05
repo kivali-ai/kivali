@@ -800,7 +800,9 @@ func saveJobLog(ctx context.Context, c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return c.saveInShell(ctx, repo, jobLogAddress(repo, id), shelljob.DownloadJob{
+	return c.saveInShell(ctx, repo, jobLogAddress(repo, id), perms("actions", "read"), shelljob.DownloadJob{
+		Accept:   mediaJSON,
+		Hosts:    resultHosts,
 		Folder:   fmt.Sprintf("%s/job-log-%d", downloadsFolder, id),
 		Name:     fmt.Sprintf("job-%d.log", id),
 		MaxBytes: jobLogBytesMost,

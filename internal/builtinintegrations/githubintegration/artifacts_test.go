@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -132,6 +133,9 @@ func TestDownloadArtifactHandsTheFetchToTheShell(t *testing.T) {
 	job := firstRequest(t, g, reader, 55)
 	if job.URL != f.srv.URL+"/repos/acme/widgets/actions/artifacts/55/zip" {
 		t.Errorf("URL = %q", job.URL)
+	}
+	if job.Accept != mediaJSON {
+		t.Errorf("Accept = %q", job.Accept)
 	}
 	if job.Folder != "/files/integrations/github/untrusted-downloads/artifact-55" || job.Name != "my-coverage" || !job.NameZip {
 		t.Errorf("job lands at %q %q zip=%v", job.Folder, job.Name, job.NameZip)
@@ -301,7 +305,7 @@ func TestCompleteIsHeldToTheAccessAsItIsNow(t *testing.T) {
 // existing connections at the next boot with nothing for the owner to do.
 func TestHostsAdmitTheShellsDownloads(t *testing.T) {
 	got := strings.Join((&GitHub{}).Hosts(testConn()), " ")
-	for _, h := range append([]string{"api.github.com", "github.com"}, resultHosts...) {
+	for _, h := range slices.Concat([]string{"api.github.com", "github.com"}, resultHosts, releaseHosts) {
 		if !strings.Contains(got, h) {
 			t.Errorf("hosts %q lack %q", got, h)
 		}

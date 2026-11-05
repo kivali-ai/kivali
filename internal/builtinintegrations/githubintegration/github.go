@@ -1,9 +1,12 @@
 // Package githubintegration is the GitHub built-in integration: agents
 // read and open issues, comments and pull requests in GitHub
 // repositories, read their checks and Actions runs and job logs
-// (ci.go), list their Actions artifacts and save one (artifacts.go), close the issues and pull requests the app opened and
-// delete branches whose own commits are all its bot's, and clone, fetch
-// and push the repositories, acting as a private GitHub App that
+// (ci.go), list their Actions artifacts and save one (artifacts.go),
+// read a pull request's reviews (reviews.go), read their releases and
+// save an asset (releases.go), close the issues and pull requests the
+// app opened and delete branches whose own commits are all its bot's,
+// and clone, fetch and push the repositories, acting as a private GitHub
+// App that
 // the owner's setup makes on their account and installs on the
 // repositories they choose.
 //
@@ -49,6 +52,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kivali-ai/kivali/internal/builtinintegrations"
 	"github.com/kivali-ai/kivali/internal/builtinintegrations/gitops"
@@ -125,13 +129,13 @@ func (g *GitHub) now() time.Time {
 const setupSummary = "Creates a private GitHub App, on your account or an organization's, that may read and write contents, issues, pull requests and workflow files, and read checks and Actions runs, and installs it on the repositories you choose. Disconnecting removes the installation; the app stays on GitHub until you delete it under GitHub Apps in the account's settings."
 
 // accessSchema is the access form: the repositories an agent may use
-// (and read the checks, Actions runs, logs and artifacts of); whether it may open,
-// comment on and close issues and pull requests, push and delete
-// branches there, closing only what the app opened and deleting only a
-// branch whose own commits are all the app's bot's; and whether its
-// pushes may change workflow files.
+// (and read the releases, checks, Actions runs, logs and artifacts of);
+// whether it may open, comment on and close issues and pull requests,
+// push and delete branches there, closing only what the app opened and
+// deleting only a branch whose own commits are all the app's bot's; and
+// whether its pushes may change workflow files.
 const accessSchema = `{"type":"object","properties":{` +
-	`"repositories":{"type":"array","items":{"type":"string"},"title":"Repositories","description":"Each one owner/name, such as acme/widgets, or a pattern such as acme/*, which covers every repository directly under acme. * is the only wildcard. Capitals do not matter. The agent may read these repositories, their checks and their Actions runs, logs and artifacts."},` +
+	`"repositories":{"type":"array","items":{"type":"string"},"title":"Repositories","description":"Each one owner/name, such as acme/widgets, or a pattern such as acme/*, which covers every repository directly under acme. * is the only wildcard. Capitals do not matter. The agent may read these repositories, their releases, their checks and their Actions runs, logs and artifacts."},` +
 	`"write":{"type":"boolean","title":"May create, comment, push and close","description":"Lets the agent, as the GitHub App, open issues and pull requests, comment on them and push branches and tags in those repositories; close the issues and pull requests the app opened; and delete a branch whose commits beyond the default branch the app's bot authored and committed, every one, or a branch merged into it. A push never overwrites history."},` +
 	`"workflows":{"type":"boolean","title":"May change workflows","description":"Lets the agent's pushes add, change or delete GitHub Actions workflow files (.github/workflows) in those repositories; it needs May create, comment, push and close as well. A workflow runs on GitHub with the repository's Actions secrets, so turn this on only where you would accept that."}},` +
 	`"required":["repositories"]}`
@@ -167,7 +171,7 @@ func (g *GitHub) Manifest() *integration.Manifest {
 		Name:            Name,
 		Version:         "2.3.0",
 		DisplayName:     "GitHub",
-		Description:     "Read and open issues, comments and pull requests in GitHub repositories, read their checks and Actions runs, logs and artifacts, close the issues and pull requests the app opened, delete branches whose own commits are all its bot's, and clone, fetch and push the repositories, as a private GitHub App on your account.",
+		Description:     "Read and open issues, comments and pull requests in GitHub repositories, read their reviews, releases, checks and Actions runs, logs and artifacts, close the issues and pull requests the app opened, delete branches whose own commits are all its bot's, and clone, fetch and push the repositories, as a private GitHub App on your account.",
 		Author:          integration.Author{Name: "Kivali"},
 		UserConfig:      integration.UserConfig{},
 		Tools:           tools,
@@ -421,18 +425,85 @@ const clipNote = "\n[The answer is cut to its first 60000 characters.]"
 func answerText(v any) (string, error) {
 	s, ok := v.(string)
 	if !ok {
-		var b strings.Builder
-		enc := json.NewEncoder(&b)
-		enc.SetEscapeHTML(false)
-		if err := enc.Encode(v); err != nil {
+		var err error
+		if s, err = answerJSON(v); err != nil {
 			return "", err
 		}
-		s = strings.TrimSuffix(b.String(), "\n")
 	}
 	if cut, clipped := clip(s, answerClip); clipped {
 		s = cut + clipNote
 	}
 	return s, nil
+}
+
+// answerJSON is v as compact JSON, as an answer holds it, whatever its
+// length.
+func answerJSON(v any) (string, error) {
+	var b strings.Builder
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(b.String(), "\n"), nil
+}
+
+// answerOtherRoom is what an answer that fits its list to answerClip
+// leaves for all but the list: its other fields and its note.
+const answerOtherRoom = 1000
+
+// encodedLen is how many characters v takes in an answer's JSON, where a
+// control character takes six. What an answer lists is plain fields,
+// which always encode.
+func encodedLen(v any) int {
+	s, _ := answerJSON(v)
+	return utf8.RuneCountInString(s)
+}
+
+// firstThatFit is the first of items, as many as room characters of an
+// answer's JSON hold, each with its comma. An answer cut at answerClip
+// would stop being JSON.
+func firstThatFit[T any](items []T, room int) []T {
+	for i, item := range items {
+		room -= encodedLen(item) + 1
+		if room < 0 {
+			return items[:i]
+		}
+	}
+	return items
+}
+
+// lastThatFit is the last of items, as many as an answer holds. A list
+// that runs oldest first loses its latest to an answer cut at
+// answerClip, and stops being JSON.
+func lastThatFit[T any](items []T) []T {
+	room := answerClip - answerOtherRoom
+	for i := len(items) - 1; i >= 0; i-- {
+		room -= encodedLen(items[i]) + 1
+		if room < 0 {
+			return items[i+1:]
+		}
+	}
+	return items
+}
+
+// clipEncoded is the longest start of s that takes at most most
+// characters in an answer's JSON, and whether it is shorter than s.
+func clipEncoded(s string, most int) (string, bool) {
+	if encodedLen(s) <= most {
+		return s, false
+	}
+	fits, over := 0, utf8.RuneCountInString(s)
+	for over-fits > 1 {
+		mid := (fits + over) / 2
+		if cut, _ := clip(s, mid); encodedLen(cut) <= most {
+			fits = mid
+		} else {
+			over = mid
+		}
+	}
+	cut, _ := clip(s, fits)
+	return cut, true
 }
 
 // Verify is Test connection: the app GitHub knows the key as (GET
