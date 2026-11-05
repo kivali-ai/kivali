@@ -29,17 +29,18 @@ const (
 	actionDownloadArtifact = "download_artifact"
 )
 
-// The bounds of one artifact's download: the daemon's own maxima
-// (agentshell.DownloadMaxBytes, DownloadMaxTimeout).
+// The bounds of a download in the shell, the daemon's own maxima
+// (agentshell.DownloadMaxBytes, DownloadMaxTimeout): an artifact's size
+// and any download's time.
 const (
 	artifactBytesMost   = 5 << 30
-	artifactSecondsMost = 15 * 60
+	downloadSecondsMost = 15 * 60
 )
 
-// artifactsFolder is where a shell's download keeps artifacts, each in
-// a folder of its own: a path that tells the agent they are content
-// from outside.
-const artifactsFolder = "/files/integrations/github/untrusted-downloads"
+// downloadsFolder is where a shell's download keeps a file, each in a
+// folder of its own: a path that tells the agent it is content from
+// outside.
+const downloadsFolder = "/files/integrations/github/untrusted-downloads"
 
 // artifactActions are the artifact actions, in the manifest's order
 // after the CI actions.
@@ -177,14 +178,51 @@ func listArtifacts(ctx context.Context, c *call) (any, error) {
 	return out, nil
 }
 
-// artifactArgs is the repository and the artifact a download names.
-func artifactArgs(c *call) (string, int64, error) {
+// repoAndID is the repository a call names, and its id argument name.
+func repoAndID(c *call, name string) (string, int64, error) {
 	repo, err := c.args.repository(c.access)
 	if err != nil {
 		return "", 0, err
 	}
-	id, err := c.args.number("artifact_id")
+	id, err := c.args.number(name)
 	return repo, id, err
+}
+
+// saveInShell is the answer of a download's first request: a shell job
+// that fetches path on GitHub's API into file (its folder, name and
+// bound), with a token minted for it alone, narrowed to repo and to
+// reading Actions. A redirect may lead to resultHosts only.
+func (c *call) saveInShell(ctx context.Context, repo, path string, file shelljob.DownloadJob, audit string) (any, error) {
+	base, err := c.g.base()
+	if err != nil {
+		return nil, err
+	}
+	tok, err := c.g.jobToken(ctx, c.conn, repo, perms("actions", "read"))
+	if err != nil {
+		return nil, err
+	}
+	file.URL, file.Accept, file.Token, file.Hosts = base.String()+path, mediaJSON, tok, resultHosts
+	file.TimeoutSeconds, file.ConnectionID = downloadSecondsMost, c.connID
+	return shellJob{job: &shelljob.Job{Download: &file}, audit: audit}, nil
+}
+
+// notSaved is why a shell's download left no file, nil when it saved
+// one. kind is the file in a word or two, "the artifact"; what names it,
+// "artifact 9 of acme/widgets"; missing is GitHub answering that it has
+// no such file.
+func notSaved(r shelljob.Result, kind, what string, missing func(status int) error) error {
+	d := r.Download
+	switch {
+	case d == nil:
+		return failure("Your shell did not save " + kind + "; tell the owner.")
+	case d.Status == http.StatusNotFound || d.Status == http.StatusGone:
+		return missing(d.Status)
+	case d.TimedOut:
+		return failure(fmt.Sprintf("%s%s did not arrive within %d minutes, and nothing was saved.", strings.ToUpper(what[:1]), what[1:], downloadSecondsMost/60))
+	case d.Error != "":
+		return failure(fmt.Sprintf("Kivali could not save %s: %s.", what, sentence(d.Error)))
+	}
+	return nil
 }
 
 // artifactAddress is an artifact's path on GitHub's API.
@@ -202,7 +240,7 @@ func noArtifact(repo string, id int64, status int) error {
 // and a shell job with a token minted for it alone. The daemon holds
 // the file to the same size, whatever GitHub said of it.
 func downloadArtifact(ctx context.Context, c *call) (any, error) {
-	repo, id, err := artifactArgs(c)
+	repo, id, err := repoAndID(c, "artifact_id")
 	if err != nil {
 		return nil, err
 	}
@@ -225,29 +263,12 @@ func downloadArtifact(ctx context.Context, c *call) (any, error) {
 		return nil, refuse(fmt.Sprintf("Artifact %d of %s is %.1f GiB, more than the %d GiB Kivali saves.", id, repo, float64(a.SizeInBytes)/(1<<30), artifactBytesMost>>30),
 			"the artifact is larger than 5 GiB")
 	}
-	base, err := c.g.base()
-	if err != nil {
-		return nil, err
-	}
-	jobToken, err := c.g.jobToken(ctx, c.conn, repo, perms("actions", "read"))
-	if err != nil {
-		return nil, err
-	}
-	return shellJob{
-		job: &shelljob.Job{Download: &shelljob.DownloadJob{
-			URL:            base.String() + artifactAddress(repo, id) + "/zip",
-			Accept:         mediaJSON,
-			Token:          jobToken,
-			Hosts:          resultHosts,
-			Folder:         fmt.Sprintf("%s/artifact-%d", artifactsFolder, id),
-			Name:           files.CleanDownloadName(a.Name),
-			NameZip:        true,
-			MaxBytes:       artifactBytesMost,
-			TimeoutSeconds: artifactSecondsMost,
-			ConnectionID:   c.connID,
-		}},
-		audit: fmt.Sprintf("started: saving artifact %d of %s", id, repo),
-	}, nil
+	return c.saveInShell(ctx, repo, artifactAddress(repo, id)+"/zip", shelljob.DownloadJob{
+		Folder:   fmt.Sprintf("%s/artifact-%d", downloadsFolder, id),
+		Name:     files.CleanDownloadName(a.Name),
+		NameZip:  true,
+		MaxBytes: artifactBytesMost,
+	}, fmt.Sprintf("started: saving artifact %d of %s", id, repo))
 }
 
 // completeArtifact is the second request: the shell's result in words.
@@ -255,21 +276,15 @@ func downloadArtifact(ctx context.Context, c *call) (any, error) {
 // fails, the file's origin reads as unknown, never as the repository's
 // own.
 func completeArtifact(ctx context.Context, c *call, r shelljob.Result) (any, error) {
-	repo, id, err := artifactArgs(c)
+	repo, id, err := repoAndID(c, "artifact_id")
 	if err != nil {
 		return nil, err
 	}
-	d := r.Download
-	switch {
-	case d == nil:
-		return nil, failure("Your shell did not save the artifact; tell the owner.")
-	case d.Status == http.StatusNotFound || d.Status == http.StatusGone:
-		return nil, noArtifact(repo, id, d.Status)
-	case d.TimedOut:
-		return nil, failure(fmt.Sprintf("Artifact %d of %s did not arrive within %d minutes, and nothing was saved.", id, repo, artifactSecondsMost/60))
-	case d.Error != "":
-		return nil, failure(fmt.Sprintf("Kivali could not save artifact %d of %s: %s.", id, repo, sentence(d.Error)))
+	what := fmt.Sprintf("artifact %d of %s", id, repo)
+	if err := notSaved(r, "the artifact", what, func(status int) error { return noArtifact(repo, id, status) }); err != nil {
+		return nil, err
 	}
+	d := r.Download
 	var a ghArtifact
 	if tok, err := c.token(ctx, repo, perms("actions", "read")); err == nil {
 		_ = c.g.getJSON(ctx, tok, artifactAddress(repo, id), &a)
