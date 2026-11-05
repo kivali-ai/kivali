@@ -49,28 +49,34 @@ type action struct {
 	description      string
 	ownerDescription string
 	schema           string
-	write            bool
-	runsWorkflow     bool
-	ownerOnly        bool
-	run              func(ctx context.Context, c *call) (any, error)
+	// workflowsDescription, added to description, and workflowsSchema,
+	// in place of schema, are what an agent whose access may change
+	// workflows is listed of an action that takes workflows.
+	workflowsDescription string
+	workflowsSchema      string
+	write                bool
+	runsWorkflow         bool
+	ownerOnly            bool
+	run                  func(ctx context.Context, c *call) (any, error)
 	// complete, for an action run answers with a shellJob, puts the job's
 	// result in words.
 	complete func(ctx context.Context, c *call, r shelljob.Result) (any, error)
 }
 
 // ownerDecides ends every description an agent reads.
-const ownerDecides = " The owner decides which repositories you may use and whether you may open, comment on and close issues and pull requests, push and delete branches."
+const ownerDecides = " The owner decides which repositories you may use and whether you may open, comment on and close issues and pull requests, merge pull requests, push and delete branches."
 
 // needsWrite ends the owner's description of every write action: the
 // write switch, in its title's words.
-const needsWrite = " Only when the agent's access may create, comment, push and close."
+const needsWrite = " Only when the agent's access may create, comment, push, merge and close."
 
 // actions is every REST action: the manifest's tools are these in this
 // order, less the ownerOnly one, then clone, fetch and push (git.go).
 // The CI actions (ci.go), the artifact actions (artifacts.go), the
-// review actions (reviews.go), the release actions (releases.go) and
-// the run actions (runs.go) follow the others.
-var actions = slices.Concat(repoActions, ciActions, artifactActions, reviewActions, releaseActions, runActions)
+// review actions (reviews.go), the release actions (releases.go), the
+// run actions (runs.go) and the merge actions (merge.go) follow the
+// others.
+var actions = slices.Concat(repoActions, ciActions, artifactActions, reviewActions, releaseActions, runActions, mergeActions)
 
 // repoActions are the REST actions on a repository's issues, pull
 // requests, branches and commits, and whoami.
@@ -156,7 +162,7 @@ var repoActions = []action{
 	},
 	{
 		name:             actionGetPullRequest,
-		description:      "Read one GitHub pull request: its title, state, body, branches, whether it can be merged and its size, and its diff when you ask for it.",
+		description:      "Read one GitHub pull request: its title, state, body, branches, head commit, whether it can be merged and its size, and its diff when you ask for it.",
 		ownerDescription: "Read one pull request, and its diff when asked. Reads only.",
 		schema: schema(map[string]any{
 			"repository": repositoryProperty,
@@ -299,6 +305,7 @@ type (
 	}
 	ghRef struct {
 		Ref string `json:"ref"`
+		SHA string `json:"sha"`
 	}
 	ghIssue struct {
 		Number      int64           `json:"number"`
@@ -388,9 +395,9 @@ func decode(b []byte, out any) error {
 type created string
 
 // done is the answer of an action that closed, deleted, reran, cancelled
-// or started something on GitHub: what it did, "closed <address>", which
-// the owner's audit row keeps as it is and the agent reads as a
-// sentence.
+// or started something on GitHub, or asked it to merge: what happened,
+// "closed <address>", which the owner's audit row keeps as it is and
+// the agent reads as a sentence.
 type done string
 
 // shellJob is the answer of an action whose work happens in the agent's
@@ -1065,6 +1072,7 @@ func getPullRequest(ctx context.Context, c *call) (any, error) {
 		State        string   `json:"state"`
 		Author       string   `json:"author"`
 		Head         string   `json:"head"`
+		HeadSHA      string   `json:"head_sha,omitempty"`
 		Base         string   `json:"base"`
 		Draft        bool     `json:"draft"`
 		Mergeable    *bool    `json:"mergeable"`
@@ -1077,7 +1085,7 @@ func getPullRequest(ctx context.Context, c *call) (any, error) {
 		URL          string   `json:"url"`
 		Diff         *string  `json:"diff,omitempty"`
 		Note         string   `json:"note,omitempty"`
-	}{pr.Number, pr.Title, pullState(pr), pr.User.Login, pr.Head.Ref, pr.Base.Ref, pr.Draft, pr.Mergeable,
+	}{pr.Number, pr.Title, pullState(pr), pr.User.Login, pr.Head.Ref, pr.Head.SHA, pr.Base.Ref, pr.Draft, pr.Mergeable,
 		pr.Additions, pr.Deletions, pr.ChangedFiles, nonNil(pr.Labels), body, pr.UpdatedAt, pr.HTMLURL, diff, strings.Join(notes, " ")}, nil
 }
 

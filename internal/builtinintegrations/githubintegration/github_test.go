@@ -57,9 +57,9 @@ func TestManifest(t *testing.T) {
 		!strings.Contains(form.Fields[2].Description, ".github/workflows") || !strings.Contains(form.Fields[2].Description, "Actions secrets") ||
 		form.Fields[3].Key != "run_workflows" || form.Fields[3].Kind != integration.FieldSwitch || form.Fields[3].Title != "May run workflows" || form.Fields[3].Required ||
 		!strings.Contains(form.Fields[3].Description, "Actions secrets") || !strings.Contains(form.Fields[3].Description, "a workflow may deploy") ||
-		!strings.Contains(form.Fields[3].Description, "May create, comment, push and close") ||
+		!strings.Contains(form.Fields[3].Description, "May create, comment, push, merge and close") ||
 		form.Fields[0].Key != "repositories" || form.Fields[0].Kind != integration.FieldList || !form.Fields[0].Required ||
-		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create, comment, push and close" ||
+		form.Fields[1].Key != "write" || form.Fields[1].Kind != integration.FieldSwitch || form.Fields[1].Title != "May create, comment, push, merge and close" ||
 		!strings.Contains(form.Fields[1].Description, "push branches and tags") ||
 		!strings.Contains(form.Fields[1].Description, "close the issues and pull requests the app opened") ||
 		!strings.Contains(form.Fields[1].Description, "delete a branch whose commits beyond the default branch the app's bot authored and committed") {
@@ -76,12 +76,12 @@ func TestManifest(t *testing.T) {
 		switch tl.Access {
 		case "write":
 			writes = append(writes, tl.Name)
-			if !strings.HasSuffix(tl.Description, " Only when the agent's access may create, comment, push and close.") {
+			if !strings.HasSuffix(tl.Description, " Only when the agent's access may create, comment, push, merge and close.") {
 				t.Errorf("%s: %q does not name the write switch", tl.Name, tl.Description)
 			}
 		case "run_workflows":
 			runs = append(runs, tl.Name)
-			if !strings.HasSuffix(tl.Description, " Only when the agent's access may run workflows and may create, comment, push and close.") ||
+			if !strings.HasSuffix(tl.Description, " Only when the agent's access may run workflows and may create, comment, push, merge and close.") ||
 				!strings.Contains(tl.Description, "Actions secrets") {
 				t.Errorf("%s: %q does not name both switches and the secrets", tl.Name, tl.Description)
 			}
@@ -97,12 +97,12 @@ func TestManifest(t *testing.T) {
 		"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
 		"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
 		"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset",
-		"rerun_workflow_run", "rerun_job", "cancel_workflow_run", "dispatch_workflow",
+		"rerun_workflow_run", "rerun_job", "cancel_workflow_run", "dispatch_workflow", "merge_pull_request", "get_merge_result",
 		"clone", "fetch", "push"}
 	if !slices.Equal(names, want) {
 		t.Errorf("tools = %v", names)
 	}
-	if want := []string{"create_issue", "comment", "close_issue", "create_pull_request", "close_pull_request", "delete_branch", "push"}; !slices.Equal(writes, want) {
+	if want := []string{"create_issue", "comment", "close_issue", "create_pull_request", "close_pull_request", "delete_branch", "merge_pull_request", "get_merge_result", "push"}; !slices.Equal(writes, want) {
 		t.Errorf("tools needing write = %v, want %v", writes, want)
 	}
 	if want := []string{"rerun_workflow_run", "rerun_job", "cancel_workflow_run", "dispatch_workflow"}; !slices.Equal(runs, want) {
@@ -173,12 +173,13 @@ func TestToolsFollowTheManifestAndTheAccess(t *testing.T) {
 		{"writer", agent(true, "acme/*"), []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 			"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
 			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
-			"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset", "clone", "fetch", "push"}},
+			"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset",
+			"merge_pull_request", "get_merge_result", "clone", "fetch", "push"}},
 		{"writer with the run_workflows switch", runner("acme/*"), []string{"list_repositories", "get_repository", "list_issues", "get_issue", "create_issue", "comment", "close_issue",
 			"list_pull_requests", "get_pull_request", "create_pull_request", "close_pull_request", "list_branches", "delete_branch", "compare",
 			"list_checks", "get_check_run", "list_workflows", "list_workflow_runs", "get_workflow_run", "get_job_log", "save_job_log", "list_artifacts", "download_artifact",
 			"list_pull_request_reviews", "list_review_comments", "list_releases", "get_release", "list_release_assets", "save_release_asset",
-			"rerun_workflow_run", "rerun_job", "cancel_workflow_run", "dispatch_workflow", "clone", "fetch", "push"}},
+			"rerun_workflow_run", "rerun_job", "cancel_workflow_run", "dispatch_workflow", "merge_pull_request", "get_merge_result", "clone", "fetch", "push"}},
 	} {
 		tools, err := g.Tools(context.Background(), c.caller)
 		if err != nil {

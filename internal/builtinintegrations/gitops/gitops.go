@@ -336,9 +336,9 @@ func pushTakes(in Integration) string {
 	return words + "."
 }
 
-// refuseWorkflows refuses a push that says it changes workflow files
+// RefuseWorkflows refuses a call that says it changes workflow files
 // when the access does not allow it.
-func refuseWorkflows(in Integration) error {
+func RefuseWorkflows(in Integration) error {
 	return refuse(fmt.Sprintf("The %s integration's access for you does not allow pushing changes to workflow files (.github/workflows). Ask the owner if your work needs it.", in.DisplayName),
 		"the access does not allow pushing changes to workflow files")
 }
@@ -371,7 +371,7 @@ func checkPush(c *Call, p Policy, a pushArgs) error {
 	}
 	if a.Workflows != nil && *a.Workflows {
 		if !p.Workflows {
-			return refuseWorkflows(in)
+			return RefuseWorkflows(in)
 		}
 		c.workflows = true
 	}

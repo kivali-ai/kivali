@@ -30,7 +30,7 @@ const (
 
 // needsRunWorkflows ends the owner's description of every run action:
 // the run_workflows switch and the write switch, in their titles' words.
-const needsRunWorkflows = " Only when the agent's access may run workflows and may create, comment, push and close."
+const needsRunWorkflows = " Only when the agent's access may run workflows and may create, comment, push, merge and close."
 
 // The bounds on dispatch_workflow's inputs, as characters except for
 // inputsMost, the most properties GitHub takes.
@@ -131,9 +131,15 @@ func runRefused(err error, what, note string) error {
 	}
 	switch ae.Status {
 	case http.StatusForbidden, http.StatusConflict, http.StatusUnprocessableEntity:
-		return failure(fmt.Sprintf("GitHub did not %s (HTTP %d): %s. %s For anything else, ask the owner.", what, ae.Status, sentence(ae.Message), note))
+		return failure(refusedWords(ae, what, note))
 	}
 	return err
+}
+
+// refusedWords is GitHub's refusal of what in its own words, then note,
+// then the owner for anything else.
+func refusedWords(ae *apiError, what, note string) string {
+	return fmt.Sprintf("GitHub did not %s (HTTP %d): %s. %s For anything else, ask the owner.", what, ae.Status, sentence(ae.Message), note)
 }
 
 // post sends path a POST with no body, with a token that may write

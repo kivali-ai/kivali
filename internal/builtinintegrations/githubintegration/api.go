@@ -34,7 +34,8 @@ const (
 	mediaDiff = "application/vnd.github.diff"
 )
 
-// apiVersion is the REST API version every request names.
+// apiVersion is the REST API version a request names unless it asks for
+// another (request.version).
 const apiVersion = "2022-11-28"
 
 // apiError is a request GitHub did not answer with success, or did not
@@ -43,6 +44,10 @@ const apiVersion = "2022-11-28"
 type apiError struct {
 	Status  int
 	Message string
+	// Body is the error answer as GitHub gave it, for an action that
+	// reads more of it than its words (the id a merge's 409 names).
+	// Nothing passed on quotes it.
+	Body []byte
 	// RateLimited is a 403 or 429 that says the app's requests are
 	// limited for now.
 	RateLimited bool
@@ -146,6 +151,8 @@ type request struct {
 	body any
 	// accept is the media type asked for; empty is mediaJSON.
 	accept string
+	// version is the REST API version asked for; empty is apiVersion.
+	version string
 }
 
 // secret is the credential r carries, which no words may quote.
@@ -184,6 +191,7 @@ func (g *GitHub) do(ctx context.Context, r request) ([]byte, http.Header, error)
 		return nil, nil, &apiError{
 			Status:      resp.StatusCode,
 			Message:     msg,
+			Body:        b,
 			RateLimited: rateLimited(resp, msg),
 		}
 	}
@@ -206,7 +214,7 @@ func (g *GitHub) newRequest(ctx context.Context, base *url.URL, r request) (*htt
 		return nil, err
 	}
 	req.Header.Set("Accept", cmp.Or(r.accept, mediaJSON))
-	req.Header.Set("X-GitHub-Api-Version", apiVersion)
+	req.Header.Set("X-GitHub-Api-Version", cmp.Or(r.version, apiVersion))
 	req.Header.Set("User-Agent", "Kivali")
 	switch {
 	case r.basic != nil:

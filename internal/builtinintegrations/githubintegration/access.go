@@ -14,9 +14,10 @@ import (
 
 // The access form's fields: the repositories an agent may use;
 // whether it may open, comment on and close issues and pull requests,
-// push and delete branches in them (closing only what the app opened,
-// and deleting only a branch whose own commits are all the app's bot's,
-// actions.go); whether its pushes may change workflow files
+// merge pull requests, push and delete branches in them (merging any
+// pull request, merge.go, closing only what the app opened, and deleting
+// only a branch whose own commits are all the app's bot's, actions.go);
+// whether its pushes and merges may change workflow files
 // (.github/workflows), which also needs write; and whether it may
 // rerun, cancel and start workflows (runs.go), which also needs write.
 const (
@@ -35,9 +36,9 @@ type access struct {
 	runWorkflows bool
 }
 
-// pushesWorkflows reports whether the access lets a push change
-// workflow files: the workflows switch, with write, since only a
-// writer pushes.
+// pushesWorkflows reports whether the access lets a push or a merge
+// change workflow files: the workflows switch, with write, since only a
+// writer pushes or merges.
 func (a access) pushesWorkflows() bool { return a.write && a.workflows }
 
 // runsWorkflows reports whether the access lets the agent rerun, cancel
@@ -71,8 +72,8 @@ func (a access) includes(repo string) bool {
 // writeRefusal is the words of a write action called without write,
 // push among them, and writeReason its audit's reason.
 const (
-	writeRefusal = "Your access to GitHub does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches; ask the owner."
-	writeReason  = "the access does not include opening, commenting on or closing issues and pull requests, pushing or deleting branches"
+	writeRefusal = "Your access to GitHub does not include opening, commenting on or closing issues and pull requests, merging pull requests, pushing or deleting branches; ask the owner."
+	writeReason  = "the access does not include opening, commenting on or closing issues and pull requests, merging pull requests, pushing or deleting branches"
 )
 
 // runRefusal is the words of a run action called without
