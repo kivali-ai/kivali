@@ -92,7 +92,11 @@ release needs the supervisor to have is a minor too.
    worktrees, so the checkout you run it from is left as it was. Stopping
    the script while it waits is safe: run `make release VERSION=vX.Y.Z`
    again and it carries on (`--no-wait`, passed to `scripts/release.sh`,
-   stops once the pull request is open).
+   stops once the pull request is open). The script reads from GitHub
+   over HTTPS with gh's sign-in and deletes the merged branch through the
+   GitHub API, so the git remote's own credentials (an SSH key that asks
+   to be approved, say) are used once per half: to push the branch, and
+   to push the tag.
 5. **The tag push starts `.github/workflows/release.yml`.** Watch it
    under the repository's Actions tab. When it finishes the release is
    published with every asset and `/releases/latest` points at it.
