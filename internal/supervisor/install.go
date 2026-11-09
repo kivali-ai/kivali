@@ -462,8 +462,9 @@ type deployment struct {
 		Template struct {
 			Spec struct {
 				Containers []struct {
-					Name  string `json:"name"`
-					Image string `json:"image"`
+					Name    string   `json:"name"`
+					Image   string   `json:"image"`
+					Command []string `json:"command"`
 				} `json:"containers"`
 			} `json:"spec"`
 		} `json:"template"`
@@ -480,9 +481,17 @@ type deployment struct {
 type podList struct {
 	Items []struct {
 		Metadata struct {
-			Name string `json:"name"`
+			Name              string `json:"name"`
+			DeletionTimestamp string `json:"deletionTimestamp"`
 		} `json:"metadata"`
+		Spec struct {
+			Containers []struct {
+				Name  string `json:"name"`
+				Image string `json:"image"`
+			} `json:"containers"`
+		} `json:"spec"`
 		Status struct {
+			Phase string `json:"phase"`
 			// Reason is Evicted for a pod kubelet evicted (its phase is
 			// then Failed), with Message saying for what.
 			Reason            string `json:"reason"`
@@ -805,7 +814,8 @@ func (w *helmWatch) check(ctx context.Context, g Guest) error {
 }
 
 // waitServing waits for the deployment (at chartVersion and image, when
-// given) to be rolled out and for /readyz through the forward.
+// given) to be rolled out and for /readyz through the forward; given
+// both, the server must then say it is chartVersion (serverVersion).
 func (s *Supervisor) waitServing(ctx context.Context, chartVersion, image string, logf Logf) error {
 	g, err := s.running()
 	if err != nil {
@@ -862,5 +872,13 @@ func (s *Supervisor) waitServing(ctx context.Context, chartVersion, image string
 	if err := serverEvicted(ctx, g); err != nil {
 		return withDisk(ctx, g, err)
 	}
-	return diskPressure(ctx, g)
+	if err := diskPressure(ctx, g); err != nil {
+		return err
+	}
+	// An install or an upgrade names the release it put in place: the
+	// server must say it is that release.
+	if chartVersion != "" && image != "" {
+		return serverVersion(ctx, g, chartVersion, image, logf)
+	}
+	return nil
 }
