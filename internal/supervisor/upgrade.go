@@ -181,6 +181,9 @@ func (s *Supervisor) Upgrade(ctx context.Context, o UpgradeOptions, logf Logf) e
 		}
 		logf("the org cannot start: its image %s is no longer in the VM (%v); the upgrade brings the new release's images", oldServer, err)
 	}
+	if err := serverCommand(ctx, g); err != nil {
+		return fmt.Errorf("preflight: %w", err)
+	}
 	if err := s.upgradeRoom(pending, nothingChanged, logf); err != nil {
 		return err
 	}

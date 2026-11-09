@@ -1019,7 +1019,16 @@ Image tags are discovered from the baked tarballs' `manifest.json`
 with `kivali-egress-proxy`, `kivali-agent-shell` and `kivali-browser` at
 the same tag and prefix, else the install refuses. The install waits for the deployment
 (label `helm.sh/chart: kivali-<version>`, container image, rollout
-complete) and then `/readyz` through the forward. It fails fast when a
+complete) and then `/readyz` through the forward. Then it reads the
+version the server says it is: the first MiB of the log of the running
+server pod on the release's image, for the line the server logs as it
+starts (`kivali boot: version=v<version> ...`, `bootLine` in
+`main.go`; `ServerBootVersion` reads it). A version other than the
+chart's fails the install, or the upgrade, which rolls back: the image
+and the label name a release, only the binary that serves says which
+it is. A development build on either side (a `dev` pre-release part,
+as `0.0.0-dev+g<commit>`) is not compared, and a log that cannot be
+read or names no version is logged and not failed. It fails fast when a
 `kivali` pod waits on `ErrImagePull`, `ImagePullBackOff`,
 `ErrImageNeverPull` or `InvalidImageName`, when the Helm controller's
 `helm-install-kivali` job has failed 3 times with the same helm error,
@@ -1157,6 +1166,15 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    deleted it, the org cannot start on it again, and the upgrade, which
    brings the new release's images, goes ahead (logging why).
 
+   A server deployment whose `kivali` container has a `command` is
+   refused: the chart sets none, so the command was added to the
+   deployment by hand (a hotfix binary on a mounted volume, say), and
+   Helm's upgrade keeps fields the chart never set. The new release's
+   image would come up running that program, with the chart label and
+   the image both right. The refusal names the command and says to
+   remove it, and anything mounted for it, then update again; nothing
+   was changed.
+
    Once everything above passed, the installed release's images are
    pinned (see "Pinned images" below).
 2. Download chart and bundle into `downloads/<version>/`, verify SHA-256
@@ -1197,7 +1215,8 @@ An upgrade, with `local.json`'s `upgrade` as the journal:
    rewrite the manifest from the one on the data disk (only the chart URL
    and the two image tags change, so the owner and session key never
    leave the org's disk).
-7. Wait for label, image, rollout, `/readyz`, then for the agents
+7. Wait for label, image, rollout, `/readyz`, the server's own version
+   (as the install does, below), then for the agents
    (`waitAgents`): until the server's `GET /readyz/agents` answers 200,
    that is, every active agent but the CEO (which runs in the server)
    has a pod this server has provisioned on its spec, and that pod's

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -319,7 +320,7 @@ func main() {
 			credential = "signed in"
 		}
 	}
-	log.Printf("kivali boot: version=%s env=%s provider=%s credential=%q", version, cfg.Env, driver.Name(), credential)
+	log.Print(bootLine(version, cfg.Env, driver.Name(), credential))
 	if cfg.Env == "prod" {
 		log.Printf("kivali boot: PRODUCTION MODE")
 	}
@@ -845,4 +846,12 @@ func isLoopbackAddr(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// bootLine is what the server logs as it starts. After an install or an
+// upgrade the supervisor reads the version from it
+// (supervisor.ServerBootVersion) and checks it is the release it put in
+// place.
+func bootLine(version, env, provider, credential string) string {
+	return fmt.Sprintf("kivali boot: version=%s env=%s provider=%s credential=%q", version, env, provider, credential)
 }

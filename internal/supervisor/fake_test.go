@@ -153,6 +153,13 @@ type fakeBackend struct {
 	// renderSuffix is appended to the server image the "chart" renders
 	// (a chart that ignores the image values).
 	renderSuffix string
+	// serverCommand is the kivali container's command in the server
+	// deployment (nil: its image's own program). serverVersion, when
+	// set, is the version the server's boot line names; unset, its
+	// image tag. noBootLine makes the server's log hold no boot line.
+	serverCommand []string
+	serverVersion string
+	noBootLine    bool
 	// fatalAt makes boot number n (1-based) print a FATAL.
 	fatalAt map[int]string
 	// proxyEntered, when set, makes Proxy signal it and then block
@@ -917,7 +924,7 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 		d := map[string]any{
 			"metadata": map[string]any{"generation": gen, "labels": map[string]string{"helm.sh/chart": strings.TrimSuffix(file, ".tgz")}},
 			"spec": map[string]any{"replicas": 1, "template": map[string]any{"spec": map[string]any{
-				"containers": []map[string]string{{"name": "egress-proxy", "image": "x"}, {"name": "kivali", "image": ref}},
+				"containers": []map[string]any{{"name": "egress-proxy", "image": "x"}, {"name": "kivali", "image": ref, "command": g.m.vm.serverCommand}},
 			}}},
 			"status": map[string]any{"observedGeneration": gen, "replicas": 1, "updatedReplicas": 1, "readyReplicas": ready, "availableReplicas": ready},
 		}
@@ -939,7 +946,15 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 0, nil
 	case strings.Contains(joined, "get pods -l app=kivali"):
 		manifest, _ := g.file(ManifestRel)
-		_, vals, _ := ParseManifest([]byte(manifest))
+		file, vals, _ := ParseManifest([]byte(manifest))
+		var containers []map[string]string
+		if image, ok := vals["image"].(map[string]any); ok {
+			ref := fmt.Sprintf("%s:%s", image["repository"], image["tag"])
+			if !strings.Contains(file, "0.15.0") {
+				ref += g.m.vm.renderSuffix
+			}
+			containers = []map[string]string{{"name": "egress-proxy", "image": "x"}, {"name": "kivali", "image": ref}}
+		}
 		var statuses []map[string]any
 		if image, ok := vals["image"].(map[string]any); ok && g.m.vm.broken[fmt.Sprint(image["tag"])] {
 			statuses = append(statuses, map[string]any{"name": "kivali", "state": map[string]any{
@@ -950,7 +965,8 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 		}
 		items := []any{map[string]any{
 			"metadata": map[string]string{"name": "kivali-1"},
-			"status":   map[string]any{"containerStatuses": statuses},
+			"spec":     map[string]any{"containers": containers},
+			"status":   map[string]any{"phase": "Running", "containerStatuses": statuses},
 		}}
 		vm.mu.Lock()
 		if vm.evicted || vm.staleEvicted {
@@ -975,6 +991,21 @@ func (g fakeGuest) kubectl(args []string, stdin io.Reader, stdout, stderr io.Wri
 		vm.mu.Unlock()
 		return 0, nil
 	case strings.Contains(joined, "delete pod"), strings.Contains(joined, "rollout restart"):
+		return 0, nil
+	case strings.HasPrefix(joined, "-n kivali logs kivali-1 -c kivali --limit-bytes="):
+		if g.m.vm.noBootLine {
+			_, _ = io.WriteString(stdout, "2026/01/02 03:04:05 store: opened\n")
+			return 0, nil
+		}
+		version := g.m.vm.serverVersion
+		if version == "" {
+			manifest, _ := g.file(ManifestRel)
+			_, vals, _ := ParseManifest([]byte(manifest))
+			if image, ok := vals["image"].(map[string]any); ok {
+				version = fmt.Sprint(image["tag"])
+			}
+		}
+		_, _ = fmt.Fprintf(stdout, "2026/01/02 03:04:05 store: opened\n2026/01/02 03:04:05 kivali boot: version=%s env=dev provider=claude credential=%q\n", version, "signed in")
 		return 0, nil
 	case strings.Contains(joined, "exec") && strings.HasSuffix(joined, "claude auth status --json"):
 		if g.m.vm.authStatus == "" {
