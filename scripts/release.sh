@@ -53,6 +53,13 @@
 #   9. at that commit every versioned file says VERSION and the updater
 #      key is the owner's
 #
+# Reads from origin (fetches, ls-remote) go over HTTPS with gh's token,
+# and the merged branch is deleted through the GitHub API, so the git
+# remote's own credentials (an SSH key that may ask to be approved each
+# time) are used once per half: the branch push when opening, the tag
+# push when tagging. An origin that is not on github.com is used as it is
+# for everything.
+#
 # Needs git and an authenticated gh (gh auth status). GH overrides the gh
 # command.
 #
@@ -94,9 +101,37 @@ if ! "$GH" auth status >/dev/null 2>&1; then
   exit 1
 fi
 
+# origin on github.com as OWNER/NAME, or nothing when it is elsewhere.
+origin_url="$(git remote get-url origin)"
+repo=""
+case "$origin_url" in
+  git@github.com:*) repo="${origin_url#git@github.com:}" ;;
+  ssh://git@github.com/*) repo="${origin_url#ssh://git@github.com/}" ;;
+  https://github.com/*) repo="${origin_url#https://github.com/}" ;;
+esac
+repo="${repo%/}"
+repo="${repo%.git}"
+if [ -n "$repo" ]; then
+  read_url="https://github.com/$repo.git"
+else
+  read_url="$origin_url"
+fi
+
+# origin_read ARGS...: git with gh as its only credential helper, for the
+# commands that read from $read_url.
+origin_read() {
+  git -c credential.helper= -c "credential.helper=!\"$GH\" auth git-credential" "$@"
+}
+
+# fetch_origin [ARGS...]: origin's branches into refs/remotes/origin/*,
+# as `git fetch origin` would.
+fetch_origin() {
+  origin_read fetch --quiet "$@" "$read_url" '+refs/heads/*:refs/remotes/origin/*'
+}
+
 # Fetch with --tags so the tag check below covers origin's tags too.
 echo "==> fetching origin"
-git fetch origin --tags --quiet
+fetch_origin --tags
 
 # Guard 2: the tag is unused.
 if git rev-parse --verify --quiet "refs/tags/$VERSION" >/dev/null; then
@@ -235,7 +270,7 @@ tag_merge() {
     echo "release: pull request #$number is merged but GitHub reports no merge commit" >&2
     exit 1
   fi
-  git fetch origin --quiet
+  fetch_origin
   # Guard 8: the merge is on main.
   if ! git merge-base --is-ancestor "$sha" origin/main; then
     echo "release: #$number's merge commit $sha is not on origin/main" >&2
@@ -251,7 +286,11 @@ tag_merge() {
   git tag -a "$VERSION" -m "Release $VERSION" "$sha"
   git push --quiet origin "refs/tags/$VERSION"
   # The branch has served its purpose. GitHub may have deleted it already.
-  git push --quiet origin --delete "$branch" >/dev/null 2>&1 || true
+  if [ -n "$repo" ]; then
+    "$GH" api -X DELETE "repos/$repo/git/refs/heads/$branch" >/dev/null 2>&1 || true
+  else
+    git push --quiet origin --delete "$branch" >/dev/null 2>&1 || true
+  fi
 
   echo
   echo "==> release $VERSION tagged"
@@ -263,7 +302,7 @@ tag_merge() {
 }
 
 branch_on_origin() {
-  git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1
+  origin_read ls-remote --exit-code --heads "$read_url" "$branch" >/dev/null 2>&1
 }
 
 # Nothing to resume, or only a pull request that was closed unmerged:
