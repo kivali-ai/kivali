@@ -4400,11 +4400,12 @@ token>}`, and core adds the connection's proxy credential
 ([The connection's proxy credential](#the-connections-proxy-credential)).
 Every job also carries `lfs: {hosts: lfsHosts}`
 (`github-cloud.githubusercontent.com`, where GitHub's LFS API sends a
-download, and `github-cloud.s3.amazonaws.com`, for an upload), so the
+download, `github-cloud.s3.amazonaws.com`, for an upload, and
+`lfs.github.com`, where a push confirms each upload), so the
 daemon moves the LFS files the job's commits name through
 `https://github.com/<owner>/<name>.git/info/lfs` with the same token
 ([Git LFS in the daemon](#git-lfs-in-the-daemon)); `Hosts` names
-github.com and those two, which the proxy credential admits. The
+github.com and those three, which the proxy credential admits. The
 agent's answers say how many LFS files went up or came down
 (`lfs_files`, `lfs_bytes`) and which did not download (`lfs_error`),
 and the push, clone and fetch descriptions say what happens to them.
