@@ -58,10 +58,11 @@ func (g *GitHub) Hosts(builtinintegrations.Connection) []string {
 }
 
 // lfsHosts are where GitHub's LFS API sends a clone, a fetch or a push
-// for a file's content, at an address it signs for that file: the
-// daemon goes nowhere else for one (agentshell.GitLFS), and sends it no
-// token of Kivali's.
-var lfsHosts = []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
+// for a file's content, and where a push confirms each upload
+// (lfs.github.com), at an address it signs for that file: the daemon
+// goes nowhere else for one (agentshell.GitLFS), and sends it no token
+// of Kivali's.
+var lfsHosts = []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com", "lfs.github.com"}
 
 // gitPolicy is what caller may do through conn with the clone, fetch
 // or push name, and the connection's values: on github.com, the

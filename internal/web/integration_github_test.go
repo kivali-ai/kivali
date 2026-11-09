@@ -863,7 +863,7 @@ func TestGitHubShellJobGetsTheConnectionsProxyCredential(t *testing.T) {
 	// The credential admits github.com, the hosts GitHub keeps LFS files
 	// on, and the API and the hosts a shell's download reaches, Actions'
 	// and release assets'; the daemon is told those same LFS hosts.
-	lfsHosts := []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com"}
+	lfsHosts := []string{"github-cloud.githubusercontent.com", "github-cloud.s3.amazonaws.com", "lfs.github.com"}
 	admitted := slices.Sorted(slices.Values(proxy.Hosts))
 	reached := slices.Concat([]string{"github.com", "api.github.com", "productionresultssa*.blob.core.windows.net", "actions.githubusercontent.com",
 		"release-assets.githubusercontent.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com"}, lfsHosts)
