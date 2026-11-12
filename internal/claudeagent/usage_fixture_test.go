@@ -3,6 +3,7 @@ package claudeagent
 import (
 	"bufio"
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,13 +37,13 @@ const fixtureStream = "stream_haiku_two_tools.jsonl"
 
 // fixtureWant is the transcript's unique-message final usage above —
 // what a usage row for this turn must carry.
-var fixtureWant = provider.TokenUsage{InputTokens: 26, OutputTokens: 293, CacheReadTokens: 68874, CacheCreateTokens: 14580}
+var fixtureWant = provider.TokenUsage{InputTokens: 26, OutputTokens: 293, CacheReadTokens: 68874, CacheCreateTokens: 14580, CacheCreate1hTokens: 14580}
 
 // fixtureSnapshotsOnly is the same turn reduced from the assistant
 // events alone (no result frame): each message once, so the
 // prompt-side counts already match the transcript, but output is the
 // sum of the three start-of-message snapshots.
-var fixtureSnapshotsOnly = provider.TokenUsage{InputTokens: 26, OutputTokens: 11, CacheReadTokens: 68874, CacheCreateTokens: 14580}
+var fixtureSnapshotsOnly = provider.TokenUsage{InputTokens: 26, OutputTokens: 11, CacheReadTokens: 68874, CacheCreateTokens: 14580, CacheCreate1hTokens: 14580}
 
 func loadStreamFixture(t *testing.T, name string) []*streamJSONEvent {
 	t.Helper()
@@ -170,6 +171,28 @@ func TestFixtureWithoutResultFrameKeepsDedupedSnapshots(t *testing.T) {
 	}
 	if got := s.Final().Usage; got != fixtureSnapshotsOnly {
 		t.Errorf("Usage without a result frame = %+v, want %+v", got, fixtureSnapshotsOnly)
+	}
+}
+
+// TestFixtureCostMatchesTheCLI prices the recorded turn and compares it
+// with the total_cost_usd the CLI reported for it, $0.0375384. Every
+// cache write in the recording has a one-hour lifetime; pricing them at
+// the five-minute rate instead comes to $0.0266034, under-reporting
+// the turn by 29% and its cache writes by 37.5%.
+func TestFixtureCostMatchesTheCLI(t *testing.T) {
+	s := newTestSubprocStream("claude-haiku-4-5-20251001")
+	s.gauge = newUsageGauge(true)
+	var reported float64
+	for _, ev := range loadStreamFixture(t, fixtureStream) {
+		if ev.Type == "result" {
+			reported = ev.TotalCostUSD
+		}
+		s.handleEvent(ev)
+	}
+	final := s.Final()
+	got := defaultPricing.Cost(final.Model, final.Usage)
+	if math.Abs(got-reported) > 1e-9 || reported != 0.0375384 {
+		t.Errorf("priced turn = $%.7f, want the CLI's $%.7f", got, reported)
 	}
 }
 

@@ -40,11 +40,12 @@ func priceUsage(p provider.Provider, u store.UsageRecord) (cost float64, ok bool
 		return 0, false
 	}
 	return p.Price(u.Model, provider.TokenUsage{
-		InputTokens:       u.InputTokens,
-		OutputTokens:      u.OutputTokens,
-		CacheReadTokens:   u.CacheReadTokens,
-		CacheCreateTokens: u.CacheCreateTokens,
-		LongPrompt:        u.LongPrompt,
+		InputTokens:         u.InputTokens,
+		OutputTokens:        u.OutputTokens,
+		CacheReadTokens:     u.CacheReadTokens,
+		CacheCreateTokens:   u.CacheCreateTokens,
+		CacheCreate1hTokens: u.CacheCreate1hTokens,
+		LongPrompt:          u.LongPrompt,
 	}), true
 }
 

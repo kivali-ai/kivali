@@ -704,11 +704,12 @@ func (s *Server) onAgentpodDone(st *agentpodTurnState, ev agentpod.TurnEvent) {
 		log.Printf("agentpod turn %s: error text on a completed turn, dropped: %q", st.slug, st.errorDetail.String())
 	}
 	usage := provider.TokenUsage{
-		InputTokens:       ev.InputTokens,
-		OutputTokens:      ev.OutputTokens,
-		CacheReadTokens:   ev.CacheReadTokens,
-		CacheCreateTokens: ev.CacheCreateTokens,
-		LongPrompt:        ev.LongPrompt,
+		InputTokens:         ev.InputTokens,
+		OutputTokens:        ev.OutputTokens,
+		CacheReadTokens:     ev.CacheReadTokens,
+		CacheCreateTokens:   ev.CacheCreateTokens,
+		CacheCreate1hTokens: ev.CacheCreate1hTokens,
+		LongPrompt:          ev.LongPrompt,
 	}
 	rotation := s.hasRotationPending(st.slug)
 	payload := map[string]any{
@@ -792,22 +793,24 @@ func (s *Server) recordAgentpodUsage(st *agentpodTurnState, ev agentpod.TurnEven
 		model = st.model
 	}
 	usage := provider.TokenUsage{
-		InputTokens:       ev.InputTokens,
-		OutputTokens:      ev.OutputTokens,
-		CacheReadTokens:   ev.CacheReadTokens,
-		CacheCreateTokens: ev.CacheCreateTokens,
-		LongPrompt:        ev.LongPrompt,
+		InputTokens:         ev.InputTokens,
+		OutputTokens:        ev.OutputTokens,
+		CacheReadTokens:     ev.CacheReadTokens,
+		CacheCreateTokens:   ev.CacheCreateTokens,
+		CacheCreate1hTokens: ev.CacheCreate1hTokens,
+		LongPrompt:          ev.LongPrompt,
 	}
 	// Buckets to record. Single-model turns (the common case, and every
 	// turn from a pod predating the split) yield exactly one, identical
 	// to what this wrote before ByModel existed.
 	buckets := []agentpod.TurnModelUsage{{
-		Model:             model,
-		InputTokens:       usage.InputTokens,
-		OutputTokens:      usage.OutputTokens,
-		CacheReadTokens:   usage.CacheReadTokens,
-		CacheCreateTokens: usage.CacheCreateTokens,
-		LongPrompt:        usage.LongPrompt,
+		Model:               model,
+		InputTokens:         usage.InputTokens,
+		OutputTokens:        usage.OutputTokens,
+		CacheReadTokens:     usage.CacheReadTokens,
+		CacheCreateTokens:   usage.CacheCreateTokens,
+		CacheCreate1hTokens: usage.CacheCreate1hTokens,
+		LongPrompt:          usage.LongPrompt,
 	}}
 	if len(ev.ByModel) > 0 {
 		buckets = ev.ByModel
@@ -818,11 +821,12 @@ func (s *Server) recordAgentpodUsage(st *agentpodTurnState, ev agentpod.TurnEven
 			bModel = model
 		}
 		bUsage := provider.TokenUsage{
-			InputTokens:       b.InputTokens,
-			OutputTokens:      b.OutputTokens,
-			CacheReadTokens:   b.CacheReadTokens,
-			CacheCreateTokens: b.CacheCreateTokens,
-			LongPrompt:        b.LongPrompt,
+			InputTokens:         b.InputTokens,
+			OutputTokens:        b.OutputTokens,
+			CacheReadTokens:     b.CacheReadTokens,
+			CacheCreateTokens:   b.CacheCreateTokens,
+			CacheCreate1hTokens: b.CacheCreate1hTokens,
+			LongPrompt:          b.LongPrompt,
 		}
 		// The CLI's turn total rides the first row only; see the doc
 		// comment. Rows after it fall through to local pricing, which is
@@ -857,16 +861,17 @@ func (s *Server) appendUsageRow(st *agentpodTurnState, model string, usage provi
 		}
 	}
 	if err := s.Store.AppendUsage(store.UsageRecord{
-		TS:                time.Now().UTC(),
-		Agent:             st.slug,
-		Purpose:           st.source,
-		Model:             model,
-		InputTokens:       usage.InputTokens,
-		OutputTokens:      usage.OutputTokens,
-		CacheReadTokens:   usage.CacheReadTokens,
-		CacheCreateTokens: usage.CacheCreateTokens,
-		LongPrompt:        usage.LongPrompt,
-		CostUSD:           cost,
+		TS:                  time.Now().UTC(),
+		Agent:               st.slug,
+		Purpose:             st.source,
+		Model:               model,
+		InputTokens:         usage.InputTokens,
+		OutputTokens:        usage.OutputTokens,
+		CacheReadTokens:     usage.CacheReadTokens,
+		CacheCreateTokens:   usage.CacheCreateTokens,
+		CacheCreate1hTokens: usage.CacheCreate1hTokens,
+		LongPrompt:          usage.LongPrompt,
+		CostUSD:             cost,
 	}); err != nil {
 		log.Printf("agentpod turn %s: append usage: %v", st.slug, err)
 	}

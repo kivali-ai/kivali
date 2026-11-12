@@ -43,3 +43,28 @@ func TestUsageEventCarriesLongPromptTier(t *testing.T) {
 		t.Errorf("ByModel = %+v, want the standard bucket then the long one", split.ByModel)
 	}
 }
+
+// TestUsageEventCarriesOneHourCacheWrites is the pod's half of the
+// cache-write split. Core prices one-hour writes at 2x input and the
+// rest at 1.25x from the counts on the event, so a count dropped here
+// under-reports those writes by 37.5%.
+func TestUsageEventCarriesOneHourCacheWrites(t *testing.T) {
+	ev := usageEvent(TurnEventDone, &provider.CompleteResponse{
+		Model: "claude-opus-5-5",
+		Usage: provider.TokenUsage{CacheCreateTokens: 900, CacheCreate1hTokens: 700},
+		ByModel: []provider.ModelUsage{
+			{Model: "claude-opus-5-5", Usage: provider.TokenUsage{CacheCreateTokens: 600, CacheCreate1hTokens: 500}},
+			{Model: "claude-fable-5-2", Usage: provider.TokenUsage{CacheCreateTokens: 300, CacheCreate1hTokens: 200}},
+		},
+	})
+	if ev.CacheCreate1hTokens != 700 || len(ev.ByModel) != 2 || ev.ByModel[0].CacheCreate1hTokens != 500 || ev.ByModel[1].CacheCreate1hTokens != 200 {
+		t.Errorf("event = %+v, want the one-hour counts on the flat fields and each bucket", ev)
+	}
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"cache_create_1h_tokens":700`) {
+		t.Errorf("event JSON %s has no cache_create_1h_tokens key", raw)
+	}
+}

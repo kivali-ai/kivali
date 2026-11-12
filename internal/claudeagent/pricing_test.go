@@ -233,6 +233,34 @@ func TestCostOpus55IsCheaperThanOpus5OnEveryAxis(t *testing.T) {
 	}
 }
 
+// TestCostPricesOneHourCacheWritesAtTheirRate guards the cache-write
+// split. The CLI writes most of its cache with a one-hour lifetime,
+// billed at 2x input against the five-minute 1.25x; pricing every write
+// at the five-minute rate under-reports cache writes by 37.5%.
+func TestCostPricesOneHourCacheWritesAtTheirRate(t *testing.T) {
+	// Opus 5.5: $5 five-minute, $8 one-hour.
+	u := provider.TokenUsage{CacheCreateTokens: 1_000_000, CacheCreate1hTokens: 600_000}
+	if got, want := defaultPricing.Cost("claude-opus-5-5", u), 0.4*5.00+0.6*8.00; math.Abs(got-want) > 1e-9 {
+		t.Errorf("opus-5-5 split cache write = %v, want %v", got, want)
+	}
+	// A row with no one-hour count prices at the five-minute rate.
+	u.CacheCreate1hTokens = 0
+	if got := defaultPricing.Cost("claude-opus-5-5", u); math.Abs(got-5.00) > 1e-9 {
+		t.Errorf("opus-5-5 unsplit cache write = %v, want 5", got)
+	}
+	// A one-hour count above the total is capped at the total rather
+	// than billing tokens that were never written.
+	u.CacheCreate1hTokens = 2_000_000
+	if got := defaultPricing.Cost("claude-opus-5-5", u); math.Abs(got-8.00) > 1e-9 {
+		t.Errorf("opus-5-5 over-reported one-hour write = %v, want 8", got)
+	}
+	// Haiku 5.5's long-prompt tier has its own one-hour rate.
+	long := provider.TokenUsage{CacheCreateTokens: 1_000_000, CacheCreate1hTokens: 1_000_000, LongPrompt: true}
+	if got := defaultPricing.Cost("claude-haiku-5-5", long); math.Abs(got-1.00) > 1e-9 {
+		t.Errorf("haiku-5-5 long-prompt one-hour write = %v, want 1", got)
+	}
+}
+
 // TestCostHaiku55LongPromptTier pins Haiku 5.5's two tiers. A call
 // whose prompt is above 100k tokens bills every token, output
 // included, at 5x the standard rate. Pricing that call at the standard

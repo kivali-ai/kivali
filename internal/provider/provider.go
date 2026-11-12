@@ -355,6 +355,10 @@ type TokenUsage struct {
 	OutputTokens      int
 	CacheReadTokens   int
 	CacheCreateTokens int
+	// CacheCreate1hTokens is the part of CacheCreateTokens written with
+	// a one-hour lifetime, which bills at a higher rate than the
+	// five-minute writes that make up the rest.
+	CacheCreate1hTokens int
 
 	// LongPrompt marks tokens from calls whose prompt (input, cache
 	// read and cache write together) was above the model's long-prompt
@@ -371,11 +375,12 @@ type TokenUsage struct {
 // one, which is why such a turn also reports ByModel.
 func (u TokenUsage) Add(o TokenUsage) TokenUsage {
 	return TokenUsage{
-		InputTokens:       u.InputTokens + o.InputTokens,
-		OutputTokens:      u.OutputTokens + o.OutputTokens,
-		CacheReadTokens:   u.CacheReadTokens + o.CacheReadTokens,
-		CacheCreateTokens: u.CacheCreateTokens + o.CacheCreateTokens,
-		LongPrompt:        u.LongPrompt || o.LongPrompt,
+		InputTokens:         u.InputTokens + o.InputTokens,
+		OutputTokens:        u.OutputTokens + o.OutputTokens,
+		CacheReadTokens:     u.CacheReadTokens + o.CacheReadTokens,
+		CacheCreateTokens:   u.CacheCreateTokens + o.CacheCreateTokens,
+		CacheCreate1hTokens: u.CacheCreate1hTokens + o.CacheCreate1hTokens,
+		LongPrompt:          u.LongPrompt || o.LongPrompt,
 	}
 }
 
@@ -549,6 +554,8 @@ type UsageEvent struct {
 	OutputTokens      int
 	CacheReadTokens   int
 	CacheCreateTokens int
+	// CacheCreate1hTokens is TokenUsage.CacheCreate1hTokens.
+	CacheCreate1hTokens int
 	// LongPrompt is TokenUsage.LongPrompt for this event's tokens.
 	LongPrompt bool
 	CostUSD    float64

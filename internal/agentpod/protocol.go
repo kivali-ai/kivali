@@ -419,6 +419,9 @@ type TurnModelUsage struct {
 	OutputTokens      int    `json:"output_tokens,omitempty"`
 	CacheReadTokens   int    `json:"cache_read_tokens,omitempty"`
 	CacheCreateTokens int    `json:"cache_create_tokens,omitempty"`
+	// CacheCreate1hTokens is the one-hour part of CacheCreateTokens
+	// (provider.TokenUsage.CacheCreate1hTokens).
+	CacheCreate1hTokens int `json:"cache_create_1h_tokens,omitempty"`
 	// LongPrompt marks tokens billed at the model's long-prompt rates
 	// (provider.TokenUsage.LongPrompt).
 	LongPrompt bool `json:"long_prompt,omitempty"`
@@ -486,6 +489,9 @@ type TurnEvent struct {
 	OutputTokens      int    `json:"output_tokens,omitempty"`
 	CacheReadTokens   int    `json:"cache_read_tokens,omitempty"`
 	CacheCreateTokens int    `json:"cache_create_tokens,omitempty"`
+	// CacheCreate1hTokens is the one-hour part of CacheCreateTokens
+	// (provider.TokenUsage.CacheCreate1hTokens).
+	CacheCreate1hTokens int `json:"cache_create_1h_tokens,omitempty"`
 	// LongPrompt marks the flat counts as billed at the model's
 	// long-prompt rates. Read only when ByModel is empty: a turn with
 	// calls on both sides of the threshold always sends ByModel.
