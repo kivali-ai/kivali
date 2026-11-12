@@ -173,6 +173,7 @@ func TestFriendlyModelName(t *testing.T) {
 		// render "Fable 5.1" and not be mistaken for the bare "Fable 5"
 		// by a prefix match anywhere downstream.
 		{"claude-fable-5-1", "Fable 5.1"},
+		{"claude-fable-5-2", "Fable 5.2"},
 		// Opus 5.5 is the same two-part shape after a one-part sibling,
 		// and the fleet default — the label most chips show.
 		{"claude-opus-5-5", "Opus 5.5"},
@@ -200,6 +201,7 @@ func TestContextWindow(t *testing.T) {
 		want int
 	}{
 		// Natively 1M — bare name, no suffix needed.
+		{"claude-fable-5-2", 1_000_000},
 		{"claude-fable-5-1", 1_000_000},
 		{"claude-fable-5", 1_000_000},
 		{"claude-opus-5-5", 1_000_000},

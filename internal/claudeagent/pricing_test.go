@@ -233,6 +233,35 @@ func TestCostOpus55IsCheaperThanOpus5OnEveryAxis(t *testing.T) {
 	}
 }
 
+// TestCostFable52RatesAndBelowFable51 pins Fable 5.2's four published
+// rates ($8 input, $40 output, $10 5-minute cache write, $0.20 cache
+// read). Its cache read is 0.025x its input rate, so a row copied from
+// Fable 5.1 or derived from InputPerMTok would misprice the line that
+// dominates a long-running Fable agent's bill. It also checks 5.2 is
+// below 5.1 on every axis: agents pinned to 5.1 move to 5.2 at boot,
+// and a row priced above its predecessor would make that move raise
+// their reported spend.
+func TestCostFable52RatesAndBelowFable51(t *testing.T) {
+	for _, axis := range []struct {
+		name string
+		u    provider.TokenUsage
+		want float64
+	}{
+		{"input", provider.TokenUsage{InputTokens: 1_000_000}, 8.00},
+		{"output", provider.TokenUsage{OutputTokens: 1_000_000}, 40.00},
+		{"cache write", provider.TokenUsage{CacheCreateTokens: 1_000_000}, 10.00},
+		{"cache read", provider.TokenUsage{CacheReadTokens: 1_000_000}, 0.20},
+	} {
+		newer := defaultPricing.Cost("claude-fable-5-2", axis.u)
+		if math.Abs(newer-axis.want) > 1e-9 {
+			t.Errorf("%s: fable-5-2 Cost = %v, want %v", axis.name, newer, axis.want)
+		}
+		if older := defaultPricing.Cost("claude-fable-5-1", axis.u); newer >= older {
+			t.Errorf("%s: fable-5-2 Cost %v is not below fable-5-1 %v", axis.name, newer, older)
+		}
+	}
+}
+
 // TestCostPricesFoundryDeployments: on Microsoft Foundry, --model names
 // a deployment, and Kivali needs each deployment named after the
 // model's catalog id (SelectableModelIDs), so the model a Foundry usage

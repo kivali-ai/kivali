@@ -16,7 +16,8 @@ func TestCurrentFollowsTheLineage(t *testing.T) {
 		{"claude-opus-4-7", "claude-opus-5-5"},
 		{"claude-opus-4-6", "claude-opus-5-5"},
 		{"claude-opus-5", "claude-opus-5-5"},
-		{"claude-fable-5", "claude-fable-5-1"},
+		{"claude-fable-5", "claude-fable-5-2"},
+		{"claude-fable-5-1", "claude-fable-5-2"},
 		// The suffix goes with the retired row. Sonnet 5 is natively
 		// 1M and its SelectAs carries no suffix, so the upgraded pin
 		// must not either — "claude-sonnet-5[1m]" is not a catalog
@@ -32,7 +33,7 @@ func TestCurrentFollowsTheLineage(t *testing.T) {
 		{"claude-opus-5-5", "claude-opus-5-5"},
 		{"claude-sonnet-5", "claude-sonnet-5"},
 		{"claude-haiku-4-5", "claude-haiku-4-5"},
-		{"claude-fable-5-1", "claude-fable-5-1"},
+		{"claude-fable-5-2", "claude-fable-5-2"},
 		{"claude-opus-5-5[1m]", "claude-opus-5-5[1m]"},
 		{"claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"},
 
@@ -122,6 +123,7 @@ func TestLineage(t *testing.T) {
 		{"claude-opus-5-5", "opus", []int{5, 5}, true},
 		{"claude-haiku-4-5", "haiku", []int{4, 5}, true},
 		{"claude-fable-5-1", "fable", []int{5, 1}, true},
+		{"claude-fable-5-2", "fable", []int{5, 2}, true},
 		{"claude-opus", "", nil, false},
 		{"claude-3-5-sonnet", "", nil, false},
 		{"claude--5", "", nil, false},

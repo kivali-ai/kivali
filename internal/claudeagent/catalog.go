@@ -124,7 +124,7 @@ var catalog = []catalogRow{
 		// it: $4/$20 against the $5/$25 every Opus from 4.5 to 5 has
 		// charged, and cache reads at $0.20 — 0.05x its input rate,
 		// half the 0.1x multiplier the rest of the table follows and
-		// the second row after Fable 5.1 to break it. Do not derive
+		// one of two rows, with Fable 5.2, to break it. Do not derive
 		// that column from InputPerMTok.
 		//
 		// Two things the picker cannot express. Reasoning cannot be
@@ -146,29 +146,30 @@ var catalog = []catalogRow{
 	},
 	{
 		// Fable is the only lineage here that costs MORE than Opus —
-		// 2.5x on input and output against Opus 5.5. It sits last in
-		// the picker and last here, so "the biggest one on the list"
-		// stops meaning "the one at Opus prices".
+		// 2x on input and output against Opus 5.5. It sits last in the
+		// picker and last here, so "the biggest one on the list" stops
+		// meaning "the one at Opus prices".
 		//
-		// Three further things the picker cannot express: it requires
-		// an org data-retention setting of 30 days (under
-		// zero-retention the provider rejects the request outright);
-		// reasoning is always on, so an agent pinned to it spends
-		// thinking tokens every turn regardless of effort; and it
-		// reads cache at $0.25/MTok — 0.025x its input rate, not the
-		// 0.1x multiplier most rows follow and a quarter of what Fable
-		// 5 charged. On a long-running agent that re-reads a warm
-		// prefix every turn that is most of what the model costs, so
-		// copying the Fable 5 row wholesale would over-report 5.1
-		// spend by up to 4x on the cache-read line.
-		ID:            "claude-fable-5-1",
-		SelectAs:      "claude-fable-5-1",
+		// Fable 5.2 is $8/$40, below 5.1's $10/$50, and reads cache at
+		// $0.20/MTok — 0.025x its input rate, not the 0.1x multiplier
+		// most rows follow. On a long-running agent that re-reads a
+		// warm prefix every turn that is most of what the model costs,
+		// so read that column off the published table rather than
+		// deriving it from InputPerMTok.
+		//
+		// Two further things the picker cannot express: it requires an
+		// org data-retention setting of 30 days (under zero-retention
+		// the provider rejects the request outright), and reasoning is
+		// always on, so an agent pinned to it spends thinking tokens
+		// every turn regardless of effort.
+		ID:            "claude-fable-5-2",
+		SelectAs:      "claude-fable-5-2",
 		NativeContext: 1_000_000,
 		Pricing: modelPricing{
-			InputPerMTok:      10.00,
-			OutputPerMTok:     50.00,
-			CacheWritePerMTok: 12.50,
-			CacheReadPerMTok:  0.25,
+			InputPerMTok:      8.00,
+			OutputPerMTok:     40.00,
+			CacheWritePerMTok: 10.00,
+			CacheReadPerMTok:  0.20,
 		},
 	},
 
@@ -211,10 +212,20 @@ var catalog = []catalogRow{
 		},
 	},
 	{
+		// Dearer than 5.2 on every axis: $10/$50, and cache reads at
+		// $0.25/MTok against 5.2's $0.20.
+		ID:            "claude-fable-5-1",
+		NativeContext: 1_000_000,
+		Pricing: modelPricing{
+			InputPerMTok:      10.00,
+			OutputPerMTok:     50.00,
+			CacheWritePerMTok: 12.50,
+			CacheReadPerMTok:  0.25,
+		},
+	},
+	{
 		// Same list price as 5.1 on every axis but cache reads, which
-		// it charges at 4x. There was never a cost reason to pin a new
-		// agent to 5 once 5.1 shipped, so it left the picker with
-		// nothing lost.
+		// it charges at 4x.
 		ID:            "claude-fable-5",
 		NativeContext: 1_000_000,
 		Pricing: modelPricing{

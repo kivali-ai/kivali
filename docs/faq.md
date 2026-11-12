@@ -14,7 +14,7 @@ It depends on how much work your team does. Every turn an agent takes is a model
 
 ## Which models does it use?
 
-Claude. Agents can run on Claude Haiku 4.5, Sonnet 5, Opus 5.5 or Fable 5.1, at an effort level from Low to Max. New agents start on Opus 5.5 at High effort, and you can change either per agent. Small housekeeping tasks use Haiku 4.5. See [Models and effort](using-kivali.md#models-and-effort).
+Claude. Agents can run on Claude Haiku 4.5, Sonnet 5, Opus 5.5 or Fable 5.2, at an effort level from Low to Max. New agents start on Opus 5.5 at High effort, and you can change either per agent. Small housekeeping tasks use Haiku 4.5. See [Models and effort](using-kivali.md#models-and-effort).
 
 ## Can I pay per token instead of using my Claude plan?
 

@@ -38,11 +38,10 @@ type pricingTable map[string]modelPricing
 // which requires splitting provider.TokenUsage.CacheCreateTokens into 5m /
 // 1h buckets (the API reports them separately under `cache_creation`).
 //
-// Cache-read rate: 0.1x input on every model EXCEPT Fable 5.1, which
-// reads cache at $0.25/MTok — 0.025x its input rate, a quarter of what
-// Fable 5 charges and half of Opus 5's. It is the first model to break
-// the 0.1x rule, so do not derive that column from InputPerMTok; read
-// each one off the published table.
+// Cache-read rate: 0.1x input on most models, but not all: Fable 5.1 and
+// 5.2 read cache at 0.025x their input rate and Opus 5.5 at 0.05x. Do
+// not derive that column from InputPerMTok; read each one off the
+// published table.
 //
 // Opus 4.7 note: the new tokenizer can use up to ~35% more tokens
 // for the same text. Per-token price is unchanged from Opus 4.6,

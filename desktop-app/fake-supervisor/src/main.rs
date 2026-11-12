@@ -140,7 +140,7 @@ struct Fake {
 }
 
 /// The models the fake's org runs, as the real catalog names them.
-const MODELS: &[&str] = &["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5", "claude-fable-5-1"];
+const MODELS: &[&str] = &["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5-5", "claude-fable-5-2"];
 
 /// A sign-in setup the fake accepts, as test data: what the real Claude
 /// driver declares, reduced to what the fake needs to answer like it.
