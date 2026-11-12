@@ -60,6 +60,7 @@ type usageCall struct {
 // without one counts once, as its own call. model is the id the tokens
 // bill to; the caller has already resolved sentinels and blanks.
 func (t *turnUsage) Call(id, model string, u provider.TokenUsage) {
+	u.LongPrompt = longPrompt(model, u)
 	if model != "" {
 		t.lastModel = model
 	}
@@ -101,10 +102,70 @@ func (t *turnUsage) Result(total provider.TokenUsage, byModel []provider.ModelUs
 		if mu.Usage.IsZero() {
 			continue
 		}
-		t.covered.add(mu.Model, mu.Usage)
+		for _, part := range t.byTier(mu) {
+			t.covered.add(part.Model, part.Usage)
+		}
 	}
 	t.pending = nil
 	t.byID = nil
+}
+
+// longPrompt reports whether one call's snapshot is above its model's
+// long-prompt threshold. The snapshot's prompt-side counts are final
+// when the message starts, so the call's tier is exact.
+func longPrompt(model string, u provider.TokenUsage) bool {
+	row, ok := lookupModel(model)
+	if !ok || row.Pricing.LongPromptAbove <= 0 {
+		return false
+	}
+	return u.InputTokens+u.CacheReadTokens+u.CacheCreateTokens > row.Pricing.LongPromptAbove
+}
+
+// byTier splits one model's share of a frame between the long-prompt
+// tier and the standard one, from the pending calls that model
+// answered.
+//
+// When every call is on one side, the whole share is that tier. When
+// they straddle the threshold, which happens on the turn whose context
+// grows past it, the long calls' input and cache tokens come from
+// their snapshots, which are exact, and the share's output tokens are
+// split by call count, because the snapshots say nothing useful about
+// output. A share with no pending calls behind it (a call the stream
+// never showed, such as the CLI's own background requests) is billed
+// at the standard tier, which is a floor.
+func (t *turnUsage) byTier(mu provider.ModelUsage) []provider.ModelUsage {
+	mu.Usage.LongPrompt = false
+	var n, nLong int
+	var long provider.TokenUsage
+	for _, c := range t.pending {
+		if c.model != mu.Model {
+			continue
+		}
+		n++
+		if c.usage.LongPrompt {
+			nLong++
+			long.InputTokens += c.usage.InputTokens
+			long.CacheReadTokens += c.usage.CacheReadTokens
+			long.CacheCreateTokens += c.usage.CacheCreateTokens
+		}
+	}
+	if nLong == 0 {
+		return []provider.ModelUsage{mu}
+	}
+	if nLong == n {
+		mu.Usage.LongPrompt = true
+		return []provider.ModelUsage{mu}
+	}
+	long.InputTokens = min(long.InputTokens, mu.Usage.InputTokens)
+	long.CacheReadTokens = min(long.CacheReadTokens, mu.Usage.CacheReadTokens)
+	long.CacheCreateTokens = min(long.CacheCreateTokens, mu.Usage.CacheCreateTokens)
+	long.OutputTokens = mu.Usage.OutputTokens * nLong / n
+	long.LongPrompt = true
+	short := subUsage(mu.Usage, long)
+	return []provider.ModelUsage{
+		{Model: mu.Model, Usage: short},
+		{Model: mu.Model, Usage: long},
+	}
 }
 
 // Total is the turn's token count so far: every covered frame plus the
@@ -113,10 +174,11 @@ func (t *turnUsage) Total() provider.TokenUsage {
 	return sumModelUsage(t.all())
 }
 
-// Split is Total bucketed by answering model, in first-answered order,
-// or nil when a single model answered — the caller's flat {Model,
-// Usage} pair already says everything a one-element split would, and
-// consumers read nil as "not mixed".
+// Split is Total bucketed by answering model and pricing tier, in
+// first-answered order, or nil when there is one bucket — the
+// caller's flat {Model, Usage} pair already says everything a
+// one-element split would (Total carries that bucket's LongPrompt),
+// and consumers read nil as "not mixed".
 func (t *turnUsage) Split() []provider.ModelUsage {
 	all := t.all()
 	if len(all) < 2 {
@@ -209,32 +271,41 @@ func sumModelUsage(split []provider.ModelUsage) provider.TokenUsage {
 	return sum
 }
 
-// modelBuckets accumulates token counts per model, preserving the
-// order models were first seen so an emitted split reads in the order
-// the models actually answered.
+// modelBuckets accumulates token counts per model and pricing tier,
+// preserving the order buckets were first seen so an emitted split
+// reads in the order the models actually answered.
 type modelBuckets struct {
-	order []string
-	byID  map[string]provider.TokenUsage
+	order []bucketKey
+	byKey map[bucketKey]provider.TokenUsage
 }
 
-// add folds u into the bucket for model. An empty model is a bucket
-// like any other: dropping it would make the split disagree with the
-// total, and a silent shortfall in a billing number is worse than a
-// row with a blank label.
+// bucketKey is one model at one pricing tier. A model's long-prompt
+// tokens never share a bucket with its standard ones, so each bucket
+// prices at a single rate.
+type bucketKey struct {
+	model string
+	long  bool
+}
+
+// add folds u into the bucket for model at u's tier. An empty model is
+// a bucket like any other: dropping it would make the split disagree
+// with the total, and a silent shortfall in a billing number is worse
+// than a row with a blank label.
 func (m *modelBuckets) add(model string, u provider.TokenUsage) {
-	if m.byID == nil {
-		m.byID = make(map[string]provider.TokenUsage, 2)
+	if m.byKey == nil {
+		m.byKey = make(map[bucketKey]provider.TokenUsage, 2)
 	}
-	if _, seen := m.byID[model]; !seen {
-		m.order = append(m.order, model)
+	k := bucketKey{model: model, long: u.LongPrompt}
+	if _, seen := m.byKey[k]; !seen {
+		m.order = append(m.order, k)
 	}
-	m.byID[model] = m.byID[model].Add(u)
+	m.byKey[k] = m.byKey[k].Add(u)
 }
 
 func (m *modelBuckets) list() []provider.ModelUsage {
 	out := make([]provider.ModelUsage, 0, len(m.order))
-	for _, id := range m.order {
-		out = append(out, provider.ModelUsage{Model: id, Usage: m.byID[id]})
+	for _, k := range m.order {
+		out = append(out, provider.ModelUsage{Model: k.model, Usage: m.byKey[k]})
 	}
 	return out
 }

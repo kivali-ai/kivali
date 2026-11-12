@@ -233,6 +233,41 @@ func TestCostOpus55IsCheaperThanOpus5OnEveryAxis(t *testing.T) {
 	}
 }
 
+// TestCostHaiku55LongPromptTier pins Haiku 5.5's two tiers. A call
+// whose prompt is above 100k tokens bills every token, output
+// included, at 5x the standard rate. Pricing that call at the standard
+// rate would under-report a long-running Haiku agent's spend by up to
+// 5x, and charging the long rate without the flag would over-report
+// every housekeeping summary by the same factor.
+func TestCostHaiku55LongPromptTier(t *testing.T) {
+	for _, axis := range []struct {
+		name       string
+		u          provider.TokenUsage
+		short, lng float64
+	}{
+		{"input", provider.TokenUsage{InputTokens: 1_000_000}, 0.10, 0.50},
+		{"output", provider.TokenUsage{OutputTokens: 1_000_000}, 0.50, 2.50},
+		{"cache write", provider.TokenUsage{CacheCreateTokens: 1_000_000}, 0.125, 0.625},
+		{"cache read", provider.TokenUsage{CacheReadTokens: 1_000_000}, 0.01, 0.05},
+	} {
+		if got := defaultPricing.Cost("claude-haiku-5-5", axis.u); math.Abs(got-axis.short) > 1e-9 {
+			t.Errorf("%s: standard Cost = %v, want %v", axis.name, got, axis.short)
+		}
+		long := axis.u
+		long.LongPrompt = true
+		if got := defaultPricing.Cost("claude-haiku-5-5", long); math.Abs(got-axis.lng) > 1e-9 {
+			t.Errorf("%s: long-prompt Cost = %v, want %v", axis.name, got, axis.lng)
+		}
+	}
+	// A model with one rate ignores the flag rather than pricing at 0.
+	u := provider.TokenUsage{InputTokens: 1_000_000}
+	flagged := u
+	flagged.LongPrompt = true
+	if a, b := defaultPricing.Cost("claude-opus-5-5", flagged), defaultPricing.Cost("claude-opus-5-5", u); a != b {
+		t.Errorf("opus-5-5 with LongPrompt = %v, want its one rate %v", a, b)
+	}
+}
+
 // TestCostSonnet55Rates pins Sonnet 5.5's four published rates ($2
 // input, $10 output, $2.50 5-minute cache write, $0.10 cache read).
 // Every rate but the cache read matches Sonnet 5, so a row copied from

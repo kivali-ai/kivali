@@ -96,14 +96,29 @@ func (m catalogRow) Selectable() bool { return m.SelectAs != "" }
 // package comment above before editing.
 var catalog = []catalogRow{
 	{
-		ID:            "claude-haiku-4-5",
-		SelectAs:      "claude-haiku-4-5",
-		NativeContext: 200_000,
+		// Haiku 5.5 is the only row with a long-prompt tier: $0.10/$0.50
+		// for a call whose prompt is up to 100k tokens, and 5x every
+		// rate for a call above that. A long-running agent passes 100k
+		// of context early, so on Haiku most of an agent's spend is at
+		// the higher rate; housekeeping summaries stay below it. The
+		// stream reader marks each call's tier (TokenUsage.LongPrompt).
+		//
+		// Cache reads are $0.01/MTok, 0.1x input, at both tiers.
+		ID:            "claude-haiku-5-5",
+		SelectAs:      "claude-haiku-5-5",
+		NativeContext: 1_000_000,
 		Pricing: modelPricing{
-			InputPerMTok:      1.00,
-			OutputPerMTok:     5.00,
-			CacheWritePerMTok: 1.25,
-			CacheReadPerMTok:  0.10,
+			InputPerMTok:      0.10,
+			OutputPerMTok:     0.50,
+			CacheWritePerMTok: 0.125,
+			CacheReadPerMTok:  0.01,
+			LongPromptAbove:   100_000,
+			LongPrompt: &modelPricing{
+				InputPerMTok:      0.50,
+				OutputPerMTok:     2.50,
+				CacheWritePerMTok: 0.625,
+				CacheReadPerMTok:  0.05,
+			},
 		},
 	},
 	{
@@ -181,6 +196,16 @@ var catalog = []catalogRow{
 	// --- Retired: priced, not selectable -------------------------------
 	// These outlive the picker on purpose. See the package comment. A
 	// pin on any of them moves to its family's current row at boot.
+	{
+		ID:            "claude-haiku-4-5",
+		NativeContext: 200_000,
+		Pricing: modelPricing{
+			InputPerMTok:      1.00,
+			OutputPerMTok:     5.00,
+			CacheWritePerMTok: 1.25,
+			CacheReadPerMTok:  0.10,
+		},
+	},
 	{
 		ID:            "claude-sonnet-5",
 		NativeContext: 1_000_000,

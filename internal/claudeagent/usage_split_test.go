@@ -226,6 +226,25 @@ func TestUsageEventsCostLandsOnce(t *testing.T) {
 	}
 }
 
+// TestUsageEventsKeepLongPromptTier: the usage rows of calls the server
+// makes itself come from these events, and a row is re-priced from
+// its own fields, so the tier has to ride on each one — the flat row
+// of a one-bucket turn and every row of a split.
+func TestUsageEventsKeepLongPromptTier(t *testing.T) {
+	base := provider.UsageEvent{Model: "claude-haiku-5-5"}
+	flat := usageEvents(base, provider.TokenUsage{InputTokens: 10, LongPrompt: true}, nil, 0)
+	if len(flat) != 1 || !flat[0].LongPrompt {
+		t.Errorf("flat rows = %+v, want one long-prompt row", flat)
+	}
+	split := usageEvents(base, provider.TokenUsage{InputTokens: 30, LongPrompt: true}, []provider.ModelUsage{
+		{Model: "claude-haiku-5-5", Usage: provider.TokenUsage{InputTokens: 20}},
+		{Model: "claude-haiku-5-5", Usage: provider.TokenUsage{InputTokens: 10, LongPrompt: true}},
+	}, 0)
+	if len(split) != 2 || split[0].LongPrompt || !split[1].LongPrompt {
+		t.Errorf("split rows = %+v, want a standard row then a long-prompt row", split)
+	}
+}
+
 // TestUsageEventsSingleBucket pins the unmixed path: no split means one
 // row carrying the flat total.
 func TestUsageEventsSingleBucket(t *testing.T) {

@@ -73,7 +73,7 @@ const (
 
 	// DefaultSummaryModel runs the summaries Kivali makes on its own
 	// behalf (inbox lines, file summaries).
-	DefaultSummaryModel = "claude-haiku-4-5"
+	DefaultSummaryModel = "claude-haiku-5-5"
 )
 
 // effortLevels is the canonical ordered set, with labels.

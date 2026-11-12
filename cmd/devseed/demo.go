@@ -223,7 +223,7 @@ pages.
 		},
 		{
 			Agent: store.Agent{Slug: SlugBookkeeper, Role: "Bookkeeper", Icon: "calculator", ReportsTo: SlugChiefOfStaff,
-				Model: "claude-haiku-4-5", Effort: claudeagent.EffortLow, CreatedAt: created},
+				Model: "claude-haiku-5-5", Effort: claudeagent.EffortLow, CreatedAt: created},
 			RoleMD: md(`
 # Bookkeeper
 
@@ -578,7 +578,7 @@ func (s *seeder) usage() error {
 		{SlugEngLead, "claude-opus-5-5"},
 		{SlugTestRunner, "claude-sonnet-5-5"},
 		{SlugSupportLead, "claude-sonnet-5-5"},
-		{SlugBookkeeper, "claude-haiku-4-5"},
+		{SlugBookkeeper, "claude-haiku-5-5"},
 	}
 	purposes := []string{"chat", "chat", "subagent", "release"}
 	var rows []store.UsageRecord

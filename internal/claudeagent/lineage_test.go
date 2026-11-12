@@ -28,15 +28,17 @@ func TestCurrentFollowsTheLineage(t *testing.T) {
 		{"claude-opus-4-8[1m]", "claude-opus-5-5"},
 		// A dated snapshot of a retired model is still that model.
 		{"claude-opus-4-8-20260101", "claude-opus-5-5"},
+		{"claude-haiku-4-5", "claude-haiku-5-5"},
+		{"claude-haiku-4-5-20251001", "claude-haiku-5-5"},
 
 		// Still selectable → untouched, suffixes and snapshots included:
 		// those were chosen on purpose.
 		{"claude-opus-5-5", "claude-opus-5-5"},
 		{"claude-sonnet-5-5", "claude-sonnet-5-5"},
-		{"claude-haiku-4-5", "claude-haiku-4-5"},
+		{"claude-haiku-5-5", "claude-haiku-5-5"},
 		{"claude-fable-5-2", "claude-fable-5-2"},
 		{"claude-opus-5-5[1m]", "claude-opus-5-5[1m]"},
-		{"claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"},
+		{"claude-haiku-5-5-20261101", "claude-haiku-5-5-20261101"},
 
 		// Unknown to the catalog → untouched. A sentinel, a CLI alias,
 		// another vendor's id: none of these has a lineage to follow.

@@ -44,6 +44,7 @@ func priceUsage(p provider.Provider, u store.UsageRecord) (cost float64, ok bool
 		OutputTokens:      u.OutputTokens,
 		CacheReadTokens:   u.CacheReadTokens,
 		CacheCreateTokens: u.CacheCreateTokens,
+		LongPrompt:        u.LongPrompt,
 	}), true
 }
 

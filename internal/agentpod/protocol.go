@@ -419,6 +419,9 @@ type TurnModelUsage struct {
 	OutputTokens      int    `json:"output_tokens,omitempty"`
 	CacheReadTokens   int    `json:"cache_read_tokens,omitempty"`
 	CacheCreateTokens int    `json:"cache_create_tokens,omitempty"`
+	// LongPrompt marks tokens billed at the model's long-prompt rates
+	// (provider.TokenUsage.LongPrompt).
+	LongPrompt bool `json:"long_prompt,omitempty"`
 }
 
 // TurnEvent is one event reported from the agent runtime to core for
@@ -478,13 +481,17 @@ type TurnEvent struct {
 	// below. It is the right label for a single-model turn and the wrong
 	// basis for pricing a mixed one, because the flat counts accumulate
 	// across every call in the turn.
-	StopReason        string  `json:"stop_reason,omitempty"`
-	InputTokens       int     `json:"input_tokens,omitempty"`
-	OutputTokens      int     `json:"output_tokens,omitempty"`
-	CacheReadTokens   int     `json:"cache_read_tokens,omitempty"`
-	CacheCreateTokens int     `json:"cache_create_tokens,omitempty"`
-	Model             string  `json:"model,omitempty"`
-	CostUSD           float64 `json:"cost_usd,omitempty"`
+	StopReason        string `json:"stop_reason,omitempty"`
+	InputTokens       int    `json:"input_tokens,omitempty"`
+	OutputTokens      int    `json:"output_tokens,omitempty"`
+	CacheReadTokens   int    `json:"cache_read_tokens,omitempty"`
+	CacheCreateTokens int    `json:"cache_create_tokens,omitempty"`
+	// LongPrompt marks the flat counts as billed at the model's
+	// long-prompt rates. Read only when ByModel is empty: a turn with
+	// calls on both sides of the threshold always sends ByModel.
+	LongPrompt bool    `json:"long_prompt,omitempty"`
+	Model      string  `json:"model,omitempty"`
+	CostUSD    float64 `json:"cost_usd,omitempty"`
 	// SessionID is the provider's id for the run's session, on the
 	// first event that knows it (provider.StreamEvent.SessionID); a
 	// later subagent turn with SubagentSpec.Resume set to it continues

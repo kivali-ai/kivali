@@ -441,7 +441,7 @@ export function installMock() {
       const t = find(a.id);
       const saved = t?.ai?.billing?.startsWith("Microsoft Foundry · ") ? t.ai.billing.slice("Microsoft Foundry · ".length) : null;
       return {
-        models: ["claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2"],
+        models: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2"],
         ...(saved ? { current: { setup: "microsoft-foundry", values: { resource: saved, auth: "api_key" } } } : {}),
       };
     },
@@ -453,7 +453,7 @@ export function installMock() {
       if (resource.includes(".")) throw "enter the resource name only, like my-resource, not a URL";
       const billing = `Microsoft Foundry · ${resource}`;
       t.ai = { ...t.ai!, signed_in: true, email: null, billing, signin: "idle", terminal_open: false };
-      const models = ["claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2"].map((model) =>
+      const models = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-2"].map((model) =>
         resource === "refused"
           ? { model, ok: false, problem: "the provider refused the sign-in (HTTP 401)" }
           : resource.includes("missing") && model === "claude-fable-5-2"

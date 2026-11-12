@@ -178,6 +178,7 @@ func TestFriendlyModelName(t *testing.T) {
 		// and the fleet default — the label most chips show.
 		{"claude-opus-5-5", "Opus 5.5"},
 		{"claude-sonnet-5-5", "Sonnet 5.5"},
+		{"claude-haiku-5-5", "Haiku 5.5"},
 		{"", ""},
 		// Unknown / off-pattern IDs degrade to the raw ID (1M marker still
 		// prettified) rather than dropping the label.
@@ -208,6 +209,7 @@ func TestContextWindow(t *testing.T) {
 		{"claude-opus-5-5", 1_000_000},
 		{"claude-opus-5", 1_000_000},
 		{"claude-sonnet-5-5", 1_000_000},
+		{"claude-haiku-5-5", 1_000_000},
 		{"claude-sonnet-5", 1_000_000},
 		{"claude-opus-4-8", 1_000_000},
 		{"claude-opus-4-7", 1_000_000},

@@ -355,16 +355,27 @@ type TokenUsage struct {
 	OutputTokens      int
 	CacheReadTokens   int
 	CacheCreateTokens int
+
+	// LongPrompt marks tokens from calls whose prompt (input, cache
+	// read and cache write together) was above the model's long-prompt
+	// threshold, which the provider bills at its long-prompt rates. A
+	// model with no such tier never has it set. One TokenUsage is one
+	// tier: a turn whose calls fall on both sides of the threshold
+	// reports them as separate ModelUsage buckets.
+	LongPrompt bool
 }
 
 // Add returns the element-wise sum of two TokenUsage values. Used to
-// fold per-call usage into a per-model bucket.
+// fold per-call usage into a per-model bucket. The sum is LongPrompt
+// when either side is; a total across both tiers is not priceable as
+// one, which is why such a turn also reports ByModel.
 func (u TokenUsage) Add(o TokenUsage) TokenUsage {
 	return TokenUsage{
 		InputTokens:       u.InputTokens + o.InputTokens,
 		OutputTokens:      u.OutputTokens + o.OutputTokens,
 		CacheReadTokens:   u.CacheReadTokens + o.CacheReadTokens,
 		CacheCreateTokens: u.CacheCreateTokens + o.CacheCreateTokens,
+		LongPrompt:        u.LongPrompt || o.LongPrompt,
 	}
 }
 
@@ -538,7 +549,9 @@ type UsageEvent struct {
 	OutputTokens      int
 	CacheReadTokens   int
 	CacheCreateTokens int
-	CostUSD           float64
+	// LongPrompt is TokenUsage.LongPrompt for this event's tokens.
+	LongPrompt bool
+	CostUSD    float64
 }
 
 // UsageRecorder is called after every API call to persist token/cost

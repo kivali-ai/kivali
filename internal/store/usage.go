@@ -22,6 +22,10 @@ type UsageRecord struct {
 	OutputTokens      int       `json:"output_tokens"`
 	CacheReadTokens   int       `json:"cache_read_tokens,omitempty"`
 	CacheCreateTokens int       `json:"cache_create_tokens,omitempty"`
+	// LongPrompt marks this row's tokens as billed at the model's
+	// long-prompt rates: every call they came from had a prompt above
+	// the model's long-prompt threshold. Absent on models without one.
+	LongPrompt bool `json:"long_prompt,omitempty"`
 
 	// CostUSD is NOT this row's cost, and the column is NOT summable.
 	// usage.jsonl is an operator-facing artifact that people grep and
