@@ -81,7 +81,7 @@ export interface FoundryOutcome {
   signedIn: boolean;
   /** "Microsoft Foundry · my-resource". */
   billing: string | null;
-  /** "No deployment named claude-sonnet-5 in my-resource", one per model. */
+  /** "No deployment named claude-sonnet-5-5 in my-resource", one per model. */
   missing: string[];
   /** "claude-opus-5-5: the provider refused the sign-in (HTTP 401)". */
   failed: string[];

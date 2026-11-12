@@ -15,12 +15,12 @@ import "strings"
 // The suffix is NOT a blanket requirement, and treating it as one was a
 // long-standing mistake here. The CLI's baked-in model catalog carries a
 // per-model `context: {window, native_1m}`, and for every model released
-// from Opus 4.7 onward — Opus 4.7/4.8/5/5.5, Sonnet 5, Fable 5/5.1 — the
+// from Opus 4.7 onward — Opus 4.7/4.8/5/5.5, Sonnet 5/5.5, Haiku 5.5, Fable 5/5.1/5.2 — the
 // window is 1e6 with native_1m set: the BARE name already gets the full
 // window and the suffix buys nothing. It is load-bearing only on the
 // models that are natively 200k, which the picker does not offer at
 // all: Sonnet 4.6 is retired, and a pin still carrying its suffix is
-// honored until boot moves it to Sonnet 5 (see Current). See
+// honored until boot moves it to the current Sonnet (see Current). See
 // NativeContextWindow.
 //
 // The raw Messages API does not understand the suffix at all (1M is the

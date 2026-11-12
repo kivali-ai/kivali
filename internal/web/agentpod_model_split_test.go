@@ -216,3 +216,93 @@ func TestSingleModelTurnStillWritesOneRow(t *testing.T) {
 		t.Errorf("tokens = in=%d out=%d, want 1000/200", recs[0].InputTokens, recs[0].OutputTokens)
 	}
 }
+
+// TestLongPromptTierReachesUsageRows is core's half of the long-prompt
+// tier. A model's calls above its long-prompt threshold bill at other
+// rates, and usage.jsonl is re-priced on read, so the tier has to be
+// stored on the row: a turn on both sides of the threshold writes one
+// row per tier.
+func TestLongPromptTierReachesUsageRows(t *testing.T) {
+	path, srv, _, cleanup := startTurnEventTestServer(t, "alice", "turn-1")
+	defer cleanup()
+
+	before := time.Now().UTC().Add(-time.Second)
+	c := agentpod.NewClient(path, "alice")
+	if err := c.PostTurnEvent(context.Background(), "turn-1", agentpod.TurnEvent{
+		Kind:         agentpod.TurnEventDone,
+		StopReason:   "end_turn",
+		InputTokens:  30,
+		OutputTokens: 300,
+		LongPrompt:   true,
+		Model:        "mock-large",
+		ByModel: []agentpod.TurnModelUsage{
+			{Model: "mock-large", InputTokens: 20, OutputTokens: 200},
+			{Model: "mock-large", InputTokens: 10, OutputTokens: 100, LongPrompt: true},
+		},
+	}); err != nil {
+		t.Fatalf("PostTurnEvent: %v", err)
+	}
+	recs, err := srv.Store.ReadUsageSince(before)
+	if err != nil {
+		t.Fatalf("ReadUsageSince: %v", err)
+	}
+	if len(recs) != 2 || recs[0].LongPrompt || !recs[1].LongPrompt || recs[1].InputTokens != 10 {
+		t.Errorf("usage records = %+v, want a standard row then a long-prompt row of 10 input tokens", recs)
+	}
+}
+
+// TestSingleBucketLongPromptTurnKeepsItsTier: a turn whose calls were
+// all above the threshold sends no split, only the flat counts and
+// their flag, and its one row must keep the flag.
+func TestSingleBucketLongPromptTurnKeepsItsTier(t *testing.T) {
+	path, srv, _, cleanup := startTurnEventTestServer(t, "alice", "turn-1")
+	defer cleanup()
+
+	before := time.Now().UTC().Add(-time.Second)
+	c := agentpod.NewClient(path, "alice")
+	if err := c.PostTurnEvent(context.Background(), "turn-1", agentpod.TurnEvent{
+		Kind:         agentpod.TurnEventDone,
+		StopReason:   "end_turn",
+		InputTokens:  10,
+		OutputTokens: 100,
+		LongPrompt:   true,
+		Model:        "mock-large",
+	}); err != nil {
+		t.Fatalf("PostTurnEvent: %v", err)
+	}
+	recs, err := srv.Store.ReadUsageSince(before)
+	if err != nil {
+		t.Fatalf("ReadUsageSince: %v", err)
+	}
+	if len(recs) != 1 || !recs[0].LongPrompt {
+		t.Errorf("usage records = %+v, want one long-prompt row", recs)
+	}
+}
+
+// pricingSpy is the mock provider with Price recording what it was
+// asked to price.
+type pricingSpy struct {
+	provider.MockProvider
+	got *provider.TokenUsage
+}
+
+func (p pricingSpy) Price(id string, u provider.TokenUsage) float64 {
+	*p.got = u
+	return p.MockProvider.Price(id, u)
+}
+
+// TestPriceUsageReadsLongPromptTier: the dashboards re-price every row
+// from its tokens, so the stored tier has to reach the provider.
+// Without it a Haiku 5.5 row above 100k prompt tokens reads at a fifth
+// of its cost on every spend readout.
+func TestPriceUsageReadsLongPromptTier(t *testing.T) {
+	var got provider.TokenUsage
+	p := pricingSpy{got: &got}
+	row := store.UsageRecord{Model: "mock-large", InputTokens: 10, LongPrompt: true}
+	if _, ok := priceUsage(p, row); !ok {
+		t.Fatal("mock-large is unpriced")
+	}
+	if !got.LongPrompt || got.InputTokens != 10 {
+		t.Errorf("provider priced %+v, want the row's tokens with LongPrompt", got)
+	}
+}

@@ -12,7 +12,7 @@ The chart's `values.yaml` is commented key by key. These are the values most ins
 | --- | --- | --- |
 | `externalURL` | empty | The https address other computers reach the team at, such as `https://kivali.example.com`. Needed for Google sign-in at any address other than loopback. Sets `KIVALI_EXTERNAL_URL`. |
 | `models.agent` | empty | The default model for agents and new hires. Empty uses Kivali's default, Claude Opus 5.5. Sets `AGENT_MODEL`. |
-| `models.summary` | empty | The model for small housekeeping calls (file and chat summaries). Empty uses Claude Haiku 4.5. Sets `SUMMARY_MODEL`. |
+| `models.summary` | empty | The model for small housekeeping calls (file and chat summaries). Empty uses Claude Haiku 5.5. Sets `SUMMARY_MODEL`. |
 | `image.repository`, `image.tag` | `kivali`, the chart's version | The server image, also used by agent pods. The sandbox image `kivali-agent-shell` and the browser image `kivali-browser` are taken from the same path and tag; `browser.image` overrides the browser's. |
 | `egress.image.repository`, `egress.image.tag` | `kivali-egress-proxy`, the chart's version | The egress proxy image. |
 | `service.type`, `service.nodePort` | `NodePort`, `30080` | How the server is exposed. |
@@ -63,9 +63,9 @@ The chart sets these from its values and the Secret. They are listed for referen
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN` | unset | Refused: the server does not start with any of them set. Model calls bill Claude Code's own sign-in on the data volume ([Connect Claude](self-hosting.md#connect-claude)), which agent pods share. |
 | `AGENT_MODEL` | `claude-opus-5-5` | The default model for agents and new hires. Must be one Kivali knows. |
-| `SUMMARY_MODEL` | `claude-haiku-4-5` | The model for housekeeping summaries. |
+| `SUMMARY_MODEL` | `claude-haiku-5-5` | The model for housekeeping summaries. |
 
-The models Kivali offers are `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5-5` and `claude-fable-5-1`.
+The models Kivali offers are `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5` and `claude-fable-5-2`.
 
 ### Team defaults
 

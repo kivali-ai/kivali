@@ -193,6 +193,86 @@ func TestTurnUsageBlankModelBucketCounted(t *testing.T) {
 	}
 }
 
+// long marks a usage as long-prompt, for the expectations below.
+func long(u provider.TokenUsage) provider.TokenUsage {
+	u.LongPrompt = true
+	return u
+}
+
+// TestTurnUsageLongPromptTierIsPerCall guards Haiku 5.5's per-call
+// tier. Its threshold applies to one call's prompt, but a turn sums
+// many calls, so deciding the tier from the turn's total would bill a
+// turn of small calls at 5x. Each call is classed from its own
+// snapshot, whose prompt-side counts are final.
+func TestTurnUsageLongPromptTierIsPerCall(t *testing.T) {
+	const haiku = "claude-haiku-5-5"
+
+	t.Run("every call below", func(t *testing.T) {
+		// Three 60k calls sum past 100k; none is long.
+		var u turnUsage
+		u.Call("msg_1", haiku, tu(10, 1, 59_990, 0))
+		u.Call("msg_2", haiku, tu(10, 1, 59_990, 0))
+		u.Call("msg_3", haiku, tu(10, 1, 59_990, 0))
+		u.Result(tu(30, 300, 179_970, 0), nil)
+		if got, want := u.Total(), tu(30, 300, 179_970, 0); got != want {
+			t.Errorf("Total = %+v, want %+v at the standard tier", got, want)
+		}
+		if u.Split() != nil {
+			t.Errorf("Split = %+v, want nil: one bucket", u.Split())
+		}
+	})
+
+	t.Run("every call above", func(t *testing.T) {
+		var u turnUsage
+		u.Call("msg_1", haiku, tu(10, 1, 120_000, 500))
+		u.Call("msg_2", haiku, tu(10, 1, 120_500, 200))
+		u.Result(tu(20, 200, 240_500, 700), nil)
+		if got, want := u.Total(), long(tu(20, 200, 240_500, 700)); got != want {
+			t.Errorf("Total = %+v, want %+v at the long tier", got, want)
+		}
+		if u.Split() != nil {
+			t.Errorf("Split = %+v, want nil: one bucket, carried by Total", u.Split())
+		}
+	})
+
+	t.Run("calls straddle the threshold", func(t *testing.T) {
+		// The turn whose context grows past 100k: two calls below,
+		// one above. Prompt-side tokens follow the snapshots exactly;
+		// output is shared by call count (300 * 1/3 = 100 long).
+		var u turnUsage
+		u.Call("msg_1", haiku, tu(10, 1, 90_000, 4_000))
+		u.Call("msg_2", haiku, tu(10, 1, 94_000, 5_000))
+		u.Call("msg_3", haiku, tu(10, 1, 99_000, 2_000))
+		u.Result(tu(30, 300, 283_000, 11_000), nil)
+		want := []provider.ModelUsage{
+			{Model: haiku, Usage: tu(20, 200, 184_000, 9_000)},
+			{Model: haiku, Usage: long(tu(10, 100, 99_000, 2_000))},
+		}
+		if got := u.Split(); !reflect.DeepEqual(got, want) {
+			t.Errorf("Split = %+v, want %+v", got, want)
+		}
+		if got := u.Total(); got.InputTokens != 30 || got.OutputTokens != 300 || got.CacheReadTokens != 283_000 || got.CacheCreateTokens != 11_000 {
+			t.Errorf("Total = %+v, want the frame's counts (nothing lost to the split)", got)
+		}
+	})
+
+	t.Run("a call no frame has closed", func(t *testing.T) {
+		var u turnUsage
+		u.Call("msg_1", haiku, tu(10, 1, 150_000, 0))
+		if got := u.Total(); !got.LongPrompt {
+			t.Errorf("Total = %+v, want the snapshot at the long tier", got)
+		}
+	})
+
+	t.Run("a model with one rate", func(t *testing.T) {
+		var u turnUsage
+		u.Call("msg_1", "claude-opus-5-5", tu(10, 1, 500_000, 0))
+		if got := u.Total(); got.LongPrompt {
+			t.Errorf("Total = %+v, want no tier on a model without one", got)
+		}
+	})
+}
+
 // TestUsageGaugeFreshSessionFirstReadingIsDelta: a process that began
 // a new session started the CLI's gauge at zero, so its first reading
 // is already the turn's own usage.

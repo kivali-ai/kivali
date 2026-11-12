@@ -233,6 +233,93 @@ func TestCostOpus55IsCheaperThanOpus5OnEveryAxis(t *testing.T) {
 	}
 }
 
+// TestCostHaiku55LongPromptTier pins Haiku 5.5's two tiers. A call
+// whose prompt is above 100k tokens bills every token, output
+// included, at 5x the standard rate. Pricing that call at the standard
+// rate would under-report a long-running Haiku agent's spend by up to
+// 5x, and charging the long rate without the flag would over-report
+// every housekeeping summary by the same factor.
+func TestCostHaiku55LongPromptTier(t *testing.T) {
+	for _, axis := range []struct {
+		name       string
+		u          provider.TokenUsage
+		short, lng float64
+	}{
+		{"input", provider.TokenUsage{InputTokens: 1_000_000}, 0.10, 0.50},
+		{"output", provider.TokenUsage{OutputTokens: 1_000_000}, 0.50, 2.50},
+		{"cache write", provider.TokenUsage{CacheCreateTokens: 1_000_000}, 0.125, 0.625},
+		{"cache read", provider.TokenUsage{CacheReadTokens: 1_000_000}, 0.01, 0.05},
+	} {
+		if got := defaultPricing.Cost("claude-haiku-5-5", axis.u); math.Abs(got-axis.short) > 1e-9 {
+			t.Errorf("%s: standard Cost = %v, want %v", axis.name, got, axis.short)
+		}
+		long := axis.u
+		long.LongPrompt = true
+		if got := defaultPricing.Cost("claude-haiku-5-5", long); math.Abs(got-axis.lng) > 1e-9 {
+			t.Errorf("%s: long-prompt Cost = %v, want %v", axis.name, got, axis.lng)
+		}
+	}
+	// A model with one rate ignores the flag rather than pricing at 0.
+	u := provider.TokenUsage{InputTokens: 1_000_000}
+	flagged := u
+	flagged.LongPrompt = true
+	if a, b := defaultPricing.Cost("claude-opus-5-5", flagged), defaultPricing.Cost("claude-opus-5-5", u); a != b {
+		t.Errorf("opus-5-5 with LongPrompt = %v, want its one rate %v", a, b)
+	}
+}
+
+// TestCostSonnet55Rates pins Sonnet 5.5's four published rates ($2
+// input, $10 output, $2.50 5-minute cache write, $0.10 cache read).
+// Every rate but the cache read matches Sonnet 5, so a row copied from
+// its predecessor passes every check except this one, and it would
+// double the reported cache-read spend of every subagent on the
+// default model.
+func TestCostSonnet55Rates(t *testing.T) {
+	for _, axis := range []struct {
+		name string
+		u    provider.TokenUsage
+		want float64
+	}{
+		{"input", provider.TokenUsage{InputTokens: 1_000_000}, 2.00},
+		{"output", provider.TokenUsage{OutputTokens: 1_000_000}, 10.00},
+		{"cache write", provider.TokenUsage{CacheCreateTokens: 1_000_000}, 2.50},
+		{"cache read", provider.TokenUsage{CacheReadTokens: 1_000_000}, 0.10},
+	} {
+		if got := defaultPricing.Cost("claude-sonnet-5-5", axis.u); math.Abs(got-axis.want) > 1e-9 {
+			t.Errorf("%s: sonnet-5-5 Cost = %v, want %v", axis.name, got, axis.want)
+		}
+	}
+}
+
+// TestCostFable52RatesAndBelowFable51 pins Fable 5.2's four published
+// rates ($8 input, $40 output, $10 5-minute cache write, $0.20 cache
+// read). Its cache read is 0.025x its input rate, so a row copied from
+// Fable 5.1 or derived from InputPerMTok would misprice the line that
+// dominates a long-running Fable agent's bill. It also checks 5.2 is
+// below 5.1 on every axis: agents pinned to 5.1 move to 5.2 at boot,
+// and a row priced above its predecessor would make that move raise
+// their reported spend.
+func TestCostFable52RatesAndBelowFable51(t *testing.T) {
+	for _, axis := range []struct {
+		name string
+		u    provider.TokenUsage
+		want float64
+	}{
+		{"input", provider.TokenUsage{InputTokens: 1_000_000}, 8.00},
+		{"output", provider.TokenUsage{OutputTokens: 1_000_000}, 40.00},
+		{"cache write", provider.TokenUsage{CacheCreateTokens: 1_000_000}, 10.00},
+		{"cache read", provider.TokenUsage{CacheReadTokens: 1_000_000}, 0.20},
+	} {
+		newer := defaultPricing.Cost("claude-fable-5-2", axis.u)
+		if math.Abs(newer-axis.want) > 1e-9 {
+			t.Errorf("%s: fable-5-2 Cost = %v, want %v", axis.name, newer, axis.want)
+		}
+		if older := defaultPricing.Cost("claude-fable-5-1", axis.u); newer >= older {
+			t.Errorf("%s: fable-5-2 Cost %v is not below fable-5-1 %v", axis.name, newer, older)
+		}
+	}
+}
+
 // TestCostPricesFoundryDeployments: on Microsoft Foundry, --model names
 // a deployment, and Kivali needs each deployment named after the
 // model's catalog id (SelectableModelIDs), so the model a Foundry usage

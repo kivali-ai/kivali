@@ -12,6 +12,16 @@ type modelPricing struct {
 	OutputPerMTok     float64
 	CacheWritePerMTok float64
 	CacheReadPerMTok  float64
+
+	// LongPromptAbove and LongPrompt are a model's long-prompt tier: a
+	// call whose prompt (input, cache read and cache write tokens
+	// together) is above LongPromptAbove bills every token of that
+	// call, output included, at LongPrompt's rates. Zero and nil for a
+	// model with one rate at every prompt size. The tier is per call,
+	// so the stream reader decides it per call
+	// (provider.TokenUsage.LongPrompt) and pricing only reads the flag.
+	LongPromptAbove int
+	LongPrompt      *modelPricing
 }
 
 // pricingTable maps model IDs to pricing.
@@ -26,8 +36,9 @@ type pricingTable map[string]modelPricing
 // model's selectability and context window. catalog.go explains why
 // entries outlive the picker and when one may be deleted.
 //
-// Every model here prices the full 1M context window at the standard
-// rate — there is no >200k premium tier.
+// Every model here prices the full 1M context window at one rate except
+// Haiku 5.5, whose calls above 100k prompt tokens bill at 5x every rate
+// (modelPricing.LongPrompt).
 //
 // Cache-write rate: this table holds the 5-minute ephemeral rate
 // (1.25x input). All Kivali cache_control blocks ship plain
@@ -38,11 +49,10 @@ type pricingTable map[string]modelPricing
 // which requires splitting provider.TokenUsage.CacheCreateTokens into 5m /
 // 1h buckets (the API reports them separately under `cache_creation`).
 //
-// Cache-read rate: 0.1x input on every model EXCEPT Fable 5.1, which
-// reads cache at $0.25/MTok — 0.025x its input rate, a quarter of what
-// Fable 5 charges and half of Opus 5's. It is the first model to break
-// the 0.1x rule, so do not derive that column from InputPerMTok; read
-// each one off the published table.
+// Cache-read rate: 0.1x input on most models, but not all: Fable 5.1 and
+// 5.2 read cache at 0.025x their input rate and Opus 5.5 at 0.05x. Do
+// not derive that column from InputPerMTok; read each one off the
+// published table.
 //
 // Opus 4.7 note: the new tokenizer can use up to ~35% more tokens
 // for the same text. Per-token price is unchanged from Opus 4.6,
@@ -88,6 +98,11 @@ func (t pricingTable) CostOK(model string, u provider.TokenUsage) (float64, bool
 	p, ok := t[catalogKey(model)]
 	if !ok {
 		return 0, false
+	}
+	// A long-prompt flag on a model with no such tier is priced at the
+	// one rate that model has.
+	if u.LongPrompt && p.LongPrompt != nil {
+		p = *p.LongPrompt
 	}
 	cost := 0.0
 	cost += float64(u.InputTokens) * p.InputPerMTok / 1_000_000

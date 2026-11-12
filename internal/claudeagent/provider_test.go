@@ -61,7 +61,7 @@ func TestProviderResolveReadsEveryStoredSpelling(t *testing.T) {
 	}{
 		{"claude-opus-5-5", "claude-opus-5-5", "Opus 5.5", true, 1_000_000},
 		{"claude:claude-opus-5-5", "claude-opus-5-5", "Opus 5.5", true, 1_000_000},
-		{"claude-haiku-4-5-20251001", "claude-haiku-4-5", "Haiku 4.5", true, 200_000},
+		{"claude-haiku-4-5-20251001", "claude-haiku-4-5", "Haiku 4.5", false, 200_000},
 		{"claude-sonnet-4-6[1m]", "claude-sonnet-4-6", "Sonnet 4.6 · 1M", false, 1_000_000},
 		{"claude-opus-4-8", "claude-opus-4-8", "Opus 4.8", false, 1_000_000},
 	}

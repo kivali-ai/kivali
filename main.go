@@ -152,6 +152,7 @@ func main() {
 			OutputTokens:      ev.OutputTokens,
 			CacheReadTokens:   ev.CacheReadTokens,
 			CacheCreateTokens: ev.CacheCreateTokens,
+			LongPrompt:        ev.LongPrompt,
 			CostUSD:           ev.CostUSD,
 		})
 	}

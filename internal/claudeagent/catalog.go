@@ -96,27 +96,47 @@ func (m catalogRow) Selectable() bool { return m.SelectAs != "" }
 // package comment above before editing.
 var catalog = []catalogRow{
 	{
-		ID:            "claude-haiku-4-5",
-		SelectAs:      "claude-haiku-4-5",
-		NativeContext: 200_000,
+		// Haiku 5.5 is the only row with a long-prompt tier: $0.10/$0.50
+		// for a call whose prompt is up to 100k tokens, and 5x every
+		// rate for a call above that. A long-running agent passes 100k
+		// of context early, so on Haiku most of an agent's spend is at
+		// the higher rate; housekeeping summaries stay below it. The
+		// stream reader marks each call's tier (TokenUsage.LongPrompt).
+		//
+		// Cache reads are $0.01/MTok, 0.1x input, at both tiers.
+		ID:            "claude-haiku-5-5",
+		SelectAs:      "claude-haiku-5-5",
+		NativeContext: 1_000_000,
 		Pricing: modelPricing{
-			InputPerMTok:      1.00,
-			OutputPerMTok:     5.00,
-			CacheWritePerMTok: 1.25,
-			CacheReadPerMTok:  0.10,
+			InputPerMTok:      0.10,
+			OutputPerMTok:     0.50,
+			CacheWritePerMTok: 0.125,
+			CacheReadPerMTok:  0.01,
+			LongPromptAbove:   100_000,
+			LongPrompt: &modelPricing{
+				InputPerMTok:      0.50,
+				OutputPerMTok:     2.50,
+				CacheWritePerMTok: 0.625,
+				CacheReadPerMTok:  0.05,
+			},
 		},
 	},
 	{
-		// Sonnet 5 is $2/$10 at the standard rate, below Sonnet
-		// 4.6's $3/$15.
-		ID:            "claude-sonnet-5",
-		SelectAs:      "claude-sonnet-5",
+		// Sonnet 5.5 is $2/$10 like Sonnet 5, but reads cache at
+		// $0.10/MTok — 0.05x its input rate, half of Sonnet 5's — so
+		// that column is not a copy of the predecessor's.
+		//
+		// Reasoning cannot be turned off, so effort is the only dial;
+		// Kivali pins effort on every spawn. Its safety classifiers can
+		// end a turn in a refusal where Sonnet 5 would have answered.
+		ID:            "claude-sonnet-5-5",
+		SelectAs:      "claude-sonnet-5-5",
 		NativeContext: 1_000_000,
 		Pricing: modelPricing{
 			InputPerMTok:      2.00,
 			OutputPerMTok:     10.00,
 			CacheWritePerMTok: 2.50,
-			CacheReadPerMTok:  0.20,
+			CacheReadPerMTok:  0.10,
 		},
 	},
 	{
@@ -124,7 +144,7 @@ var catalog = []catalogRow{
 		// it: $4/$20 against the $5/$25 every Opus from 4.5 to 5 has
 		// charged, and cache reads at $0.20 — 0.05x its input rate,
 		// half the 0.1x multiplier the rest of the table follows and
-		// the second row after Fable 5.1 to break it. Do not derive
+		// one of two rows, with Fable 5.2, to break it. Do not derive
 		// that column from InputPerMTok.
 		//
 		// Two things the picker cannot express. Reasoning cannot be
@@ -146,29 +166,30 @@ var catalog = []catalogRow{
 	},
 	{
 		// Fable is the only lineage here that costs MORE than Opus —
-		// 2.5x on input and output against Opus 5.5. It sits last in
-		// the picker and last here, so "the biggest one on the list"
-		// stops meaning "the one at Opus prices".
+		// 2x on input and output against Opus 5.5. It sits last in the
+		// picker and last here, so "the biggest one on the list" stops
+		// meaning "the one at Opus prices".
 		//
-		// Three further things the picker cannot express: it requires
-		// an org data-retention setting of 30 days (under
-		// zero-retention the provider rejects the request outright);
-		// reasoning is always on, so an agent pinned to it spends
-		// thinking tokens every turn regardless of effort; and it
-		// reads cache at $0.25/MTok — 0.025x its input rate, not the
-		// 0.1x multiplier most rows follow and a quarter of what Fable
-		// 5 charged. On a long-running agent that re-reads a warm
-		// prefix every turn that is most of what the model costs, so
-		// copying the Fable 5 row wholesale would over-report 5.1
-		// spend by up to 4x on the cache-read line.
-		ID:            "claude-fable-5-1",
-		SelectAs:      "claude-fable-5-1",
+		// Fable 5.2 is $8/$40, below 5.1's $10/$50, and reads cache at
+		// $0.20/MTok — 0.025x its input rate, not the 0.1x multiplier
+		// most rows follow. On a long-running agent that re-reads a
+		// warm prefix every turn that is most of what the model costs,
+		// so read that column off the published table rather than
+		// deriving it from InputPerMTok.
+		//
+		// Two further things the picker cannot express: it requires an
+		// org data-retention setting of 30 days (under zero-retention
+		// the provider rejects the request outright), and reasoning is
+		// always on, so an agent pinned to it spends thinking tokens
+		// every turn regardless of effort.
+		ID:            "claude-fable-5-2",
+		SelectAs:      "claude-fable-5-2",
 		NativeContext: 1_000_000,
 		Pricing: modelPricing{
-			InputPerMTok:      10.00,
-			OutputPerMTok:     50.00,
-			CacheWritePerMTok: 12.50,
-			CacheReadPerMTok:  0.25,
+			InputPerMTok:      8.00,
+			OutputPerMTok:     40.00,
+			CacheWritePerMTok: 10.00,
+			CacheReadPerMTok:  0.20,
 		},
 	},
 
@@ -176,11 +197,31 @@ var catalog = []catalogRow{
 	// These outlive the picker on purpose. See the package comment. A
 	// pin on any of them moves to its family's current row at boot.
 	{
+		ID:            "claude-haiku-4-5",
+		NativeContext: 200_000,
+		Pricing: modelPricing{
+			InputPerMTok:      1.00,
+			OutputPerMTok:     5.00,
+			CacheWritePerMTok: 1.25,
+			CacheReadPerMTok:  0.10,
+		},
+	},
+	{
+		ID:            "claude-sonnet-5",
+		NativeContext: 1_000_000,
+		Pricing: modelPricing{
+			InputPerMTok:      2.00,
+			OutputPerMTok:     10.00,
+			CacheWritePerMTok: 2.50,
+			CacheReadPerMTok:  0.20,
+		},
+	},
+	{
 		// The last 200k-native model Kivali offered, and therefore the
 		// only row whose SelectAs ever differed from its ID (it was
 		// offered as "claude-sonnet-4-6[1m]"). A pin still carrying the
-		// suffix is honored until boot moves it to Sonnet 5, which is
-		// natively 1M and needs no suffix.
+		// suffix is honored until boot moves it to the current Sonnet,
+		// which is natively 1M and needs no suffix.
 		ID:            "claude-sonnet-4-6",
 		NativeContext: 200_000,
 		Pricing: modelPricing{
@@ -211,10 +252,20 @@ var catalog = []catalogRow{
 		},
 	},
 	{
+		// Dearer than 5.2 on every axis: $10/$50, and cache reads at
+		// $0.25/MTok against 5.2's $0.20.
+		ID:            "claude-fable-5-1",
+		NativeContext: 1_000_000,
+		Pricing: modelPricing{
+			InputPerMTok:      10.00,
+			OutputPerMTok:     50.00,
+			CacheWritePerMTok: 12.50,
+			CacheReadPerMTok:  0.25,
+		},
+	},
+	{
 		// Same list price as 5.1 on every axis but cache reads, which
-		// it charges at 4x. There was never a cost reason to pin a new
-		// agent to 5 once 5.1 shipped, so it left the picker with
-		// nothing lost.
+		// it charges at 4x.
 		ID:            "claude-fable-5",
 		NativeContext: 1_000_000,
 		Pricing: modelPricing{

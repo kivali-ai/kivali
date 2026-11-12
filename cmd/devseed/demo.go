@@ -199,7 +199,7 @@ to you.
 		},
 		{
 			Agent: store.Agent{Slug: SlugTestRunner, Role: "Test runner", Icon: "bug", ReportsTo: SlugEngLead,
-				Model: "claude-sonnet-5", Effort: claudeagent.EffortMedium, CreatedAt: created},
+				Model: "claude-sonnet-5-5", Effort: claudeagent.EffortMedium, CreatedAt: created},
 			RoleMD: md(`
 # Test runner
 
@@ -211,7 +211,7 @@ CSV export. You report results to the Engineering lead with numbers.
 		},
 		{
 			Agent: store.Agent{Slug: SlugSupportLead, Role: "Support lead", Icon: "headset", ReportsTo: SlugChiefOfStaff,
-				Model: "claude-sonnet-5", Effort: claudeagent.EffortHigh, CreatedAt: created},
+				Model: "claude-sonnet-5-5", Effort: claudeagent.EffortHigh, CreatedAt: created},
 			RoleMD: md(`
 # Support lead
 
@@ -223,7 +223,7 @@ pages.
 		},
 		{
 			Agent: store.Agent{Slug: SlugBookkeeper, Role: "Bookkeeper", Icon: "calculator", ReportsTo: SlugChiefOfStaff,
-				Model: "claude-haiku-4-5", Effort: claudeagent.EffortLow, CreatedAt: created},
+				Model: "claude-haiku-5-5", Effort: claudeagent.EffortLow, CreatedAt: created},
 			RoleMD: md(`
 # Bookkeeper
 
@@ -346,7 +346,7 @@ func (s *seeder) timeline() error {
 	})
 	must(e)
 	must(s.chat(SlugTestRunner, store.ChatMessage{Role: store.RoleSent, Kind: "direct_chat", TS: t.Add(time.Minute),
-		Model: "claude-sonnet-5", Effort: claudeagent.EffortMedium,
+		Model: "claude-sonnet-5-5", Effort: claudeagent.EffortMedium,
 		Content: fmt.Sprintf("Every test reminder was delivered; closed #%d.", setUp)}))
 	must(s.chat(SlugEngLead, store.ChatMessage{Role: store.RoleSent, Kind: "direct_chat", TS: t.Add(10 * time.Minute),
 		Model: "claude-opus-5-5", Effort: claudeagent.EffortXHigh,
@@ -501,7 +501,7 @@ func (s *seeder) engineeringConversation(t time.Time) error {
 		store.ChatMessage{Role: store.RoleReceived, Kind: "direct_chat", TS: t, Content: CEOChatAsk},
 		store.ChatMessage{Role: store.RoleSent, Kind: "tool_use", TS: dispatchAt, Content: "subagent: " + SubagentDesc,
 			ToolUseID: "toolu_devseed_02", ToolName: mcp.SubagentToolName,
-			ToolInput: fmt.Sprintf(`{"tasks":[{"description":%q,"prompt":%q,"model":"claude-sonnet-5","effort":"medium"}]}`, SubagentDesc, prompt)},
+			ToolInput: fmt.Sprintf(`{"tasks":[{"description":%q,"prompt":%q,"model":"claude-sonnet-5-5","effort":"medium"}]}`, SubagentDesc, prompt)},
 		store.ChatMessage{Role: store.RoleReceived, Kind: "tool_result", TS: receiptAt, ToolUseID: "toolu_devseed_02", Content: receipt},
 		opus(t.Add(2*time.Minute), "I've asked a background task to pull the delivery numbers together. I'll report back when it lands."),
 		store.ChatMessage{Role: store.RoleReceived, Kind: store.KindUserInterruption, TS: t.Add(3 * time.Minute), Content: "User pressed Stop."},
@@ -521,14 +521,14 @@ func (s *seeder) engineeringConversation(t time.Time) error {
 		{Role: store.RoleReceived, Kind: "tool_result", TS: receiptAt.Add(31 * time.Second), ToolUseID: "toolu_devseed_sub1",
 			Content: "batch,sent,delivered,bounced,median_s\nT1,100,100,0,4\nT2,100,100,0,3\nT3,100,100,0,4\nT4,100,100,0,5\nT5,100,100,0,4"},
 		{Role: store.RoleSent, Kind: "direct_chat", TS: resultAt.Add(-time.Minute), Content: final,
-			Model: "claude-sonnet-5", Effort: claudeagent.EffortMedium},
+			Model: "claude-sonnet-5-5", Effort: claudeagent.EffortMedium},
 	} {
 		if err := s.st.AppendSubagentMessage(SlugEngLead, SubagentID, m); err != nil {
 			return err
 		}
 	}
 	return s.writeSubagentMeta(SlugEngLead, subagentMeta{
-		ID: SubagentID, Description: SubagentDesc, Prompt: prompt, Model: "claude-sonnet-5", Effort: claudeagent.EffortMedium,
+		ID: SubagentID, Description: SubagentDesc, Prompt: prompt, Model: "claude-sonnet-5-5", Effort: claudeagent.EffortMedium,
 		Status: "completed", UpdatedAt: resultAt.Add(-time.Minute).Format(time.RFC3339),
 	})
 }
@@ -576,9 +576,9 @@ func (s *seeder) usage() error {
 	pins := []pin{
 		{SlugChiefOfStaff, "claude-opus-5-5"},
 		{SlugEngLead, "claude-opus-5-5"},
-		{SlugTestRunner, "claude-sonnet-5"},
-		{SlugSupportLead, "claude-sonnet-5"},
-		{SlugBookkeeper, "claude-haiku-4-5"},
+		{SlugTestRunner, "claude-sonnet-5-5"},
+		{SlugSupportLead, "claude-sonnet-5-5"},
+		{SlugBookkeeper, "claude-haiku-5-5"},
 	}
 	purposes := []string{"chat", "chat", "subagent", "release"}
 	var rows []store.UsageRecord

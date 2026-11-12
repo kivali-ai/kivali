@@ -59,6 +59,7 @@ func usageEvents(base provider.UsageEvent, total provider.TokenUsage, split []pr
 		base.OutputTokens = total.OutputTokens
 		base.CacheReadTokens = total.CacheReadTokens
 		base.CacheCreateTokens = total.CacheCreateTokens
+		base.LongPrompt = total.LongPrompt
 		base.CostUSD = costUSD
 		return []provider.UsageEvent{base}
 	}
@@ -70,6 +71,7 @@ func usageEvents(base provider.UsageEvent, total provider.TokenUsage, split []pr
 		ev.OutputTokens = mu.Usage.OutputTokens
 		ev.CacheReadTokens = mu.Usage.CacheReadTokens
 		ev.CacheCreateTokens = mu.Usage.CacheCreateTokens
+		ev.LongPrompt = mu.Usage.LongPrompt
 		if i == 0 {
 			ev.CostUSD = costUSD
 		}

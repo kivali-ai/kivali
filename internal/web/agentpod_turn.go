@@ -708,6 +708,7 @@ func (s *Server) onAgentpodDone(st *agentpodTurnState, ev agentpod.TurnEvent) {
 		OutputTokens:      ev.OutputTokens,
 		CacheReadTokens:   ev.CacheReadTokens,
 		CacheCreateTokens: ev.CacheCreateTokens,
+		LongPrompt:        ev.LongPrompt,
 	}
 	rotation := s.hasRotationPending(st.slug)
 	payload := map[string]any{
@@ -795,6 +796,7 @@ func (s *Server) recordAgentpodUsage(st *agentpodTurnState, ev agentpod.TurnEven
 		OutputTokens:      ev.OutputTokens,
 		CacheReadTokens:   ev.CacheReadTokens,
 		CacheCreateTokens: ev.CacheCreateTokens,
+		LongPrompt:        ev.LongPrompt,
 	}
 	// Buckets to record. Single-model turns (the common case, and every
 	// turn from a pod predating the split) yield exactly one, identical
@@ -805,6 +807,7 @@ func (s *Server) recordAgentpodUsage(st *agentpodTurnState, ev agentpod.TurnEven
 		OutputTokens:      usage.OutputTokens,
 		CacheReadTokens:   usage.CacheReadTokens,
 		CacheCreateTokens: usage.CacheCreateTokens,
+		LongPrompt:        usage.LongPrompt,
 	}}
 	if len(ev.ByModel) > 0 {
 		buckets = ev.ByModel
@@ -819,6 +822,7 @@ func (s *Server) recordAgentpodUsage(st *agentpodTurnState, ev agentpod.TurnEven
 			OutputTokens:      b.OutputTokens,
 			CacheReadTokens:   b.CacheReadTokens,
 			CacheCreateTokens: b.CacheCreateTokens,
+			LongPrompt:        b.LongPrompt,
 		}
 		// The CLI's turn total rides the first row only; see the doc
 		// comment. Rows after it fall through to local pricing, which is
@@ -861,6 +865,7 @@ func (s *Server) appendUsageRow(st *agentpodTurnState, model string, usage provi
 		OutputTokens:      usage.OutputTokens,
 		CacheReadTokens:   usage.CacheReadTokens,
 		CacheCreateTokens: usage.CacheCreateTokens,
+		LongPrompt:        usage.LongPrompt,
 		CostUSD:           cost,
 	}); err != nil {
 		log.Printf("agentpod turn %s: append usage: %v", st.slug, err)
