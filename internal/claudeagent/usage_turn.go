@@ -98,6 +98,9 @@ func (t *turnUsage) Result(total provider.TokenUsage, byModel []provider.ModelUs
 	if len(frame) == 0 || (sumModelUsage(frame).IsZero() && !total.IsZero()) {
 		frame = t.reconstruct(total)
 	}
+	if sumModelUsage(frame).CacheCreate1hTokens == 0 && total.CacheCreate1hTokens > 0 {
+		frame = t.fillOneHour(frame, total)
+	}
 	for _, mu := range frame {
 		if mu.Usage.IsZero() {
 			continue
@@ -108,6 +111,31 @@ func (t *turnUsage) Result(total provider.TokenUsage, byModel []provider.ModelUs
 	}
 	t.pending = nil
 	t.byID = nil
+}
+
+// fillOneHour gives a frame split with no one-hour cache-write count
+// the count the frame's total and the calls' snapshots carry. A CLI
+// release whose per-model gauge predates that count reports every
+// write in it as unsplit, while the frame's own usage block and each
+// call's snapshot split them; without this the split would price
+// every write at the five-minute rate. One model takes the total's
+// count; several take their own calls' counts, which are final.
+func (t *turnUsage) fillOneHour(frame []provider.ModelUsage, total provider.TokenUsage) []provider.ModelUsage {
+	out := append([]provider.ModelUsage(nil), frame...)
+	if len(out) == 1 {
+		out[0].Usage.CacheCreate1hTokens = min(total.CacheCreate1hTokens, out[0].Usage.CacheCreateTokens)
+		return out
+	}
+	for i := range out {
+		var oneHour int
+		for _, c := range t.pending {
+			if c.model == out[i].Model {
+				oneHour += c.usage.CacheCreate1hTokens
+			}
+		}
+		out[i].Usage.CacheCreate1hTokens = min(oneHour, out[i].Usage.CacheCreateTokens)
+	}
+	return out
 }
 
 // longPrompt reports whether one call's snapshot is above its model's
@@ -147,6 +175,7 @@ func (t *turnUsage) byTier(mu provider.ModelUsage) []provider.ModelUsage {
 			long.InputTokens += c.usage.InputTokens
 			long.CacheReadTokens += c.usage.CacheReadTokens
 			long.CacheCreateTokens += c.usage.CacheCreateTokens
+			long.CacheCreate1hTokens += c.usage.CacheCreate1hTokens
 		}
 	}
 	if nLong == 0 {
@@ -159,6 +188,7 @@ func (t *turnUsage) byTier(mu provider.ModelUsage) []provider.ModelUsage {
 	long.InputTokens = min(long.InputTokens, mu.Usage.InputTokens)
 	long.CacheReadTokens = min(long.CacheReadTokens, mu.Usage.CacheReadTokens)
 	long.CacheCreateTokens = min(long.CacheCreateTokens, mu.Usage.CacheCreateTokens)
+	long.CacheCreate1hTokens = min(long.CacheCreate1hTokens, mu.Usage.CacheCreate1hTokens, long.CacheCreateTokens)
 	long.OutputTokens = mu.Usage.OutputTokens * nLong / n
 	long.LongPrompt = true
 	short := subUsage(mu.Usage, long)
@@ -250,6 +280,7 @@ func (t *turnUsage) reconstruct(total provider.TokenUsage) []provider.ModelUsage
 				u.InputTokens += c.usage.InputTokens
 				u.CacheReadTokens += c.usage.CacheReadTokens
 				u.CacheCreateTokens += c.usage.CacheCreateTokens
+				u.CacheCreate1hTokens += c.usage.CacheCreate1hTokens
 			}
 		}
 		share := total.OutputTokens * calls[m] / len(t.pending)
@@ -379,7 +410,7 @@ func (g *usageGauge) Delta(reading map[string]provider.TokenUsage) []provider.Mo
 	out := make([]provider.ModelUsage, 0, len(models))
 	for _, m := range models {
 		d := subUsage(reading[m], prev[m])
-		if d.InputTokens < 0 || d.OutputTokens < 0 || d.CacheReadTokens < 0 || d.CacheCreateTokens < 0 {
+		if d.InputTokens < 0 || d.OutputTokens < 0 || d.CacheReadTokens < 0 || d.CacheCreateTokens < 0 || d.CacheCreate1hTokens < 0 {
 			return nil
 		}
 		if d.IsZero() {
@@ -392,9 +423,10 @@ func (g *usageGauge) Delta(reading map[string]provider.TokenUsage) []provider.Mo
 
 func subUsage(u, o provider.TokenUsage) provider.TokenUsage {
 	return provider.TokenUsage{
-		InputTokens:       u.InputTokens - o.InputTokens,
-		OutputTokens:      u.OutputTokens - o.OutputTokens,
-		CacheReadTokens:   u.CacheReadTokens - o.CacheReadTokens,
-		CacheCreateTokens: u.CacheCreateTokens - o.CacheCreateTokens,
+		InputTokens:         u.InputTokens - o.InputTokens,
+		OutputTokens:        u.OutputTokens - o.OutputTokens,
+		CacheReadTokens:     u.CacheReadTokens - o.CacheReadTokens,
+		CacheCreateTokens:   u.CacheCreateTokens - o.CacheCreateTokens,
+		CacheCreate1hTokens: u.CacheCreate1hTokens - o.CacheCreate1hTokens,
 	}
 }

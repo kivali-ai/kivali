@@ -245,6 +245,24 @@ func TestUsageEventsKeepLongPromptTier(t *testing.T) {
 	}
 }
 
+// TestUsageEventsKeepOneHourCacheWrites: a row is re-priced from its
+// own fields, so the one-hour part of its cache writes rides on each
+// event, or those writes price at the five-minute rate.
+func TestUsageEventsKeepOneHourCacheWrites(t *testing.T) {
+	base := provider.UsageEvent{Model: "claude-opus-5-5"}
+	flat := usageEvents(base, provider.TokenUsage{CacheCreateTokens: 90, CacheCreate1hTokens: 70}, nil, 0)
+	if len(flat) != 1 || flat[0].CacheCreate1hTokens != 70 {
+		t.Errorf("flat rows = %+v, want 70 one-hour writes", flat)
+	}
+	split := usageEvents(base, provider.TokenUsage{CacheCreateTokens: 90, CacheCreate1hTokens: 70}, []provider.ModelUsage{
+		{Model: "claude-opus-5-5", Usage: provider.TokenUsage{CacheCreateTokens: 60, CacheCreate1hTokens: 50}},
+		{Model: "claude-fable-5-2", Usage: provider.TokenUsage{CacheCreateTokens: 30, CacheCreate1hTokens: 20}},
+	}, 0)
+	if len(split) != 2 || split[0].CacheCreate1hTokens != 50 || split[1].CacheCreate1hTokens != 20 {
+		t.Errorf("split rows = %+v, want 50 and 20 one-hour writes", split)
+	}
+}
+
 // TestUsageEventsSingleBucket pins the unmixed path: no split means one
 // row carrying the flat total.
 func TestUsageEventsSingleBucket(t *testing.T) {

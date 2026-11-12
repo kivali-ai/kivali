@@ -174,14 +174,20 @@ type messageUsage struct {
 	OutputTokens             int `json:"output_tokens,omitempty"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	// CacheCreation splits cache_creation_input_tokens by the written
+	// entries' lifetime.
+	CacheCreation struct {
+		Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens,omitempty"`
+	} `json:"cache_creation"`
 }
 
 func (u messageUsage) tokens() provider.TokenUsage {
 	return provider.TokenUsage{
-		InputTokens:       u.InputTokens,
-		OutputTokens:      u.OutputTokens,
-		CacheReadTokens:   u.CacheReadInputTokens,
-		CacheCreateTokens: u.CacheCreationInputTokens,
+		InputTokens:         u.InputTokens,
+		OutputTokens:        u.OutputTokens,
+		CacheReadTokens:     u.CacheReadInputTokens,
+		CacheCreateTokens:   u.CacheCreationInputTokens,
+		CacheCreate1hTokens: u.CacheCreation.Ephemeral1hInputTokens,
 	}
 }
 
@@ -194,6 +200,10 @@ type resultModelUsage struct {
 	OutputTokens             int `json:"outputTokens"`
 	CacheReadInputTokens     int `json:"cacheReadInputTokens"`
 	CacheCreationInputTokens int `json:"cacheCreationInputTokens"`
+	// CacheCreationEphemeral1hInputTokens is the one-hour part of
+	// CacheCreationInputTokens. CLI releases before it was added omit
+	// it, and those writes price at the five-minute rate.
+	CacheCreationEphemeral1hInputTokens int `json:"cacheCreationEphemeral1hInputTokens"`
 }
 
 // resultTotal returns the result frame's own token total, and whether
@@ -219,10 +229,11 @@ func (ev *streamJSONEvent) gaugeReading() map[string]provider.TokenUsage {
 	out := make(map[string]provider.TokenUsage, len(ev.ModelUsage))
 	for model, u := range ev.ModelUsage {
 		out[model] = provider.TokenUsage{
-			InputTokens:       u.InputTokens,
-			OutputTokens:      u.OutputTokens,
-			CacheReadTokens:   u.CacheReadInputTokens,
-			CacheCreateTokens: u.CacheCreationInputTokens,
+			InputTokens:         u.InputTokens,
+			OutputTokens:        u.OutputTokens,
+			CacheReadTokens:     u.CacheReadInputTokens,
+			CacheCreateTokens:   u.CacheCreationInputTokens,
+			CacheCreate1hTokens: u.CacheCreationEphemeral1hInputTokens,
 		}
 	}
 	return out

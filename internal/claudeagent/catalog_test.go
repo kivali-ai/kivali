@@ -27,6 +27,19 @@ func TestEveryModelIsPriced(t *testing.T) {
 			t.Errorf("%s: cache rates are zero. On a long-running agent that re-reads a warm prefix "+
 				"every turn, cache reads are most of what the model costs", m.ID)
 		}
+		// The CLI writes most of its cache with a one-hour lifetime, so
+		// a row without that rate prices most cache writes at $0.
+		if p.CacheWrite1hPerMTok <= p.CacheWritePerMTok {
+			t.Errorf("%s: one-hour cache-write rate %v is not above the five-minute %v", m.ID, p.CacheWrite1hPerMTok, p.CacheWritePerMTok)
+		}
+		if l := p.LongPrompt; l != nil {
+			if p.LongPromptAbove <= 0 {
+				t.Errorf("%s: a long-prompt tier with no threshold applies to no call", m.ID)
+			}
+			if l.InputPerMTok <= 0 || l.OutputPerMTok <= 0 || l.CacheReadPerMTok <= 0 || l.CacheWritePerMTok <= 0 || l.CacheWrite1hPerMTok <= 0 {
+				t.Errorf("%s: long-prompt tier has a zero rate: %+v", m.ID, *l)
+			}
+		}
 	}
 }
 

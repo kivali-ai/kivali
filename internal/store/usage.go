@@ -22,6 +22,10 @@ type UsageRecord struct {
 	OutputTokens      int       `json:"output_tokens"`
 	CacheReadTokens   int       `json:"cache_read_tokens,omitempty"`
 	CacheCreateTokens int       `json:"cache_create_tokens,omitempty"`
+	// CacheCreate1hTokens is the part of CacheCreateTokens written with
+	// a one-hour lifetime, priced at the one-hour rate. A row without
+	// it prices every write at the five-minute rate.
+	CacheCreate1hTokens int `json:"cache_create_1h_tokens,omitempty"`
 	// LongPrompt marks this row's tokens as billed at the model's
 	// long-prompt rates: every call they came from had a prompt above
 	// the model's long-prompt threshold. Absent on models without one.

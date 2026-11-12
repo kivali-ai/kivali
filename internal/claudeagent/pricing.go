@@ -12,6 +12,10 @@ type modelPricing struct {
 	OutputPerMTok     float64
 	CacheWritePerMTok float64
 	CacheReadPerMTok  float64
+	// CacheWrite1hPerMTok is the rate for cache writes with a one-hour
+	// lifetime (TokenUsage.CacheCreate1hTokens); CacheWritePerMTok is
+	// the five-minute rate the rest of the writes bill at.
+	CacheWrite1hPerMTok float64
 
 	// LongPromptAbove and LongPrompt are a model's long-prompt tier: a
 	// call whose prompt (input, cache read and cache write tokens
@@ -40,14 +44,13 @@ type pricingTable map[string]modelPricing
 // Haiku 5.5, whose calls above 100k prompt tokens bill at 5x every rate
 // (modelPricing.LongPrompt).
 //
-// Cache-write rate: this table holds the 5-minute ephemeral rate
-// (1.25x input). All Kivali cache_control blocks ship plain
-// {"type":"ephemeral"} (no ttl="1h" override anywhere in the tree),
-// so the 5m rate is correct for everything we send today. If a
-// future change starts emitting ttl="1h" for any breakpoint, the
-// 1-hour rate (2x input) needs to be applied to those tokens —
-// which requires splitting provider.TokenUsage.CacheCreateTokens into 5m /
-// 1h buckets (the API reports them separately under `cache_creation`).
+// Cache-write rates: the 5-minute rate (1.25x input) and the 1-hour
+// rate (2x input). The Claude Code CLI places its own cache
+// breakpoints and writes most of them with a one-hour lifetime, and it
+// reports the split under `cache_creation` on each usage block, so a
+// call's cache writes price as their 1-hour part at the 1-hour rate
+// and the rest at the 5-minute rate. A usage row with no 1-hour count
+// prices every write at the 5-minute rate.
 //
 // Cache-read rate: 0.1x input on most models, but not all: Fable 5.1 and
 // 5.2 read cache at 0.025x their input rate and Opus 5.5 at 0.05x. Do
@@ -108,6 +111,8 @@ func (t pricingTable) CostOK(model string, u provider.TokenUsage) (float64, bool
 	cost += float64(u.InputTokens) * p.InputPerMTok / 1_000_000
 	cost += float64(u.OutputTokens) * p.OutputPerMTok / 1_000_000
 	cost += float64(u.CacheReadTokens) * p.CacheReadPerMTok / 1_000_000
-	cost += float64(u.CacheCreateTokens) * p.CacheWritePerMTok / 1_000_000
+	oneHour := min(max(u.CacheCreate1hTokens, 0), u.CacheCreateTokens)
+	cost += float64(u.CacheCreateTokens-oneHour) * p.CacheWritePerMTok / 1_000_000
+	cost += float64(oneHour) * p.CacheWrite1hPerMTok / 1_000_000
 	return cost, true
 }

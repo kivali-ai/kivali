@@ -279,6 +279,47 @@ func TestSingleBucketLongPromptTurnKeepsItsTier(t *testing.T) {
 	}
 }
 
+// TestOneHourCacheWritesReachUsageRows is core's half of the
+// cache-write split. usage.jsonl is re-priced on read, so a row has to
+// keep how many of its cache writes had a one-hour lifetime, on the
+// flat path and on each bucket of a split, or every spend readout
+// prices them at the cheaper five-minute rate.
+func TestOneHourCacheWritesReachUsageRows(t *testing.T) {
+	path, srv, _, cleanup := startTurnEventTestServer(t, "alice", "turn-1")
+	defer cleanup()
+
+	before := time.Now().UTC().Add(-time.Second)
+	c := agentpod.NewClient(path, "alice")
+	if err := c.PostTurnEvent(context.Background(), "turn-1", agentpod.TurnEvent{
+		Kind:                agentpod.TurnEventDone,
+		StopReason:          "end_turn",
+		CacheCreateTokens:   900,
+		CacheCreate1hTokens: 700,
+		Model:               "mock-large",
+		ByModel: []agentpod.TurnModelUsage{
+			{Model: "mock-large", CacheCreateTokens: 600, CacheCreate1hTokens: 500},
+			{Model: "mock-small", CacheCreateTokens: 300, CacheCreate1hTokens: 200},
+		},
+	}); err != nil {
+		t.Fatalf("PostTurnEvent: %v", err)
+	}
+	recs, err := srv.Store.ReadUsageSince(before)
+	if err != nil {
+		t.Fatalf("ReadUsageSince: %v", err)
+	}
+	if len(recs) != 2 || recs[0].CacheCreate1hTokens != 500 || recs[1].CacheCreate1hTokens != 200 {
+		t.Errorf("usage records = %+v, want 500 and 200 one-hour writes", recs)
+	}
+
+	var got provider.TokenUsage
+	if _, ok := priceUsage(pricingSpy{got: &got}, recs[0]); !ok {
+		t.Fatal("mock-large is unpriced")
+	}
+	if got.CacheCreate1hTokens != 500 {
+		t.Errorf("provider priced %+v, want the row's 500 one-hour writes", got)
+	}
+}
+
 // pricingSpy is the mock provider with Price recording what it was
 // asked to price.
 type pricingSpy struct {

@@ -144,16 +144,17 @@ func main() {
 	// arrived.
 	recorder := func(ev provider.UsageEvent) error {
 		return s.AppendUsage(store.UsageRecord{
-			TS:                ev.TS,
-			Agent:             ev.Agent,
-			Purpose:           ev.Purpose,
-			Model:             ev.Model,
-			InputTokens:       ev.InputTokens,
-			OutputTokens:      ev.OutputTokens,
-			CacheReadTokens:   ev.CacheReadTokens,
-			CacheCreateTokens: ev.CacheCreateTokens,
-			LongPrompt:        ev.LongPrompt,
-			CostUSD:           ev.CostUSD,
+			TS:                  ev.TS,
+			Agent:               ev.Agent,
+			Purpose:             ev.Purpose,
+			Model:               ev.Model,
+			InputTokens:         ev.InputTokens,
+			OutputTokens:        ev.OutputTokens,
+			CacheReadTokens:     ev.CacheReadTokens,
+			CacheCreateTokens:   ev.CacheCreateTokens,
+			CacheCreate1hTokens: ev.CacheCreate1hTokens,
+			LongPrompt:          ev.LongPrompt,
+			CostUSD:             ev.CostUSD,
 		})
 	}
 

@@ -583,6 +583,7 @@ func usageEvent(kind TurnEventKind, final *provider.CompleteResponse) TurnEvent 
 	ev.OutputTokens = final.Usage.OutputTokens
 	ev.CacheReadTokens = final.Usage.CacheReadTokens
 	ev.CacheCreateTokens = final.Usage.CacheCreateTokens
+	ev.CacheCreate1hTokens = final.Usage.CacheCreate1hTokens
 	ev.LongPrompt = final.Usage.LongPrompt
 	// Per-model split, present only when the turn was actually served
 	// by more than one model. Core writes one usage row per entry so
@@ -996,12 +997,13 @@ func turnModelUsage(split []provider.ModelUsage) []TurnModelUsage {
 	out := make([]TurnModelUsage, 0, len(split))
 	for _, mu := range split {
 		out = append(out, TurnModelUsage{
-			Model:             mu.Model,
-			InputTokens:       mu.Usage.InputTokens,
-			OutputTokens:      mu.Usage.OutputTokens,
-			CacheReadTokens:   mu.Usage.CacheReadTokens,
-			CacheCreateTokens: mu.Usage.CacheCreateTokens,
-			LongPrompt:        mu.Usage.LongPrompt,
+			Model:               mu.Model,
+			InputTokens:         mu.Usage.InputTokens,
+			OutputTokens:        mu.Usage.OutputTokens,
+			CacheReadTokens:     mu.Usage.CacheReadTokens,
+			CacheCreateTokens:   mu.Usage.CacheCreateTokens,
+			CacheCreate1hTokens: mu.Usage.CacheCreate1hTokens,
+			LongPrompt:          mu.Usage.LongPrompt,
 		})
 	}
 	return out

@@ -315,6 +315,47 @@ func TestUsageGaugeSplitsNewModelAndSkipsIdle(t *testing.T) {
 	}
 }
 
+// TestUsageGaugeDeltasOneHourWrites: the gauge's one-hour count is
+// session-cumulative like the rest, so a frame's share has to be the
+// difference too, or every turn after the first would re-bill the
+// session's earlier one-hour writes.
+func TestUsageGaugeDeltasOneHourWrites(t *testing.T) {
+	g := newUsageGauge(true)
+	first := tu(10, 100, 0, 500)
+	first.CacheCreate1hTokens = 400
+	g.Delta(map[string]provider.TokenUsage{"a": first})
+	second := tu(20, 200, 0, 800)
+	second.CacheCreate1hTokens = 650
+	got := g.Delta(map[string]provider.TokenUsage{"a": second})
+	if len(got) != 1 || got[0].Usage.CacheCreateTokens != 300 || got[0].Usage.CacheCreate1hTokens != 250 {
+		t.Errorf("Delta = %+v, want 300 cache writes of which 250 one-hour", got)
+	}
+}
+
+// TestTurnUsageFillsOneHourWritesTheGaugeOmits covers a CLI whose
+// per-model gauge has no one-hour count while the frame's usage and
+// the calls' snapshots do. Each model's one-hour writes come from its
+// own calls, so neither is priced at the other's split.
+func TestTurnUsageFillsOneHourWritesTheGaugeOmits(t *testing.T) {
+	var u turnUsage
+	a := tu(10, 1, 0, 100)
+	a.CacheCreate1hTokens = 100
+	b := tu(5, 1, 0, 40)
+	b.CacheCreate1hTokens = 10
+	u.Call("msg_1", "a", a)
+	u.Call("msg_2", "b", b)
+	total := tu(15, 30, 0, 140)
+	total.CacheCreate1hTokens = 110
+	u.Result(total, []provider.ModelUsage{
+		{Model: "a", Usage: tu(10, 20, 0, 100)},
+		{Model: "b", Usage: tu(5, 10, 0, 40)},
+	})
+	split := u.Split()
+	if len(split) != 2 || split[0].Usage.CacheCreate1hTokens != 100 || split[1].Usage.CacheCreate1hTokens != 10 {
+		t.Errorf("Split = %+v, want a with 100 one-hour writes and b with 10", split)
+	}
+}
+
 // TestUsageGaugeBackwardsReadingIsUnknown: a gauge that moved down was
 // reset under us. Reporting a negative share would subtract from a
 // bill; the reading becomes the new baseline and this frame's split is
