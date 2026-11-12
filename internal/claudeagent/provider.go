@@ -69,7 +69,7 @@ const (
 	// a task needs one. Resolved in core at dispatch; the pod keeps
 	// its own fallback on the same value for a spec that arrives with
 	// an empty model from an older core.
-	DefaultSubagentModel = "claude-sonnet-5"
+	DefaultSubagentModel = "claude-sonnet-5-5"
 
 	// DefaultSummaryModel runs the summaries Kivali makes on its own
 	// behalf (inbox lines, file summaries).

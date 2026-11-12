@@ -115,10 +115,10 @@ EOF
 
 This replaces the settings file; if it already holds settings, add the `env` entries to it instead. `ANTHROPIC_FOUNDRY_RESOURCE` is the resource's name, not its URL. To sign in with a service principal instead of a key, set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` in place of `ANTHROPIC_FOUNDRY_API_KEY`; the service principal needs only the Azure AI User role on the resource.
 
-Kivali names models by their ids, and on Foundry a model id names a deployment, so name each deployment after the model it runs: `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5-5` and `claude-fable-5-2`. A missing deployment shows up only when an agent uses that model. To check one:
+Kivali names models by their ids, and on Foundry a model id names a deployment, so name each deployment after the model it runs: `claude-haiku-4-5`, `claude-sonnet-5-5`, `claude-opus-5-5` and `claude-fable-5-2`. A missing deployment shows up only when an agent uses that model. To check one:
 
 ```sh
-kubectl -n kivali exec deploy/kivali -c kivali -- sh -c 'cd /tmp && claude -p "Reply with OK." --model claude-sonnet-5 --max-turns 1'
+kubectl -n kivali exec deploy/kivali -c kivali -- sh -c 'cd /tmp && claude -p "Reply with OK." --model claude-sonnet-5-5 --max-turns 1'
 ```
 
 While these `env` entries are set, they outrank any other sign-in. To sign in another way, remove them first, then use `/login`. Agents use changed settings from their next turn. The same holds for the entries Claude's own Bedrock and Vertex AI sign-in writes there.

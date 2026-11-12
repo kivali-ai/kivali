@@ -233,6 +233,29 @@ func TestCostOpus55IsCheaperThanOpus5OnEveryAxis(t *testing.T) {
 	}
 }
 
+// TestCostSonnet55Rates pins Sonnet 5.5's four published rates ($2
+// input, $10 output, $2.50 5-minute cache write, $0.10 cache read).
+// Every rate but the cache read matches Sonnet 5, so a row copied from
+// its predecessor passes every check except this one, and it would
+// double the reported cache-read spend of every subagent on the
+// default model.
+func TestCostSonnet55Rates(t *testing.T) {
+	for _, axis := range []struct {
+		name string
+		u    provider.TokenUsage
+		want float64
+	}{
+		{"input", provider.TokenUsage{InputTokens: 1_000_000}, 2.00},
+		{"output", provider.TokenUsage{OutputTokens: 1_000_000}, 10.00},
+		{"cache write", provider.TokenUsage{CacheCreateTokens: 1_000_000}, 2.50},
+		{"cache read", provider.TokenUsage{CacheReadTokens: 1_000_000}, 0.10},
+	} {
+		if got := defaultPricing.Cost("claude-sonnet-5-5", axis.u); math.Abs(got-axis.want) > 1e-9 {
+			t.Errorf("%s: sonnet-5-5 Cost = %v, want %v", axis.name, got, axis.want)
+		}
+	}
+}
+
 // TestCostFable52RatesAndBelowFable51 pins Fable 5.2's four published
 // rates ($8 input, $40 output, $10 5-minute cache write, $0.20 cache
 // read). Its cache read is 0.025x its input rate, so a row copied from

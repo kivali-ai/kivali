@@ -121,7 +121,7 @@ Every agent runs on a Claude model with an effort level. New agents start on the
 | Model | Relative cost | Good for |
 | --- | --- | --- |
 | Claude Haiku 4.5 | Lowest | Quick lookups and simple, well-defined tasks. |
-| Claude Sonnet 5 | Low | Most everyday work. |
+| Claude Sonnet 5.5 | Low | Most everyday work. |
 | Claude Opus 5.5 | Higher | Hard reasoning and judgment. The default. |
 | Claude Fable 5.2 | Highest | The most demanding work. |
 

@@ -65,7 +65,7 @@ The chart sets these from its values and the Secret. They are listed for referen
 | `AGENT_MODEL` | `claude-opus-5-5` | The default model for agents and new hires. Must be one Kivali knows. |
 | `SUMMARY_MODEL` | `claude-haiku-4-5` | The model for housekeeping summaries. |
 
-The models Kivali offers are `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5-5` and `claude-fable-5-2`.
+The models Kivali offers are `claude-haiku-4-5`, `claude-sonnet-5-5`, `claude-opus-5-5` and `claude-fable-5-2`.
 
 ### Team defaults
 

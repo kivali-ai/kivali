@@ -107,16 +107,21 @@ var catalog = []catalogRow{
 		},
 	},
 	{
-		// Sonnet 5 is $2/$10 at the standard rate, below Sonnet
-		// 4.6's $3/$15.
-		ID:            "claude-sonnet-5",
-		SelectAs:      "claude-sonnet-5",
+		// Sonnet 5.5 is $2/$10 like Sonnet 5, but reads cache at
+		// $0.10/MTok — 0.05x its input rate, half of Sonnet 5's — so
+		// that column is not a copy of the predecessor's.
+		//
+		// Reasoning cannot be turned off, so effort is the only dial;
+		// Kivali pins effort on every spawn. Its safety classifiers can
+		// end a turn in a refusal where Sonnet 5 would have answered.
+		ID:            "claude-sonnet-5-5",
+		SelectAs:      "claude-sonnet-5-5",
 		NativeContext: 1_000_000,
 		Pricing: modelPricing{
 			InputPerMTok:      2.00,
 			OutputPerMTok:     10.00,
 			CacheWritePerMTok: 2.50,
-			CacheReadPerMTok:  0.20,
+			CacheReadPerMTok:  0.10,
 		},
 	},
 	{
@@ -177,11 +182,21 @@ var catalog = []catalogRow{
 	// These outlive the picker on purpose. See the package comment. A
 	// pin on any of them moves to its family's current row at boot.
 	{
+		ID:            "claude-sonnet-5",
+		NativeContext: 1_000_000,
+		Pricing: modelPricing{
+			InputPerMTok:      2.00,
+			OutputPerMTok:     10.00,
+			CacheWritePerMTok: 2.50,
+			CacheReadPerMTok:  0.20,
+		},
+	},
+	{
 		// The last 200k-native model Kivali offered, and therefore the
 		// only row whose SelectAs ever differed from its ID (it was
 		// offered as "claude-sonnet-4-6[1m]"). A pin still carrying the
-		// suffix is honored until boot moves it to Sonnet 5, which is
-		// natively 1M and needs no suffix.
+		// suffix is honored until boot moves it to the current Sonnet,
+		// which is natively 1M and needs no suffix.
 		ID:            "claude-sonnet-4-6",
 		NativeContext: 200_000,
 		Pricing: modelPricing{

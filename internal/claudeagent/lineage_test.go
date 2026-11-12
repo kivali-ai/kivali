@@ -18,12 +18,13 @@ func TestCurrentFollowsTheLineage(t *testing.T) {
 		{"claude-opus-5", "claude-opus-5-5"},
 		{"claude-fable-5", "claude-fable-5-2"},
 		{"claude-fable-5-1", "claude-fable-5-2"},
-		// The suffix goes with the retired row. Sonnet 5 is natively
+		// The suffix goes with the retired row. Sonnet 5.5 is natively
 		// 1M and its SelectAs carries no suffix, so the upgraded pin
-		// must not either — "claude-sonnet-5[1m]" is not a catalog
+		// must not either — "claude-sonnet-5-5[1m]" is not a catalog
 		// string and the CLI would have to strip it.
-		{"claude-sonnet-4-6[1m]", "claude-sonnet-5"},
-		{"claude-sonnet-4-6", "claude-sonnet-5"},
+		{"claude-sonnet-4-6[1m]", "claude-sonnet-5-5"},
+		{"claude-sonnet-4-6", "claude-sonnet-5-5"},
+		{"claude-sonnet-5", "claude-sonnet-5-5"},
 		{"claude-opus-4-8[1m]", "claude-opus-5-5"},
 		// A dated snapshot of a retired model is still that model.
 		{"claude-opus-4-8-20260101", "claude-opus-5-5"},
@@ -31,7 +32,7 @@ func TestCurrentFollowsTheLineage(t *testing.T) {
 		// Still selectable → untouched, suffixes and snapshots included:
 		// those were chosen on purpose.
 		{"claude-opus-5-5", "claude-opus-5-5"},
-		{"claude-sonnet-5", "claude-sonnet-5"},
+		{"claude-sonnet-5-5", "claude-sonnet-5-5"},
 		{"claude-haiku-4-5", "claude-haiku-4-5"},
 		{"claude-fable-5-2", "claude-fable-5-2"},
 		{"claude-opus-5-5[1m]", "claude-opus-5-5[1m]"},
